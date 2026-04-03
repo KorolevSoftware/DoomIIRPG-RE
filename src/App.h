@@ -60,28 +60,24 @@ public:
 	int sysAdvTime;
 	int osTime[8];
 	int codeTime[8];
-	int field_0x26c;
-	int field_0x270;
-	int field_0x278;
-	int field_0x27c;
 	int fontType;
 	int accelerationIndex;
-	bool field_0x290;
-	bool field_0x291;
-	int field_0x7c;
-	int field_0x80;
+	bool isInitialized;
+	bool isRunning;
+	int reservedMemory1;
+	int reservedMemory2;
 
 	// Iphone Only
 	float accelerationX[32];
 	float accelerationY[32];
 	float accelerationZ[32];
 
-	float field_0x414;
-	float field_0x418;
-	float field_0x41c;
-	float field_0x420;
-	float field_0x424;
-	float field_0x428;
+	float accelXAvg;
+	float accelYAvg;
+	float accelZAvg;
+	float accelXRef;
+	float accelYRef;
+	float accelZRef;
 	bool closeApplet;
 
 	//-------------------------

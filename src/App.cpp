@@ -43,8 +43,6 @@ bool Applet::startup() {
 	this->closeApplet = false;
 	this->fontType = 0;
 	this->accelerationIndex = 0;
-	this->field_0x290 = '\0';
-	this->field_0x291 = '\0';
 
 	// Iphone Only
 	{
@@ -55,12 +53,12 @@ bool Applet::startup() {
 		}
 	}
 
-	this->field_0x414 = 0;
-	this->field_0x418 = 0;
-	this->field_0x41c = 0;
-	this->field_0x420 = 0;
-	this->field_0x424 = 0;
-	this->field_0x428 = 0;
+	this->accelXAvg = 0;
+	this->accelYAvg = 0;
+	this->accelZAvg = 0;
+	this->accelXRef = 0;
+	this->accelYRef = 0;
+	this->accelZRef = 0;
 
 	this->backBuffer = new IDIB;
 	this->backBuffer->pBmp =  new uint8_t[480 * 320 *2];
@@ -626,19 +624,19 @@ void Applet::CalcAccelerometerAngles() {
 			z += this->accelerationZ[v5];
 		} while (++v5 < 32);
 
-		this->field_0x414 = x * 0.03125;
-		this->field_0x418 = y * 0.03125;
-		this->field_0x41c = z * 0.03125;
+		this->accelXAvg = x * 0.03125;
+		this->accelYAvg = y * 0.03125;
+		this->accelZAvg = z * 0.03125;
 
 		if (!this->field_0x290)
 		{
 			this->field_0x290 = true;
-			this->field_0x420 = x * 0.03125;
-			this->field_0x424 = y * 0.03125;
-			this->field_0x428 = z * 0.03125;
+			this->accelXRef = x * 0.03125;
+			this->accelYRef = y * 0.03125;
+			this->accelZRef = z * 0.03125;
 			return;
 		}
-		this->canvas->zoomAngle = (int)(float)((float)(this->field_0x414 - this->field_0x420) * 420.0);
+		this->canvas->zoomAngle = (int)(float)((float)(this->accelXAvg - this->accelXRef) * 420.0);
 
 		zoomAngle = this->canvas->zoomAngle;
 		if (zoomAngle >= -200)
@@ -654,7 +652,7 @@ void Applet::CalcAccelerometerAngles() {
 		this->canvas->zoomAngle = v14;
 		this->canvas = this->canvas;
 	LABEL_13:
-		this->canvas->zoomPitch = (int)(float)((float)(this->field_0x418 - this->field_0x424) * 420.0);
+		this->canvas->zoomPitch = (int)(float)((float)(this->accelYAvg - this->accelYRef) * 420.0);
 		zoomMaxAngle = this->canvas->zoomMaxAngle;
 		zoomPitch = this->canvas->zoomPitch;
 		if (zoomPitch >= -zoomMaxAngle)
