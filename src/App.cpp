@@ -40,17 +40,16 @@ Applet::~Applet() {
 bool Applet::startup() {
 	printf("Applet::startup\n");
 
+	// Initialize basic values
 	this->closeApplet = false;
 	this->fontType = 0;
 	this->accelerationIndex = 0;
 
-	// Iphone Only
-	{
-		for (int i = 0; i < 32; i++) {
-			accelerationX[i] = 0.0f;
-			accelerationY[i] = 0.0f;
-			accelerationZ[i] = 0.0f;
-		}
+	// Initialize accelerometer data
+	for (int i = 0; i < 32; i++) {
+		accelerationX[i] = 0.0f;
+		accelerationY[i] = 0.0f;
+		accelerationZ[i] = 0.0f;
 	}
 
 	this->accelXAvg = 0;
@@ -60,6 +59,7 @@ bool Applet::startup() {
 	this->accelYRef = 0;
 	this->accelZRef = 0;
 
+	// Initialize back buffer
 	this->backBuffer = new IDIB;
 	this->backBuffer->pBmp =  new uint8_t[480 * 320 *2];
 	std::memset(this->backBuffer->pBmp, 0, 480 * 320 * 2);
@@ -71,11 +71,14 @@ bool Applet::startup() {
 
 	printf("w: %d || h: %d\n", backBuffer->width, backBuffer->height);
 
+	// Initialize other variables
 	this->initLoadImages = false;
 	this->time = 0;
 	this->upTimeMs = 0;
-	this->field_0x7c = 0;
-	this->field_0x80 = 0;
+	this->reservedMemory1 = 0;
+	this->reservedMemory2 = 0;
+
+	// Create all components
 	this->canvas = new Canvas;
 	this->resource = new Resource;
 	this->localization = new Localization;
@@ -101,60 +104,103 @@ bool Applet::startup() {
 	this->gameTime = this->upTimeMs;
 	this->startupMemory = Applet::MAXMEMORY;
 
-	if (this->canvas->startup()) {
-		this->testImg = Applet::loadImage("cockpit.bmp", true);
-
-		this->canvas->loadMiniGameImages();
-		if (this->localization->startup()) {
-			if (this->render->startup()) {
-				this->resource->initTableLoading();
-				this->loadTables();
-
-				if (this->tinyGL->startup(this->render->screenWidth, this->render->screenHeight)) {
-					if (this->entityDefManager->startup()) {
-						if (this->player->startup()) {
-							if (this->menuSystem->startup()) {
-								if (this->sound->startup()) {
-									if (this->game->startup()) {
-										if (this->particleSystem->startup()) {
-											if (this->combat->startup()) {
-
-												this->game->loadConfig();
-												if (this->canvas->isFlipControls != false) {
-													this->canvas->isFlipControls = false;
-													this->canvas->flipControls();
-												}
-
-												this->canvas->setControlLayout();
-												this->canvas->clearEvents(1);
-												this->canvas->setState(Canvas::ST_LOGO);
-												this->canvas->graphics.backBuffer = this->backBuffer;
-												this->canvas->graphics.graphClipRect[0] = 0;
-												this->canvas->graphics.graphClipRect[1] = 0;
-												this->canvas->graphics.graphClipRect[2] = this->backBuffer->width;
-												this->canvas->graphics.graphClipRect[3] = this->backBuffer->height;
-
-												this->accelerationIndex = 0;
-												this->isAccelerometerInitialized = false;
-												this->isAccelerometerActive = false;
-												//this->accelStart();
-												printf("**** Startup took %i ms\n", this->upTimeMs - time);
-												printf("**** Fragment size %i ms\n", 0);
-
-												return true;
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+	// Check canvas startup
+	if (!this->canvas->startup()) {
+		printf("error faltal:\n");
+		return false;
 	}
-	printf("error faltal:\n");
-	return false;
+
+	this->testImg = Applet::loadImage("cockpit.bmp", true);
+	this->canvas->loadMiniGameImages();
+
+	// Check localization startup
+	if (!this->localization->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Check render startup
+	if (!this->render->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	this->resource->initTableLoading();
+	this->loadTables();
+
+	// Check tinyGL startup
+	if (!this->tinyGL->startup(this->render->screenWidth, this->render->screenHeight)) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Check entityDefManager startup
+	if (!this->entityDefManager->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Check player startup
+	if (!this->player->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Check menuSystem startup
+	if (!this->menuSystem->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Check sound startup
+	if (!this->sound->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Check game startup
+	if (!this->game->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Check particleSystem startup
+	if (!this->particleSystem->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Check combat startup
+	if (!this->combat->startup()) {
+		printf("error faltal:\n");
+		return false;
+	}
+
+	// Finalize game setup
+	this->game->loadConfig();
+	if (this->canvas->isFlipControls != false) {
+		this->canvas->isFlipControls = false;
+		this->canvas->flipControls();
+	}
+
+	this->canvas->setControlLayout();
+	this->canvas->clearEvents(1);
+	this->canvas->setState(Canvas::ST_LOGO);
+	this->canvas->graphics.backBuffer = this->backBuffer;
+	this->canvas->graphics.graphClipRect[0] = 0;
+	this->canvas->graphics.graphClipRect[1] = 0;
+	this->canvas->graphics.graphClipRect[2] = this->backBuffer->width;
+	this->canvas->graphics.graphClipRect[3] = this->backBuffer->height;
+
+	// Initialize accelerometer state
+	this->accelerationIndex = 0;
+	this->isAccelerometerInitialized = false;
+	this->isAccelerometerActive = false;
+	//this->accelStart();
+	printf("**** Startup took %i ms\n", this->upTimeMs - time);
+	printf("**** Fragment size %i ms\n", 0);
+
+	return true;
 }
 
 void Applet::loadConfig() {
@@ -470,7 +516,7 @@ void Applet::loadRuntimeImages() {
 		this->hud->imgActions = this->loadImage("Hud_Actions.bmp", true);
 		this->hud->imgBottomBarIcons = this->loadImage("Hud_Fill.bmp", true);
 		this->hud->imgHudFill = this->loadImage("Hud_Actions.bmp", true);
-		
+
 		this->hud->imgPlayerFrameNormal->~Image();
 		this->hud->imgPlayerFrameNormal = nullptr;
 		this->hud->imgPlayerFrameActive->~Image();
