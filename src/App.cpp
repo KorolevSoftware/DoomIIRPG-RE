@@ -135,8 +135,8 @@ bool Applet::startup() {
 												this->canvas->graphics.graphClipRect[3] = this->backBuffer->height;
 
 												this->accelerationIndex = 0;
-												this->field_0x290 = false;
-												this->field_0x291 = '\0';
+												this->isAccelerometerInitialized = false;
+												this->isAccelerometerActive = false;
 												//this->accelStart();
 												printf("**** Startup took %i ms\n", this->upTimeMs - time);
 												printf("**** Fragment size %i ms\n", 0);
@@ -571,27 +571,27 @@ void Applet::AccelerometerUpdated(float x, float y, float z) {
 	this->accelerationZ[this->accelerationIndex] = z;
 	this->accelerationIndex = (this->accelerationIndex + 1) % 32;
 
-	int v7 = (uint8_t)this->field_0x291;
+	int v7 = (uint8_t)this->isAccelerometerActive;
 	int v8 = v7 == 0;
 	if (!v7) {
 		v8 = this->accelerationIndex == 0;
 	}
 	if (v8) {
-		this->field_0x291 = v7 + 1;
+		this->isAccelerometerActive = v7 + 1;
 	}
 	//this->comicBook->UpdateAccelerometer(x, y, z);
 }
 
 void Applet::StartAccelerometer() {
 	this->accelerationIndex = 0;
-	this->field_0x290 = false;
-	this->field_0x291 = false;
+	this->isAccelerometerInitialized = false;
+	this->isAccelerometerActive = false;
 }
 
 void Applet::StopAccelerometer() {
 	this->accelerationIndex = 0;
-	this->field_0x290 = false;
-	this->field_0x291 = false;
+	this->isAccelerometerInitialized = false;
+	this->isAccelerometerActive = false;
 }
 
 void Applet::CalcAccelerometerAngles() {
@@ -607,8 +607,8 @@ void Applet::CalcAccelerometerAngles() {
 	int zoomMaxAngle; // r3
 	int zoomPitch; // r1
 
-	v2 = this->field_0x291 == false;
-	if (this->field_0x291)
+	v2 = this->isAccelerometerActive == false;
+	if (this->isAccelerometerActive)
 	{
 		v2 = !this->canvas->isZoomedIn;
 	}
@@ -628,9 +628,9 @@ void Applet::CalcAccelerometerAngles() {
 		this->accelYAvg = y * 0.03125;
 		this->accelZAvg = z * 0.03125;
 
-		if (!this->field_0x290)
+		if (!this->isAccelerometerInitialized)
 		{
-			this->field_0x290 = true;
+			this->isAccelerometerInitialized = true;
 			this->accelXRef = x * 0.03125;
 			this->accelYRef = y * 0.03125;
 			this->accelZRef = z * 0.03125;

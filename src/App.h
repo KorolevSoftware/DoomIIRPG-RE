@@ -78,6 +78,8 @@ public:
 	float accelXRef;
 	float accelYRef;
 	float accelZRef;
+	bool isAccelerometerInitialized;
+	bool isAccelerometerActive;
 	bool closeApplet;
 
 	//-------------------------
