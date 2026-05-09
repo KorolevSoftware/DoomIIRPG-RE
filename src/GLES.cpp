@@ -207,7 +207,7 @@ void gles::ResetGLState() {
 	int height = sdlGL->vidHeight;
 
 	int cx, cy;
-	SDL_GetWindowSize(sdlGL->window, &cx, &cy);
+	SDL_GL_GetDrawableSize(sdlGL->window, &cx, &cy);
 	if (width != cx || height != cy) {
 		width = cx; height = cy;
 	}

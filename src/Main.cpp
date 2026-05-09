@@ -96,10 +96,8 @@ void drawView(SDLGL *sdlGL) {
         lastTimems = CAppContainer::getInstance()->getTimeMS();
     }
 
-    SDL_GetWindowSize(sdlGL->window, &cx, &cy);
-    if (w != cx || h != cy) {
-        w = cx; h = cy;
-    }
+    SDL_GL_GetDrawableSize(sdlGL->window, &cx, &cy);
+    w = cx; h = cy;
 
     glViewport(0, 0, (GLsizei)w, (GLsizei)h);
     glDisable(GL_DEPTH_TEST);
