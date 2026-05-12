@@ -2,6 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#define chdir _chdir
+#else
+#include <unistd.h>
+#endif
+
 #include <SDL.h>
 #include "SDLGL.h"
 #include "ZipFile.h"
@@ -27,7 +34,13 @@ void drawView(SDLGL* sdlGL);
 int main(int argc, char* args[]) {
 
     int		UpTime = 0;
-    
+
+    char* basePath = SDL_GetBasePath();
+    if (basePath) {
+        chdir(basePath);
+        SDL_free(basePath);
+    }
+
     ZipFile zipFile;
     zipFile.openZipFile("Doom 2 RPG.ipa");
 
