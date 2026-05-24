@@ -1,7 +1,6 @@
 #ifndef __GRAPHICS_H__
 #define __GRAPHICS_H__
 
-class IDIB;
 class Image;
 class Text;
 
@@ -30,7 +29,7 @@ public:
 
 	int curColor;
 	int currentCharColor;
-	IDIB* backBuffer;
+	Image* backBuffer;
 	int graphClipRect[4];
 	int transX;
 	int transY;

@@ -1160,7 +1160,6 @@ bool gles::DrawSkyMap() {
 }
 
 void gles::DrawPortalTexture(Image* img, int x, int y, int w, int h, float tx, float ty, float scale, float angle, char mode) {
-	uint8_t* pBmp;
 	uint16_t* data;
 	float vp[12];
 	float st[8];
@@ -1168,28 +1167,25 @@ void gles::DrawPortalTexture(Image* img, int x, int y, int w, int h, float tx, f
 
 	PFNGLACTIVETEXTUREPROC glActiveTexture = (PFNGLACTIVETEXTUREPROC)SDL_GL_GetProcAddress("glActiveTexture");
 
-	if (!img->piDIB)
-		return;
 
 	if (img->texture == -1) {
 
-		pBmp = img->piDIB->pBmp;
 		img->texWidth = 1;
 		img->texHeight = 1;
 
-		while (texWidth = img->texWidth, texWidth < img->piDIB->width) {
+		while (texWidth = img->texWidth, texWidth < img->width) {
 			img->texWidth = texWidth << 1;
 		}
 
-		while (texHeight = img->texHeight, texHeight < img->piDIB->height) {
+		while (texHeight = img->texHeight, texHeight < img->height) {
 			img->texHeight = texHeight << 1;
 		}
 
 		data = (uint16_t*)malloc(sizeof(uint16_t) * texWidth * texHeight);
 		img->isTransparentMask = false;
-		for (int i = 0; i < img->piDIB->height; i++) {
-			for (int j = 0; j < img->piDIB->width; j++) {
-				int rgb = img->piDIB->pRGB565[pBmp[(img->piDIB->width * i) + j]];
+		for (int i = 0; i < img->height; i++) {
+			for (int j = 0; j < img->width; j++) {
+				int rgb = img->RGB565Palette[img->colorsIndexes[(img->width * i) + j]];
 				if (rgb == 0xF81F) {
 					img->isTransparentMask = true;
 				}

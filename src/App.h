@@ -2,13 +2,9 @@
 #define __APP_H__
 
 #include <cstring>
-#include <stdint.h>
-
-#include "IDIB.h"
-
+#include "Image.h"
 class SDLGL;
 class ZipFile;
-class IDIB;
 class Image;
 
 class Localization;
@@ -45,7 +41,7 @@ public:
 	static constexpr int CHAR_SPACING[4] = { 11, 11, 12, 22 };
 
 	//------------------
-	IDIB* backBuffer;
+	Image* backBuffer;
 	int upTimeMs;
 	int lastTime;
 	int time;

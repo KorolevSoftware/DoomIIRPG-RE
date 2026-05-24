@@ -64,7 +64,7 @@ ComicBook::ComicBook() {
 ComicBook::~ComicBook() {
 }
 
-int g_interfaceOrientation = 1; 
+int g_interfaceOrientation = 1;
 int resetOrientation;
 bool GetOrientation(void)
 {
@@ -128,6 +128,7 @@ void ComicBook::Draw(Graphics* graphics) {
             v5 = !this->field_0x135;
         if (v5 && !this->field_0x110) {
             SetOrientationRight();
+            this->field_0x135 = 1;
         }
     }
 
@@ -442,32 +443,27 @@ void ComicBook::loadImage(int index, bool vComic) {
 
 
 void ComicBook::CheckImageExistence(Image* image) {
-    uint8_t* pBmp;
     uint16_t* data;
     int texWidth, texHeight;
 
-    if (!image->piDIB)
-        return;
-
     if (image->texture == -1) {
 
-        pBmp = image->piDIB->pBmp;
         image->texWidth = 1;
         image->texHeight = 1;
 
-        while (texWidth = image->texWidth, texWidth < image->piDIB->width) {
+        while (texWidth = image->texWidth, texWidth < image->width) {
             image->texWidth = texWidth << 1;
         }
 
-        while (texHeight = image->texHeight, texHeight < image->piDIB->height) {
+        while (texHeight = image->texHeight, texHeight < image->height) {
             image->texHeight = texHeight << 1;
         }
 
         data = (uint16_t*)malloc(sizeof(uint16_t) * texWidth * texHeight);
         image->isTransparentMask = false;
-        for (int i = 0; i < image->piDIB->height; i++) {
-            for (int j = 0; j < image->piDIB->width; j++) {
-                int rgb = image->piDIB->pRGB565[pBmp[(image->piDIB->width * i) + j]];
+        for (int i = 0; i < image->height; i++) {
+            for (int j = 0; j < image->width; j++) {
+                int rgb = image->RGB565Palette[image->colorsIndexes[(image->width * i) + j]];
                 if (rgb == 0xF81F) {
                     image->isTransparentMask = true;
                 }
@@ -484,77 +480,42 @@ void ComicBook::CheckImageExistence(Image* image) {
     }
 }
 
-void ComicBook::DrawImage(Image* image, int a3, int a4, char a5, float alpha, char a7)
+void ComicBook::DrawImage(Image* image, int x, int y, bool rotated, float alpha, bool flipped)
 {
     PFNGLACTIVETEXTUREPROC glActiveTexture = (PFNGLACTIVETEXTUREPROC)SDL_GL_GetProcAddress("glActiveTexture");
 
-    int v10; // r3
-    float width; // s13
-    float height; // s11
-    float v13; // s17
-    float v14; // s16
-    float v15; // s14
-    float v16; // s15
-    float v17; // s12
-    float v18; // s14
-    float v19; // s13
-    float v20; // s15
-    float vp[12]; // [sp+4h] [bp-7Ch] BYREF
-    float st[8]; // [sp+34h] [bp-4Ch] BYREF
-
     this->CheckImageExistence(image);
-    v10 = (uint8_t)a5;
-    width = (float)image->width;
-    height = (float)image->height;
-    if (a5)
-        v10 = a4;
-    if (a5)
-    {
-        a4 = a3;
-        a3 = v10;
+
+    SDL_Log("DrawImage alpha %f", alpha);
+
+    const float halfW = image->width * 0.5f;
+    const float halfH = image->height * 0.5f;
+    const float uMax = (float)image->width / (float)image->texWidth;
+    const float vMax = (float)image->height / (float)image->texHeight;
+
+    // Centered quad vertices in TRIANGLE_STRIP order: TR, TL, BR, BL
+    float vp[12] = {
+         halfW, -halfH, 0.5f,
+        -halfW, -halfH, 0.5f,
+         halfW,  halfH, 0.5f,
+        -halfW,  halfH, 0.5f,
+    };
+
+    float st[8];
+    if (flipped) {
+        st[0] = 0.0f;  st[1] = vMax;
+        st[2] = uMax;  st[3] = vMax;
+        st[4] = 0.0f;  st[5] = 0.0f;
+        st[6] = uMax;  st[7] = 0.0f;
+    } else {
+        st[0] = uMax;  st[1] = 0.0f;
+        st[2] = 0.0f;  st[3] = 0.0f;
+        st[4] = uMax;  st[5] = vMax;
+        st[6] = 0.0f;  st[7] = vMax;
     }
-    v13 = width * 0.5;
-    v14 = height * 0.5;
-    vp[2] = 0.5;
-    vp[5] = 0.5;
-    vp[0] = width * 0.5;
-    vp[1] = -(float)(height * 0.5);
-    vp[8] = 0.5;
-    vp[11] = 0.5;
-    vp[3] = -(float)(width * 0.5);
-    vp[4] = vp[1];
-    vp[6] = width * 0.5;
-    vp[7] = height * 0.5;
-    vp[9] = vp[3];
-    vp[10] = height * 0.5;
-    memset(st, 0, sizeof(st));
-    v15 = 1.0 / (float)image->texWidth;
-    v16 = 1.0 / (float)image->texHeight;
-    v17 = width * v15;
-    v18 = v15 * 0.0;
-    st[0] = v17;
-    st[2] = v18;
-    st[4] = v17;
-    st[6] = v18;
-    v19 = v16 * 0.0;
-    v20 = height * v16;
-    st[1] = v19;
-    st[3] = v19;
-    st[5] = v20;
-    st[7] = v20;
-    if (a7)
-    {
-        st[0] = v18;
-        st[1] = v20;
-        st[2] = v17;
-        st[3] = v20;
-        st[4] = v18;
-        st[5] = v19;
-        st[6] = v17;
-        st[7] = v19;
-    }
+
     glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-    glColor4f(1.0, 1.0, 1.0, alpha);
+    glColor4f(1.0f, 1.0f, 1.0f, alpha);
     glDisable(GL_ALPHA_TEST);
     glAlphaFunc(GL_GREATER, 0);
     glEnable(GL_BLEND);
@@ -566,22 +527,21 @@ void ComicBook::DrawImage(Image* image, int a3, int a4, char a5, float alpha, ch
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glVertexPointer(3, GL_FLOAT, 0, &vp);
+
+    glVertexPointer(3, GL_FLOAT, 0, vp);
     glEnableClientState(GL_VERTEX_ARRAY);
-    glTexCoordPointer(2, GL_FLOAT, 0, &st);
+    glTexCoordPointer(2, GL_FLOAT, 0, st);
     glEnableClientState(GL_TEXTURE_COORD_ARRAY);
     glDisableClientState(GL_COLOR_ARRAY);
+
     glMatrixMode(GL_MODELVIEW);
     glPushMatrix();
     glLoadIdentity();
-    if (a5)
-    {
-        glTranslatef((float)(v14 + (float)a3) + (float)(240.0 - v14), v13 + (float)a4, 0.0);
-        glRotatef(-90.0, 0.0, 0.0, 1.0);
-    }
-    else
-    {
-        glTranslatef(v13 + (float)a3, v14 + (float)a4, 0.0);
+    if (rotated) {
+        glTranslatef(240.0f + y, halfW + x, 0.0f);
+        glRotatef(-90.0f, 0.0f, 0.0f, 1.0f);
+    } else {
+        glTranslatef(halfW + x, halfH + y, 0.0f);
     }
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glPopMatrix();
@@ -694,7 +654,6 @@ void ComicBook::UpdateTransition()
 {
     bool v3; // zf
     int v4; // r3
-    bool v5; // nf
     bool is_iPhoneComic; // r2
     float v7; // s15
     float v8; // s14
@@ -711,10 +670,9 @@ void ComicBook::UpdateTransition()
         if (this->field_0x135)
         {
             v4 = this->field_0x138 + 1;
-            v5 = this->field_0x138 - 29 < 0;
             this->field_0x138 = v4;
-            
-            if (!(v5 ^ (v4 | 30) | (v4 == 30)))
+
+            if (v4 > 29)
             {
                 this->field_0x138 = 0;
                 this->field_0x135 = 0;
@@ -957,11 +915,11 @@ void ComicBook::TouchMove(int x, int y)
 void ComicBook::DeleteImages() {
     this->isLoaded = false;
     for (int i = 0; i < 17; i++) {
-        this->imgComicBook[i]->~Image();
+        delete this->imgComicBook[i];
         this->imgComicBook[i] = nullptr;
     }
     for (int i = 0; i < 39; i++) {
-        this->imgiPhoneComicBook[i]->~Image();
+        delete this->imgiPhoneComicBook[i];
         this->imgiPhoneComicBook[i] = nullptr;
     }
     this->comicBookIndex = 0;

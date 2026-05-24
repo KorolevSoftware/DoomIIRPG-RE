@@ -306,7 +306,6 @@ void Graphics::drawImage(Image* img, int x, int y, int flags, int rotateMode, in
 }
 
 void Graphics::drawRegion(Image* img, int texX, int texY, int texW, int texH, int posX, int posY, int flags, int rotateMode, int renderMode) {
-    IDIB* piDIB;
     uint16_t* data;
     int x, y, w, h, tX, tY;
 
@@ -314,31 +313,26 @@ void Graphics::drawRegion(Image* img, int texX, int texY, int texW, int texH, in
         return;
     }
 
-    if (img->piDIB == nullptr) {
-        return;
-    }
-
     x = posX;
     y = posY;
-    piDIB = img->piDIB;
 
     if (img->texture == -1) {
         img->texWidth = 1;
         img->texHeight = 1;
 
-        while (w = img->texWidth, w < piDIB->width) {
+        while (w = img->texWidth, w < img->width) {
             img->texWidth = w << 1;
         }
-        while (h = img->texHeight, h < piDIB->height) {
+        while (h = img->texHeight, h < img->height) {
             img->texHeight = h << 1;
         }
 
         data = (uint16_t*)std::malloc(w * h * sizeof(uint16_t));
         img->isTransparentMask = false;
 
-        for (w = 0; w < piDIB->height; w++) {
-            for (h = 0; h < piDIB->width; h++) {
-                uint16_t rgb = piDIB->pRGB565[piDIB->pBmp[piDIB->width * w + h]];
+        for (w = 0; w < img->height; w++) {
+            for (h = 0; h < img->width; h++) {
+                uint16_t rgb = img->RGB565Palette[img->colorsIndexes[img->width * w + h]];
                 if (rgb == 0xf81f) {
                     img->isTransparentMask = true;
                 }
@@ -654,7 +648,7 @@ void Graphics::drawChar(Image* img, char c, int x, int y, int rotateMode) {
 
         // [GEC] Estas lineas no existen el codigo
         // pero son funcionales
-        if (CAppContainer::getInstance()->app->canvas->fontRenderMode != 0) { 
+        if (CAppContainer::getInstance()->app->canvas->fontRenderMode != 0) {
             renderMode = CAppContainer::getInstance()->app->canvas->fontRenderMode;
         }
     }

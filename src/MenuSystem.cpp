@@ -3572,10 +3572,10 @@ void MenuSystem::startGame(bool b) {
 	Applet* app = CAppContainer::getInstance()->app;
 
 	if (this->background != this->imgMainBG) {
-		this->background->~Image();
+		delete this->background;
 	}
 
-	this->imgMainBG->~Image();
+	delete imgMainBG;
 
 	this->background = nullptr;
 	this->imgMainBG = nullptr;

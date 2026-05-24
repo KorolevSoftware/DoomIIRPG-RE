@@ -2529,71 +2529,78 @@ uint16_t* Render::getPalette(int n, int n2, int n3) {
 	return this->mediaPalettes[this->mediaPalColors[this->mediaMappings[n] + n2] & 0x3FFF][n3];
 }
 
-void Render::setupTexture(int n, int n2, int renderMode, int renderFlags) {
+void Render::setupTexture(int tileNum, int frame, int renderMode, int renderFlags) {
 	Applet* app = CAppContainer::getInstance()->app;
+	TinyGL* tinyGL = app->tinyGL;
 
-	int n4 = this->mediaMappings[n] + n2;
+	int mediaIdx = this->mediaMappings[tileNum] + frame;
 
 	if ((app->canvas->state == Canvas::ST_AUTOMAP) || (this->renderMode & 0x10) == 0x0) {
 		renderMode = 10;
 	}
-	else if ((this->renderMode & 0x20)) {
+	else if (this->renderMode & 0x20) {
 		renderMode = 9;
 	}
-	if (this->_gles->isInit) { // New
-		this->_gles->SetupTexture(n, n2, renderMode, renderFlags);
+
+	if (this->_gles->isInit) {
+		this->_gles->SetupTexture(tileNum, frame, renderMode, renderFlags);
 	}
 
-	if (n < 257 && n != 175 && n != 162 && n != 129 && n != 173 && n != 184) {
-		app->tinyGL->span = &this->_spanTrans[renderMode];
+	bool useTransSpan = tileNum < Enums::TILENUM_FIRST_WALL
+		&& tileNum != Enums::TILENUM_TECH_DETAIL
+		&& tileNum != Enums::TILENUM_DOORJAMB_DECAL
+		&& tileNum != Enums::TILENUM_HAZARD_BAR
+		&& tileNum != Enums::TILENUM_SWITCH
+		&& tileNum != Enums::TILENUM_ELEVATOR_NUMS;
+
+	tinyGL->span = useTransSpan
+		? &this->_spanTrans[renderMode]
+		: &this->_spanTexture[renderMode];
+
+	int widthBits, heightBits;
+	if (tileNum == Enums::TILENUM_SKY_BOX) {
+		tinyGL->textureBase     = this->skyMapTexels;
+		tinyGL->paletteBase     = this->skyMapPalette;
+		tinyGL->textureBaseSize = 256 * 256;
+		tinyGL->paletteBaseSize = 256;
+		tinyGL->mediaID         = -1;
+		this->isSkyMap          = true;
+		widthBits  = 8;
+		heightBits = 8;
 	}
 	else {
-		app->tinyGL->span = &this->_spanTexture[renderMode];
-	}
+		int texIdx = this->mediaTexelSizes[mediaIdx] & 0x3FFF;
+		int palIdx = this->mediaPalColors[mediaIdx] & 0x3FFF;
 
-	int n5;
-	int n6;
-	if (n == Enums::TILENUM_SKY_BOX) {
-		app->tinyGL->textureBase = this->skyMapTexels;
-		app->tinyGL->paletteBase = this->skyMapPalette;
-		app->tinyGL->textureBaseSize = 256 * 256; // new
-		app->tinyGL->paletteBaseSize = 256; // new
-		app->tinyGL->mediaID = -1; // new
-		this->isSkyMap = true;
-		n5 = 8;
-		n6 = 8;
+		tinyGL->textureBase     = this->mediaTexels[texIdx];
+		tinyGL->paletteBase     = this->mediaPalettes[palIdx];
+		tinyGL->textureBaseSize = this->mediaTexelSizes2[texIdx];
+		tinyGL->paletteBaseSize = this->mediaPalettesSizes[palIdx];
+		tinyGL->mediaID         = mediaIdx;
+		this->isSkyMap          = false;
 
-	}
-	else {
-		app->tinyGL->textureBase = this->mediaTexels[this->mediaTexelSizes[n4] & 0x3FFF];
-		app->tinyGL->paletteBase = this->mediaPalettes[this->mediaPalColors[n4] & 0x3FFF];
-		app->tinyGL->textureBaseSize = this->mediaTexelSizes2[this->mediaTexelSizes[n4] & 0x3FFF]; // [GEC] new
-		app->tinyGL->paletteBaseSize = this->mediaPalettesSizes[this->mediaPalColors[n4] & 0x3FFF]; // [GEC] new
-		app->tinyGL->mediaID = n4; // new
-
-		// [GEC] new
-		app->tinyGL->paletteTransparentMask = -1;
-		for (int i = 0; i < app->tinyGL->paletteBaseSize; i++) {
-			if(app->tinyGL->paletteBase[0][i] == 0xF81F) {
-				app->tinyGL->paletteTransparentMask = i;
+		tinyGL->paletteTransparentMask = -1;
+		for (int i = 0; i < tinyGL->paletteBaseSize; i++) {
+			if (tinyGL->paletteBase[0][i] == 0xF81F) {
+				tinyGL->paletteTransparentMask = i;
 			}
 		}
 
-		uint8_t b = this->mediaDimensions[n4];
-		n6 = (b >> 4 & 0xF);
-		n5 = (b & 0xF);
-		app->tinyGL->imageBounds[0] = (uint16_t)(this->mediaBounds[(n4 << 2) + 0] & 0xFFF);
-		app->tinyGL->imageBounds[1] = (uint16_t)(this->mediaBounds[(n4 << 2) + 1] & 0xFFF);
-		app->tinyGL->imageBounds[2] = (uint16_t)(this->mediaBounds[(n4 << 2) + 2] & 0xFFF);
-		app->tinyGL->imageBounds[3] = (uint16_t)(this->mediaBounds[(n4 << 2) + 3] & 0xFFF);
-		this->isSkyMap = false;
+		uint8_t dims = this->mediaDimensions[mediaIdx];
+		widthBits  = (dims >> 4) & 0xF;
+		heightBits = dims & 0xF;
+
+		for (int i = 0; i < 4; i++) {
+			tinyGL->imageBounds[i] = (uint16_t)(this->mediaBounds[mediaIdx * 4 + i] & 0xFFF);
+		}
 	}
-	app->tinyGL->sWidth = 1 << n6;
-	app->tinyGL->sShift = 26 - n6;
-	app->tinyGL->sMask = app->tinyGL->sWidth - 1;
-	app->tinyGL->tHeight = 1 << n5;
-	app->tinyGL->tShift = 26 - (n5 + n6);
-	app->tinyGL->tMask = (app->tinyGL->tHeight - 1) * app->tinyGL->sWidth;
+
+	tinyGL->sWidth  = 1 << widthBits;
+	tinyGL->sShift  = 26 - widthBits;
+	tinyGL->sMask   = tinyGL->sWidth - 1;
+	tinyGL->tHeight = 1 << heightBits;
+	tinyGL->tShift  = 26 - (heightBits + widthBits);
+	tinyGL->tMask   = (tinyGL->tHeight - 1) * tinyGL->sWidth;
 }
 
 void Render::drawSkyMap(int n2) {

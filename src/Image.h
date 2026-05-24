@@ -3,14 +3,11 @@
 
 #include <SDL_opengl.h>
 
-class IDIB;
-
 class Image
 {
 private:
 
 public:
-	IDIB* piDIB;
 	int width;
 	int height;
 	int depth;
@@ -18,6 +15,9 @@ public:
 	int texWidth;
 	int texHeight;
 	GLuint texture;
+
+	uint8_t* colorsIndexes;
+	uint16_t* RGB565Palette;
 
 	// Constructor
 	Image();

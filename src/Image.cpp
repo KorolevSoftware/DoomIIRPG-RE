@@ -10,16 +10,14 @@ Image::Image() {
 }
 
 Image::~Image() {
-    if (this) {
-        if (this->piDIB) {
-            this->piDIB->~IDIB();
-            std::free(this->piDIB);
-        }
-        this->piDIB = nullptr;
-        glDeleteTextures(1, &this->texture);
-        this->texture = -1;
-        std::free(this);
-    }
+    glDeleteTextures(1, &this->texture);
+    this->texture = -1;
+
+	delete []colorsIndexes;
+	delete []RGB565Palette;
+
+	colorsIndexes = nullptr;
+	RGB565Palette = nullptr;
 }
 
 void Image::CreateTexture(uint16_t* data, uint32_t width, uint32_t height) {

@@ -49,7 +49,7 @@ CAppContainer* CAppContainer::getInstance() {
 
 short* CAppContainer::GetBackBuffer()
 {
-	return (short*)this->app->backBuffer->pBmp;
+	return (short*)this->app->backBuffer->colorsIndexes;
 }
 
 void CAppContainer::DoLoop(int time) {

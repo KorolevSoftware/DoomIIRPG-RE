@@ -80,7 +80,7 @@ public:
 	void DrawLoading(Graphics* graphics);
 	void loadImage(int index, bool vComic);
 	void CheckImageExistence(Image* image);
-	void DrawImage(Image* image, int a3, int a4, char a5, float alpha, char a7);
+	void DrawImage(Image* image, int x, int y, bool rotated, float alpha, bool flipped);
 
 	void UpdateMovement();
 	void UpdateTransition();

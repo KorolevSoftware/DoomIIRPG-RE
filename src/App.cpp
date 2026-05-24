@@ -1,4 +1,3 @@
-#include <stdexcept>
 #include <cstdio>
 #include <algorithm>
 
@@ -7,7 +6,6 @@
 
 #include "CAppContainer.h"
 #include "App.h"
-#include "IDIB.h"
 #include "Text.h"
 #include "Resource.h"
 #include "Render.h"
@@ -62,14 +60,12 @@ bool Applet::startup() {
 	this->field_0x424 = 0;
 	this->field_0x428 = 0;
 
-	this->backBuffer = new IDIB;
-	this->backBuffer->pBmp =  new uint8_t[480 * 320 *2];
-	std::memset(this->backBuffer->pBmp, 0, 480 * 320 * 2);
-	this->backBuffer->pRGB888 = nullptr;
-	this->backBuffer->pRGB565 = nullptr;
+	this->backBuffer = new Image;
+	this->backBuffer->colorsIndexes =  new uint8_t[480 * 320 *2];
+	std::memset(this->backBuffer->colorsIndexes, 0, 480 * 320 * 2);
+	this->backBuffer->RGB565Palette = nullptr;
 	this->backBuffer->width = CAppContainer::getInstance()->sdlGL->vidWidth;
 	this->backBuffer->height = CAppContainer::getInstance()->sdlGL->vidHeight;
-	this->backBuffer->pitch = CAppContainer::getInstance()->sdlGL->vidWidth;
 
 	printf("w: %d || h: %d\n", backBuffer->width, backBuffer->height);
 
@@ -163,168 +159,118 @@ void Applet::loadConfig() {
 
 }
 
-Image* Applet::createImage(InputStream* inputStream, bool isTransparentMask)
-{
-	Image* img;
-	int Width, Height, offBeg, BitsPerPixel, ColorsUsed, rgb, pitch;
-	img = (Image*)std::malloc(sizeof(Image));
-	img->texture = -1;
-	img->piDIB = (IDIB*)std::malloc(sizeof(IDIB));
-	img->piDIB->pBmp = nullptr;
-	img->piDIB->pRGB888 = nullptr;
-	img->piDIB->pRGB565 = nullptr;
+Image* Applet::createImage(InputStream* inputStream, bool isTransparentMask) {
+// read header
+#pragma pack(push, 1)
+	struct ImageDesc { // Windows BITMAPINFOHEADER
+	    char    BMPIdentifier[2];
+		int     fileSize;
+		char    reserved[4];
+		int32_t offBeg;
+		int32_t headerSize;
+		int32_t width;
+		int32_t height;
+		int16_t colorPlanes;      // must be 1
+		int16_t bitsPerPixel;
+		int32_t compression;      // 0 = BI_RGB (no compression)
+		int32_t imageSize;        // raw bitmap size; may be 0 for BI_RGB
+		int32_t xPixelsPerMeter;
+		int32_t yPixelsPerMeter;
+		int32_t colorsUsed;
+		int32_t importantColors;  // 0 = all colors required
+	};
+#pragma pack(pop)
+	static_assert(sizeof(ImageDesc) == 54, "ImageDesc binary layout mismatch");
+	ImageDesc desc = inputStream->readByDesc<ImageDesc>();
 
-	// read header
-    inputStream->offsetCursor(10);
-	offBeg = inputStream->readInt();
-    inputStream->offsetCursor(4);
-	Width = inputStream->readInt();
-	Height = inputStream->readInt();
-    inputStream->offsetCursor(2);
-	BitsPerPixel = inputStream->readShort();
-    inputStream->offsetCursor(16);
-	ColorsUsed = inputStream->readInt();
-    inputStream->offsetCursor(4);
-
-	//printf("offBeg %d\n", offBeg);
-	//printf("Width %d\n", Width);
-	//printf("Height %d\n", Height);
-	//printf("BitsPerPixel %d\n", BitsPerPixel);
-	//printf("ColorsUsed %d\n", ColorsUsed);
-
-	// read data
-
-	if (BitsPerPixel == 4 || BitsPerPixel == 8) {
-
-		if (ColorsUsed == 0) {
-			ColorsUsed = 1 << (BitsPerPixel & 0xff);
-		}
-		//printf("ColorsUsed %d\n", ColorsUsed);
-
-		img->piDIB->cntRGB = ColorsUsed;
-		img->piDIB->nColorScheme = 0;
-		img->piDIB->pRGB888 = (uint32_t*)std::malloc(img->piDIB->cntRGB * sizeof(uint32_t));
-		img->piDIB->pRGB565 = (uint16_t*)std::malloc(img->piDIB->cntRGB * sizeof(uint16_t));
-
-		// read palette
-		std::memcpy(img->piDIB->pRGB888, inputStream->getTop(), img->piDIB->cntRGB * sizeof(uint32_t));
-		for (uint32_t i = 0; i < img->piDIB->cntRGB; i++) {
-			img->piDIB->pRGB888[i] = SDL_SwapLE32(img->piDIB->pRGB888[i]);
-		}
-		inputStream->offsetCursor(img->piDIB->cntRGB * sizeof(uint32_t));
+	// read pixels
+	Image* newIamge = new Image;
+	newIamge->texture = -1;
+	newIamge->width = desc.width;
+	newIamge->height = desc.height;
+	newIamge->depth = desc.bitsPerPixel;
+	newIamge->isTransparentMask = isTransparentMask;
 
 
-		img->isTransparentMask = isTransparentMask;
-
-		if (isTransparentMask) {
-			for (uint32_t i = 0; i < img->piDIB->cntRGB; i++) {
-				rgb = img->piDIB->pRGB888[i];
-				if (rgb == 0xff00ff) {
-					img->piDIB->ncTransparent = i;
-				}
-				else {
-					if (((rgb >> 8 & 0xf800U) | (rgb >> 5 & 0x07e0U) | ((rgb >> 3) & 0x001f)) == 0) { // rgb888 to rgb565
-						img->piDIB->pRGB888[i] = 8;
-					}
-				}
-			}
-		}
-
-		for (uint32_t i = 0; i < img->piDIB->cntRGB; i++) {
-			rgb = img->piDIB->pRGB888[i];
-			img->piDIB->pRGB565[i] = (rgb >> 8 & 0xf800) | (rgb >> 5 & 0x07e0) | (rgb >> 3 & 0x001f); // rgb888 to rgb565
-		}
-
-		// read pixels
-		img->width = img->piDIB->width;
-		img->height = img->piDIB->height;
-		img->depth = img->piDIB->depth;
-
-		pitch = BitsPerPixel * Width;
-		int _pitch = pitch;
-		if ((pitch & 7) != 0) {
-			//printf("pitch 7 %d\n", pitch);
-			ColorsUsed = (uint32_t)((int)pitch >> 0x1f) >> 0x1d;
-			_pitch = (pitch - ((pitch + ColorsUsed & 7) - ColorsUsed)) + 8;
-		}
-
-		if ((pitch & 0x1f) != 0) {
-			//printf("pitch 31 %d\n", pitch);
-			ColorsUsed = (uint32_t)((int)pitch >> 0x1f) >> 0x1b;
-			pitch = (pitch - ((pitch + ColorsUsed & 0x1f) - ColorsUsed)) + 0x20;
-		}
-		ColorsUsed = pitch;
-		if ((int)pitch < 0) {
-			ColorsUsed = pitch + 7;
-		}
-		int iVar8 = (int)ColorsUsed >> 3;
-		ColorsUsed = pitch + 7;
-		if ((int)_pitch < 0) {
-			ColorsUsed = _pitch + 7;
-		}
-		int sVar6 = Height * Width;
-		if ((int)_pitch >= 0) {
-			ColorsUsed = _pitch;
-		}
-
-		//printf("sVar6 %d\n", sVar6);
-		img->piDIB->pBmp = (uint8_t*)std::malloc(sVar6 * sizeof(int16_t));
-		img->piDIB->width = Width;
-		img->piDIB->pitch = Width;
-		img->piDIB->depth = BitsPerPixel;
-		img->piDIB->height = Height;
-
-		bool bVar7 = BitsPerPixel != 4;
-
-		if (bVar7) {
-			Width = 0;
-		}
-		img->height = img->piDIB->height;
-		if (!bVar7) {
-			Width = Height - 1;
-		}
-		img->depth = img->piDIB->depth;
-
-		uint8_t *data = inputStream->getTop();
-		if (bVar7) {
-			for (; Width < Height; Width = Width + 1) {
-				std::memcpy(img->piDIB->pBmp + img->piDIB->pitch * Width, data + iVar8 * (Height + (-1 - Width)),
-					(int)ColorsUsed >> 3);
-			}
-		}
-		else {
-			for (int i = 0; i < Height; i++) {
-				std::memcpy(img->piDIB->pBmp + (i * img->piDIB->pitch >> 1), data + iVar8 * Width, (int)ColorsUsed >> 3);
-				Width = Width - 1;
-			}
-		}
-		inputStream->offsetCursor(iVar8 * Height);
-
-		if ((short)BitsPerPixel == 4) {
-			uint8_t* pbVar4 = (uint8_t*)std::malloc(sVar6);
-			uint8_t* _data = pbVar4;
-			for (ColorsUsed = 0; ColorsUsed < sVar6 >> 1; ColorsUsed = ColorsUsed + 1) {
-				uint8_t bVar1 = img->piDIB->pBmp[ColorsUsed];
-				_data[0] = bVar1 >> 4;
-				_data[1] = bVar1 & 0xf;
-				_data += 2;
-			}
-			for (ColorsUsed = 0; ColorsUsed < sVar6; ColorsUsed = ColorsUsed + 1) {
-				img->piDIB->pBmp[ColorsUsed] = pbVar4[ColorsUsed];
-			}
-			std::free(pbVar4);
-		}
-		img->width = img->piDIB->width;
-		img->height = img->piDIB->height;
-	}
-	else {
-		img->~Image();
-		img = nullptr;
-
-		Error("Expected image bpp 4 or 8. Found bpp %d", BitsPerPixel);
+	if (desc.bitsPerPixel != 4 && desc.bitsPerPixel != 8) {
+        Error("Expected image bpp 4 or 8. Found bpp %d", desc.bitsPerPixel);
+	    return nullptr;
 	}
 
-	return img;
+	if (desc.colorsUsed == 0) {
+		desc.colorsUsed = 1 << (desc.bitsPerPixel & 0xff);
+	}
+
+	// load palette
+	uint32_t* RGB888Palette = new uint32_t[desc.colorsUsed];
+	uint16_t* RGB565Palette = new uint16_t[desc.colorsUsed];
+
+	inputStream->readArray<uint32_t>(RGB888Palette, desc.colorsUsed);
+
+	for (uint32_t i = 0; i < desc.colorsUsed; i++) {
+		RGB888Palette[i] = SDL_SwapLE32(RGB888Palette[i]);
+	}
+
+
+	if (isTransparentMask) { // if convert 888 to 565 color maby equval 0 its
+    	SDL_ConvertPixels(desc.colorsUsed, 1,
+    	    SDL_PIXELFORMAT_RGB888, RGB888Palette, desc.colorsUsed * sizeof(uint32_t),
+    		SDL_PIXELFORMAT_RGB565, RGB565Palette, desc.colorsUsed * sizeof(uint16_t)
+    	);
+
+    	for (uint32_t i = 0; i < desc.colorsUsed; i++) {
+    	    int rgb = RGB888Palette[i];
+    		RGB888Palette[i] = std::max(rgb, 8);
+    	}
+	}
+
+	SDL_ConvertPixels(desc.colorsUsed, 1,
+	    SDL_PIXELFORMAT_RGB888, RGB888Palette, desc.colorsUsed * sizeof(uint32_t),
+		SDL_PIXELFORMAT_RGB565, RGB565Palette, desc.colorsUsed * sizeof(uint16_t)
+	);
+
+	delete [] RGB888Palette;
+	newIamge->RGB565Palette = RGB565Palette;
+
+	const int bitsPerRow  = desc.bitsPerPixel * desc.width;
+	const int srcStride   = ((bitsPerRow + 31) / 32) * 4;  // BMP row stride in bytes (4-byte aligned)
+	const int copyBytes   = (bitsPerRow + 7) / 8;          // useful pixel bytes per row (byte-aligned)
+	const int pixelCount  = desc.height * desc.width;
+
+	const size_t pixelDataSizeOf = srcStride * desc.height;
+	uint8_t* data = new uint8_t[pixelDataSizeOf];
+	inputStream->readArray<uint8_t>(data, pixelDataSizeOf);
+
+	newIamge->colorsIndexes = new uint8_t[pixelCount];
+
+    // Step 2: convert 4bpp → 8bpp
+    uint8_t* pixelData = data;
+    int pixelStride = srcStride;
+
+    if (desc.bitsPerPixel == 4) {
+        uint8_t* unpacked = new uint8_t[pixelCount];
+        for (int row = 0; row < desc.height; row++) {
+            uint8_t* src = data + srcStride * row;
+            uint8_t* dst = unpacked + desc.width * row;
+            for (int col = 0; col < desc.width / 2; col++) {
+                dst[col * 2]     = src[col] >> 4;
+                dst[col * 2 + 1] = src[col] & 0xf;
+            }
+        }
+        pixelData = unpacked;
+        pixelStride = desc.width; // нет BMP-паддинга, строка = width байт
+    }
+
+    // Step 3: flip
+    for (int row = 0; row < newIamge->height; row++) {
+        std::memcpy(newIamge->colorsIndexes + newIamge->width * row,
+            pixelData + pixelStride * (newIamge->height - 1 - row),
+            newIamge->width);
+    }
+
+    if (pixelData != data) delete[] pixelData;
+    delete[] data;
+    return newIamge;
 }
 
 Image* Applet::loadImage(char* fileName, bool isTransparentMask) {
@@ -476,18 +422,18 @@ void Applet::loadRuntimeImages() {
 		this->hud->imgActions = this->loadImage("Hud_Actions.bmp", true);
 		this->hud->imgBottomBarIcons = this->loadImage("Hud_Fill.bmp", true);
 		this->hud->imgHudFill = this->loadImage("Hud_Actions.bmp", true);
-		
-		this->hud->imgPlayerFrameNormal->~Image();
+
+		delete this->hud->imgPlayerFrameNormal;
 		this->hud->imgPlayerFrameNormal = nullptr;
-		this->hud->imgPlayerFrameActive->~Image();
+		delete this->hud->imgPlayerFrameActive;
 		this->hud->imgPlayerFrameActive = nullptr;
 
 		this->hud->imgPlayerFrameNormal = this->loadImage("HUD_Player_frame_Normal.bmp", true);
 		this->hud->imgPlayerFrameActive = this->loadImage("HUD_Player_frame_Active.bmp", true);
 
-		this->hud->imgPlayerFaces->~Image();
+		delete this->hud->imgPlayerFaces;
 		this->hud->imgPlayerFaces = nullptr;
-		this->hud->imgPlayerActive->~Image();
+		delete this->hud->imgPlayerActive;
 		this->hud->imgPlayerActive = nullptr;
 
 		if (this->player->characterChoice == 1) {
@@ -515,35 +461,35 @@ void Applet::loadRuntimeImages() {
 }
 
 void Applet::freeRuntimeImages() {
-	this->canvas->imgMapCursor->~Image();
+	delete this->canvas->imgMapCursor;
 	this->canvas->imgMapCursor = nullptr;
-	this->canvas->imgUIImages->~Image();
+	delete this->canvas->imgUIImages;
 	this->canvas->imgUIImages = nullptr;
-	this->canvas->imgDialogScroll->~Image();
+	delete this->canvas->imgDialogScroll;
 	this->canvas->imgDialogScroll = nullptr;
-	this->hud->imgScope->~Image();
+	delete this->hud->imgScope;
 	this->hud->imgScope = nullptr;
-	this->hud->imgDamageVignette->~Image();
+	delete this->hud->imgDamageVignette;
 	this->hud->imgDamageVignette = nullptr;
-	this->hud->imgActions->~Image();
+	delete this->hud->imgActions;
 	this->hud->imgActions = nullptr;
-	this->hud->imgBottomBarIcons->~Image();
+	delete this->hud->imgBottomBarIcons;
 	this->hud->imgBottomBarIcons = nullptr;
-	this->hud->imgHudFill->~Image();
+	delete this->hud->imgHudFill;
 	this->hud->imgHudFill = nullptr;
-	this->hud->imgPlayerFaces->~Image();
+	delete this->hud->imgPlayerFaces;
 	this->hud->imgPlayerFaces = nullptr;
-	this->hud->imgPlayerActive->~Image();
+	delete this->hud->imgPlayerActive;
 	this->hud->imgPlayerActive = nullptr;
-	this->hud->imgDamageVignetteBot->~Image();
+	delete this->hud->imgDamageVignetteBot;
 	this->hud->imgDamageVignetteBot = nullptr;
-	this->hud->imgHudTest->~Image();
+	delete this->hud->imgHudTest;
 	this->hud->imgHudTest = nullptr;
-	this->hud->imgSentryBotFace->~Image();
+	delete this->hud->imgSentryBotFace;
 	this->hud->imgSentryBotFace = nullptr;
-	this->hud->imgSentryBotActive->~Image();
+	delete this->hud->imgSentryBotActive;
 	this->hud->imgSentryBotActive = nullptr;
-	this->hud->imgCockpitOverlay->~Image();
+	delete this->hud->imgCockpitOverlay;
 	this->hud->imgCockpitOverlay = nullptr;
 }
 

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include<cstring>
 #define LT_RESOURCE 5
 #define LT_FILE		6
 #define LT_SOUND_RESOURCE	7 // [GEC]
@@ -17,20 +18,17 @@ class Applet;
 class InputStream
 {
 private:
-    
-    int field_0x0;
-    int field_0x4;
-    
+
+
     uint32_t cursor;
     FILE* file;
     int fileSize;
-    int field_0x28;
-    
+
 public:
 	static constexpr int LOADTYPE_RESOURCE = 5;
 	static constexpr int LOADTYPE_FILE = 6;
     uint8_t* data;
-    
+
 	// Constructor
 	InputStream();
 	// Destructor
@@ -50,7 +48,26 @@ public:
 	uint8_t readUnsignedByte();
 	int readSignedByte();
 	void read(uint8_t* dest, int off, int size);
+	template<typename T>
+	T readByDesc();
+	template<typename T>
+	void readArray(T* dst, size_t count);
 };
+
+template<typename T>
+T InputStream::readByDesc() {
+    T value;
+    std::memcpy(&value, getTop(), sizeof(T));
+    this->cursor += sizeof(T);
+    return value;
+}
+
+template<typename T>
+void InputStream::readArray(T* dst, size_t count) {
+    std::memcpy(dst, getTop(), count*sizeof(T));
+    this->cursor += count*sizeof(T);
+}
+
 
 // -------------------
 // OutputStream Class
@@ -66,12 +83,11 @@ private:
     uint8_t* buffer;
     uint32_t written;
     uint8_t* writeBuff;
-    int field_0x24_;
     int fileSize;
     int flushCount;
     bool noWrite;
     Applet* App;
-    
+
 public:
 	// Constructor
 	OutputStream();

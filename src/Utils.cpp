@@ -109,18 +109,17 @@ float AxisHit(int aX, int aY, int x, int y, int w, int h, bool isXaxis, float ac
 }
 
 void fixImage(Image* img) {
-    IDIB* piDIB = img->piDIB;
-    int w = piDIB->width;
-    int h = piDIB->height;
+    int w = img->width;
+    int h = img->height;
     int size = w * h;
 
-    if (checkFileMD5Hash(piDIB->pBmp, size, 0x40CCEBD45EFC0C67, 0xE9D6E9571FB7B0A9)) { // "blockGameColors.bmp"
-        int newW = piDIB->width + 2;
+    if (checkFileMD5Hash(img->colorsIndexes, size, 0x40CCEBD45EFC0C67, 0xE9D6E9571FB7B0A9)) { // "blockGameColors.bmp"
+        int newW = img->width + 2;
         uint8_t* data = (uint8_t*)std::malloc(newW * h);
         std::memset(data, 0, newW * h);
 
         for (int i = 0; i < h; i++) { // Copy all image data
-            std::memcpy(data + (i * newW), piDIB->pBmp + (i * w), w);
+            std::memcpy(data + (i * newW), img->colorsIndexes + (i * w), w);
         }
 
         int fixW = 54, fixH = 18;
@@ -157,36 +156,34 @@ void fixImage(Image* img) {
         for (int i = 0; i < fixH; i++) { // Copy the corrected snippet of the image.
             std::memcpy((data + (i * newW)) + fixW, fixData + (i * fixW), fixW);
         }
-
-        std::free(piDIB->pBmp);
-        piDIB->pBmp = data;
-        piDIB->width = newW;
+        delete [] img->colorsIndexes;
+        img->colorsIndexes = data;
+        img->width = newW;
     }
 
-    if (checkFileMD5Hash(piDIB->pBmp, size, 0x3AC64358C5499205, 0x606ECC6CCFDB0BD8)) { // "imgVending_arrow_down.bmp"
+    if (checkFileMD5Hash(img->colorsIndexes, size, 0x3AC64358C5499205, 0x606ECC6CCFDB0BD8)) { // "imgVending_arrow_down.bmp"
         for (int i = 0; i < w * h; i++) { // Cambia el indice de algunos pixeles
-            if (piDIB->pBmp[i] == 1) {
-                piDIB->pBmp[i] = 0;
+            if (img->colorsIndexes[i] == 1) {
+                img->colorsIndexes[i] = 0;
             }
-            if (piDIB->pBmp[i] == 2) {
-                piDIB->pBmp[i] = 0;
+            if (img->colorsIndexes[i] == 2) {
+                img->colorsIndexes[i] = 0;
             }
         }
     }
 
-    if (checkFileMD5Hash(piDIB->pBmp, size, 0x9EC6C8CDCA64AE13, 0xE6ED52BDF3163C75)) { // "menu_button_background.bmp"
+    if (checkFileMD5Hash(img->colorsIndexes, size, 0x9EC6C8CDCA64AE13, 0xE6ED52BDF3163C75)) { // "menu_button_background.bmp"
         for (int i = 0; i < w * h; i++) { // Cambia el indice de algunos pixeles
-            if (piDIB->pBmp[i] >= 3 && piDIB->pBmp[i] <= 33) {
-                piDIB->pBmp[i] = 1;
+            if (img->colorsIndexes[i] >= 3 && img->colorsIndexes[i] <= 33) {
+                img->colorsIndexes[i] = 1;
             }
         }
     }
 }
 
 void enlargeButtonImage(Image* img) {
-    IDIB* piDIB = img->piDIB;
-    int w = piDIB->width;
-    int h = piDIB->height;
+    int w = img->width;
+    int h = img->height;
     int size = w * h;
 
     int newW = 296;
@@ -194,25 +191,24 @@ void enlargeButtonImage(Image* img) {
     std::memset(data, 0x00, newW * h);
 
     for (int i = 0; i < h; i++) { // Copy all image data
-        std::memcpy(data + (i * newW), piDIB->pBmp + (i * w), w);
+        std::memcpy(data + (i * newW), img->colorsIndexes + (i * w), w);
     }
 
     for (int j = 0; j < newW; j+= 4) {
         for (int i = 0; i < h; i++) {
-            std::memcpy((data + (i * newW) + j), piDIB->pBmp + (i * w) + 88, 4);
+            std::memcpy((data + (i * newW) + j), img->colorsIndexes + (i * w) + 88, 4);
         }
     }
 
     for (int i = 0; i < h; i++) {
-        std::memcpy((data + (i * newW) + 0), piDIB->pBmp + (i * w) + 0, 102);
+        std::memcpy((data + (i * newW) + 0), img->colorsIndexes + (i * w) + 0, 102);
     }
 
     for (int i = 0; i < h; i++) {
-        std::memcpy((data + (i * newW) + 194), piDIB->pBmp + (i * w) + 102, 102);
+        std::memcpy((data + (i * newW) + 194), img->colorsIndexes + (i * w) + 102, 102);
     }
 
-    std::free(piDIB->pBmp);
-    piDIB->pBmp = data;
-    piDIB->width = newW;
+    delete [] img->colorsIndexes;
+    img->colorsIndexes = data;
     img->width = newW;
 }
