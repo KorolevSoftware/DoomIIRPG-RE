@@ -679,7 +679,7 @@ void Game::unloadMapData() {
 	this->numDestroyableObj = 0;
 	this->destroyedObj = 0;
 	this->lootFound = 0;
-	app->canvas->showingLoot = false;
+	app->canvas->lootingSystem.showingLoot = false;
 	this->angryVIOS = false;
 	app->sound->freeMonsterSounds();
 }

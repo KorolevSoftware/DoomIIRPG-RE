@@ -1105,7 +1105,7 @@ uint32_t ScriptThread::run() {
                 }
                 this->app->Error(14); // ERR_EV_SHOWCHATBUBBLE
 
-                if (this->app->canvas->showingLoot) {
+                if (this->app->canvas->lootingSystem.showingLoot) {
                     this->unpauseTime = 1;
                     return 2;
                 }
@@ -1134,7 +1134,7 @@ uint32_t ScriptThread::run() {
 
             case Enums::EV_GIVELOOT: {
                 //printf("EV_GIVELOOT -> %d\n", this->IP);
-                if (this->app->canvas->showingLoot) {
+                if (this->app->canvas->lootingSystem.showingLoot) {
                     this->unpauseTime = 1;
                     return 2;
                 }
@@ -2120,16 +2120,16 @@ int ScriptThread::getIntArg() {
 
 void ScriptThread::composeLootDialog() {
     Text* largeBuffer = this->app->localization->getLargeBuffer();
-    if (this->app->canvas->lootSource != -1) {
-        this->app->localization->composeTextField(this->app->canvas->lootSource, largeBuffer);
+    if (this->app->canvas->lootingSystem.lootSource != -1) {
+        this->app->localization->composeTextField(this->app->canvas->lootingSystem.lootSource, largeBuffer);
         this->app->localization->composeText((short)0, (short)129, largeBuffer);
-        this->app->canvas->lootSource = -1;
+        this->app->canvas->lootingSystem.lootSource = -1;
     }
     else {
         this->app->localization->composeText((short)0, (short)130, largeBuffer);
     }
     if (!this->throwAwayLoot) {
-        this->app->canvas->showingLoot = true;
+        this->app->canvas->lootingSystem.showingLoot = true;
         this->app->canvas->setState(Canvas::ST_DIALOG);
     }
     int n = 0;

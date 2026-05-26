@@ -2,6 +2,11 @@
 #define __CANVAS_H__
 
 #include "Graphics.h"
+#include "IntroSequenceManager.h"
+#include "LootingSystem.h"
+#include "MiniGameManager.h"
+#include "TravelMapManager.h"
+#include "DialogSystem.h"
 
 class Image;
 class Text;
@@ -121,11 +126,6 @@ public:
 	int lastBacklightRefresh;
 	int blockInputTime;
 	bool changeMapStarted;
-	int storyX;
-	int storyY;
-	int storyPage;
-	int storyTotalPages;
-	int storyIndexes[4];
 	int fontRenderMode;
 	Image* imgFont_16p_Light;
 	Image* imgFont_16p_Dark;
@@ -141,35 +141,7 @@ public:
 	Image* imgEndOfLevelStatsBG;
 	Image* imgGameHelpBG;
 	Image* imgInventoryBG;
-	Image* imgBootL;
-	Image* imgBootR;
 	Image* imgStartupLogo;
-	Image* imgProlog;
-	Image* imgMagGlass;
-	Image* imgTravelBG;
-	Image* imgTravelPath;
-	Image* imgNameHighlight;
-	Image* imgSpaceShip;
-	Image* imgTierCloseUp;
-	Image* imgEarthCloseUp;
-	Image* imgStarField;
-	Image* imgMapHorzGridLines;
-	Image* imgMapVertGridLines;
-	Image* imgScientistMugs;
-	Image* imgCharacter_upperbar;
-	Image* imgMajorMugs;
-	Image* imgSargeMugs;
-	Image* imgCharacterSelectionAssets;
-	Image* imgCharSelectionBG;
-	Image* imgCharacter_select_stat_bar;
-	Image* imgCharacter_select_stat_header;
-	Image* imgTopBarFill;
-	Image* imgMajor_legs;
-	Image* imgMajor_torso;
-	Image* imgRiley_legs;
-	Image* imgRiley_torso;
-	Image* imgSarge_legs;
-	Image* imgSarge_torso;
 	bool m_controlButtonIsTouched;
 	fmButton* m_controlButton;
 	int m_controlButtonTime;
@@ -214,7 +186,6 @@ public:
 	int animAngle;
 	bool automapDrawn;
 	int automapTime;
-	int specialLootIcon;
 	bool showSpeeds;
 	bool showLocation;
 	bool showFreeHeap;
@@ -247,23 +218,7 @@ public:
 	int shakeIntensity;
 	int shakeX;
 	int shakeY;
-	short dialogIndexes[1024];
 	Text* dialogBuffer;
-	EntityDef* dialogItem;
-	int dialogViewLines;
-	int dialogLineStartTime;
-	int dialogStartTime;
-	int dialogTypeLineIdx;
-	int dialogStyle;
-	int dialogType;
-	int dialogFlags;
-	bool dialogResumeScriptAfterClosed;
-	bool dialogResumeMenu;
-	bool dialogClosing;
-	ScriptThread* dialogThread;
-	int numDialogLines;
-	int currentDialogLine;
-	bool showingLoot;
 	ScriptThread* armorRepairThread;
 	bool repairingArmor;
 	ScriptThread* targetPracticeThread;
@@ -281,17 +236,6 @@ public:
 	int deathTime;
 	int familiarDeathTime;
 	bool familiarSelfDestructed;
-	int scrollingTextStart;
-	int scrollingTextEnd;
-	int scrollingTextMSLine;
-	int scrollingTextLines;
-	int scrollingTextSpacing;
-	bool scrollingTextDone;
-	int scrollingTextFontHeight;
-	int scrollingTextSpacingHeight;
-	int lootingTime;
-	bool crouchingForLoot;
-	bool field_0xac5_;
 	int st_fields[Canvas::SPD_NUM_FIELDS];
 	bool st_enabled;
 	int st_count;
@@ -314,11 +258,6 @@ public:
 	int softKeyY;
 	int softKeyLeftID;
 	int softKeyRightID;
-	int helpMessageTypes[16];
-	int helpMessageInts[16];
-	void* helpMessageObjs[16];
-	char helpMessageThreads[16];
-	int numHelpMessages;
 	int renderSceneCount;
 	int staleTime;
 	bool staleView;
@@ -326,7 +265,6 @@ public:
 	int lastKeyPressedTime;
 	bool pushedWall;
 	int pushedTime;
-	int lootSource;
 	Text* errorBuffer;
 	Graphics graphics;
 	float blendSpecialAlpha;
@@ -357,12 +295,11 @@ public:
 	fmButtonContainer* m_sniperScopeButtons;
 	fmScrollButton* m_sniperScopeDialScrollButton;
 	fmButtonContainer* m_dialogButtons;
-	fmButtonContainer* m_characterButtons;
 	fmButtonContainer* m_softKeyButtons;
 	fmButtonContainer* m_mixingButtons;
-	fmButtonContainer* m_storyButtons;
-	fmButtonContainer* m_treadmillButtons;
 	fmSwipeArea* m_swipeArea[2];
+	IntroSequenceManager introSequenceManager;
+	MiniGameManager miniGameManager;
 
 	int headShotTime;
 	int bodyShotTime;
@@ -402,34 +339,9 @@ public:
 	int fadeTime;
 	int fadeDuration;
 	int fadeColor;
-	short lootPoolIndices[18];
-	int lootPool[9];
-	int lootPoolCredits;
-	int numPoolItems;
-	int numLootItems;
-	Text* lootText;
-	int lootLineNum;
-	int lootingCachedPitch;
-	int treadmillNumSteps;
-	int treadmillLastStep;
-	int treadmillReturnCode;
-	int treadmillLastStepTime;
-	short TM_LastLevelId;
-	short TM_LoadLevelId;
-	bool TM_NewGame;
-	int totalTMTimeInPastAnimations;
-	int targetX;
-	int targetY;
-	int xDiff;
-	int yDiff;
-	int mapWidth;
-	int mapHeight;
-	int _field_0xf20;
-	int _field_0xf24;
-	int _field_0xf28;
-	int _field_0xf2c;
-	int miniGameHelpScrollPosition;
-	int helpTextNumberOfLines;
+	LootingSystem lootingSystem;
+	TravelMapManager travelMapManager;
+	DialogSystem dialogSystem;
 
 	// Constructor
 	Canvas();

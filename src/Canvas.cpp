@@ -57,7 +57,6 @@ bool Canvas::startup() {
 	//printf("this->displayRect[3] %d\n", this->displayRect[3]);
 
 	this->graphics.setGraphics();
-	this->specialLootIcon = -1;
 	this->pacLogoTime = -1;
 	this->vibrateEnabled = true;
 	this->loadMapStringID = -1;
@@ -66,19 +65,19 @@ bool Canvas::startup() {
 	this->saveType = 0;
 	this->st_count = 0;
 	this->knockbackDist = 0;
-	this->numHelpMessages = 0;
+	this->dialogSystem.numHelpMessages = 0;
 	this->destZ = 36;
 	this->viewZ = 36;
 	this->screenRect[2] = 0;
 	this->screenRect[3] = 0;
-	this->dialogThread = nullptr;
+	this->dialogSystem.dialogThread = nullptr;
 	this->ignoreFrameInput = false;
 	this->blockInputTime = 0;
 	this->showLocation = false;
 	this->lastPacifierUpdate = 0;
 	this->numEvents = 0;
-	this->dialogItem = nullptr;
-	this->dialogViewLines = 0;
+	this->dialogSystem.dialogItem = nullptr;
+	this->dialogSystem.dialogViewLines = 0;
 	this->lastMapID = 0;
 	this->loadMapID = 0;
 	this->automapDrawn = false;
@@ -180,7 +179,7 @@ bool Canvas::startup() {
 		this->fontRenderMode = 0;
 		app->endImageLoading();
 
-		this->lootSource = -1;
+		this->lootingSystem.lootSource = -1;
 		this->m_controlLayout = 2;
 		this->isFlipControls = false;
 		this->m_controlMode = 1;
@@ -321,15 +320,6 @@ bool Canvas::startup() {
 			}
 		}
 
-		// Setup Character Buttons
-		{
-			this->m_characterButtons = new fmButtonContainer();
-			for (int i = 0; i < 5; i++) {
-				button = new fmButton(i, 0, 0, 0, 0, 1027);
-				this->m_characterButtons->AddButton(button);
-			}
-		}
-
 		// Setup Dialog Buttons
 		{
 			this->m_dialogButtons = new fmButtonContainer();
@@ -373,39 +363,9 @@ bool Canvas::startup() {
 			this->m_mixingButtons = new fmButtonContainer();
 		}
 
-		// Setup Story Buttons
-		{
-			this->m_storyButtons = new fmButtonContainer();
-			button = new fmButton(0, 0, 280, 60, 40, 1027); // Old -> (0, 0, 250, 100, 70, 1027);
-			this->m_storyButtons->AddButton(button);
-			button = new fmButton(1, 380, 280, 100, 40, 1027); // Old -> (1, 320, 250, 100, 70, 1027);
-			this->m_storyButtons->AddButton(button);
-			button = new fmButton(2, 420, 0, 60, 40, 1027);// Old -> (2, 380, 0, 100, 70, 1027);
-			this->m_storyButtons->AddButton(button);
-		}
-
 		// Setup TreadMill Buttons
-		{
-			this->imgBootL = app->loadImage("bootL.bmp", true);
-			this->imgBootR = app->loadImage("bootR.bmp", true);
-			this->m_treadmillButtons = new fmButtonContainer();
-			int w = imgBootL->width;
-			int h = imgBootL->height;
-			int x = 240 - (2 * w);
-			int y = 160 - (h / 2);
-			button = new fmButton(0, x, y, w, h, 1027);
-			button->SetImage(this->imgBootL, true);
-			button->SetHighlightImage(this->imgBootL, true);
-			button->normalRenderMode = 12;
-			button->highlightRenderMode = 0;
-			this->m_treadmillButtons->AddButton(button);
-			button = new fmButton(1, x + 3 * w, y, w, h, 1027);
-			button->SetImage(this->imgBootR, true);
-			button->SetHighlightImage(this->imgBootR, true);
-			button->normalRenderMode = 12;
-			button->highlightRenderMode = 0;
-			this->m_treadmillButtons->AddButton(button);
-		}
+		this->introSequenceManager.startup();
+		this->miniGameManager.startup();
 
 		return true;
 	}
@@ -849,7 +809,7 @@ void Canvas::run() {
 		}
 
 		app->game->updateAutomap = true;
-		if (this->numHelpMessages == 0 && app->game->queueAdvanceTurn) {
+		if (this->dialogSystem.numHelpMessages == 0 && app->game->queueAdvanceTurn) {
 			app->game->snapMonsters(true);
 			app->game->advanceTurn();
 		}
@@ -871,7 +831,7 @@ void Canvas::run() {
 				this->combatState();
 			}
 			else if (this->state == Canvas::ST_INTRO_MOVIE) {
-				if ((app->game->hasSeenIntro && this->numEvents != 0) || this->scrollingTextDone) {
+				if ((app->game->hasSeenIntro && this->numEvents != 0) || this->introSequenceManager.scrollingTextDone) {
 					this->dialogBuffer->dispose();
 					this->dialogBuffer = nullptr;
 					app->game->hasSeenIntro = true;
@@ -880,13 +840,13 @@ void Canvas::run() {
 				}
 			}
 			else if (this->state == Canvas::ST_EPILOGUE) {
-				if (this->scrollingTextDone) {
+				if (this->introSequenceManager.scrollingTextDone) {
 					this->disposeEpilogue();
 				}
 			}
 			else if (this->state != Canvas::ST_CHARACTER_SELECTION) {
 				if (this->state == Canvas::ST_INTRO) {
-					if (this->storyPage >= this->storyTotalPages) {
+					if (this->introSequenceManager.storyPage >= this->introSequenceManager.storyTotalPages) {
 						this->disposeIntro();
 					}
 				}
@@ -1114,7 +1074,7 @@ void Canvas::setState(int state) {
 		this->combatDone = false;
 	}
 	else if (state == Canvas::ST_TRAVELMAP) {
-		this->initTravelMap();
+		this->travelMapManager.init();
 	}
 	else if (state == Canvas::ST_PLAYING) {
 		app->hud->repaintFlags = 0x2f;
@@ -1179,7 +1139,7 @@ void Canvas::setState(int state) {
 		this->clearSoftKeys();
 		this->deathTime = app->time;
 		this->destPitch = 64;
-		this->numHelpMessages = 0;
+		this->dialogSystem.numHelpMessages = 0;
 	}
 	else if (state == Canvas::ST_BOT_DYING) {
 		app->hud->repaintFlags = 47;
@@ -1194,22 +1154,14 @@ void Canvas::setState(int state) {
 		this->destPitch = 64;
 	}
 	else if (state == Canvas::ST_LOOTING) {
-		this->clearSoftKeys();
-		this->lootingTime = app->time;
-		this->crouchingForLoot = true;
-		this->lootingCachedPitch = this->destPitch;
-		this->field_0xac5_ = false;
+		this->lootingSystem.onEnterLooting(this->destPitch);
 	}
 	else if (state == Canvas::ST_TREADMILL) {
 		this->clearSoftKeys();
-		//this->setRightSoftKey((short)0, (short)29); // J2ME
 		app->combat->shiftWeapon(true);
 		app->hud->repaintFlags |= 0x20;
 		this->repaintFlags |= Canvas::REPAINT_HUD;
-		this->treadmillNumSteps = 0;
-		this->treadmillLastStep = 1;
-		this->treadmillLastStepTime = app->time;
-		this->treadmillReturnCode = 0;
+		this->miniGameManager.onEnterTreadmill();
 	}
 	else if (state == Canvas::ST_EPILOGUE) {
 		app->player->levelGrade(true);
@@ -1791,7 +1743,7 @@ void Canvas::loadMap(int loadMapID, bool b, bool tm_NewGame) {
 	this->lastMapID = this->loadMapID;
 	this->loadMapID = loadMapID;
 	app->sound->soundStop();
-	this->TM_NewGame = tm_NewGame;
+	this->travelMapManager.TM_NewGame = tm_NewGame;
 	if (!b && app->game->activeLoadType == 0 && this->lastMapID >= 1 && this->lastMapID <= 10) {
 		this->saveState(43, (short)3, (short)196);
 	}
@@ -1801,99 +1753,11 @@ void Canvas::loadMap(int loadMapID, bool b, bool tm_NewGame) {
 	}
 }
 
-void Canvas::loadPrologueText() {
-	Applet* app = CAppContainer::getInstance()->app;
-	Text* text;
-
-	this->storyPage = 0;
-	this->storyTotalPages = 0;
-	app->localization->resetTextArgs();
-
-	short n = 0;
-	switch (app->player->characterChoice) {
-	case 1: {
-		n = 218;
-		break;
-	}
-	case 2: {
-		n = 219;
-		break;
-	}
-	default: {
-		n = 220;
-		break;
-	}
-	}
-
-	app->localization->addTextArg(3, n);
-	text = app->localization->getLargeBuffer();
-	app->localization->loadText(2);
-	app->localization->composeText(2, 12, text);
-	app->localization->unloadText(2);
-
-	int n2 = (this->displayRect[2] - 30) / 10;
-	int n3 = (this->displayRect[3] - 40) / 21;
-	text->wrapText(n2);
-
-	this->storyIndexes[this->storyTotalPages++] = 0;
-
-	int n4 = 0;
-	int first = 0;
-	while ((first = text->findFirstOf('|', first)) != -1) {
-		++first;
-		if (++n4 % n3 == 0) {
-			this->storyIndexes[this->storyTotalPages++] = first;
-		}
-	}
-
-	this->dialogBuffer = text;
-	this->storyIndexes[this->storyTotalPages] = text->length();
-	this->storyX = this->displayRect[0] + 15;
-	this->storyY = this->displayRect[1] + 20;
-}
-
-void Canvas::loadEpilogueText() {
-	Applet* app = CAppContainer::getInstance()->app;
-	this->imgProlog = app->loadImage("prolog.bmp", true);
-	this->initScrollingText((short)0, (short)134, false, 32, 1, 1000);
-}
-
-void Canvas::setupCharacterSelection() {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	app->beginImageLoading();
-	this->imgCharacter_select_stat_bar = app->loadImage("Character_select_stat_bar.bmp", true);
-	this->imgCharacter_select_stat_header = app->loadImage("Character_select_stat_header.bmp", true);
-	this->imgTopBarFill = app->loadImage("Character_select_top_bar.bmp", true);
-	this->imgCharacter_upperbar = app->loadImage("character_upperbar.bmp", true);
-	this->imgCharacterSelectionAssets = app->loadImage("charSelect.bmp", true);
-	this->imgCharSelectionBG = app->loadImage("charSelectionBG.bmp", true);
-	this->imgMajorMugs = app->loadImage("Hud_Player.bmp", true);
-	this->imgSargeMugs = app->loadImage("Hud_PlayerDoom.bmp", true);
-	this->imgScientistMugs = app->loadImage("Hud_PlayerScientist.bmp", true);
-	this->imgMajor_legs = app->loadImage("Major_legs.bmp", true);
-	this->imgMajor_torso = app->loadImage("Major_torso.bmp", true);
-	this->imgRiley_legs = app->loadImage("Riley_legs.bmp", true);
-	this->imgRiley_torso = app->loadImage("Riley_torso.bmp", true);
-	this->imgSarge_legs = app->loadImage("Sarge_legs.bmp", true);
-	this->imgSarge_torso = app->loadImage("Sarge_torso.bmp", true);
-	app->endImageLoading();
-}
-
-void Canvas::disposeIntro() {
-	this->dialogBuffer->dispose();
-	this->dialogBuffer = NULL;
-	this->loadMap(this->startupMap, false, true);
-}
-
-void Canvas::disposeEpilogue() {
-	Applet* app = CAppContainer::getInstance()->app;
-	this->dialogBuffer->dispose();
-	this->dialogBuffer = nullptr;
-	app->sound->soundStop();
-	app->menuSystem->setMenu(Menus::MENU_LEVEL_STATS);
-	app->sound->playSound(1069,'\x01',3,false);
-}
+void Canvas::loadPrologueText() { this->introSequenceManager.loadPrologueText(); }
+void Canvas::loadEpilogueText() { this->introSequenceManager.loadEpilogueText(); }
+void Canvas::setupCharacterSelection() { this->introSequenceManager.setupCharacterSelection(); }
+void Canvas::disposeIntro() { this->introSequenceManager.disposeIntro(); }
+void Canvas::disposeEpilogue() { this->introSequenceManager.disposeEpilogue(); }
 
 void Canvas::loadMiniGameImages() {
 	Applet* app = CAppContainer::getInstance()->app;
@@ -1927,184 +1791,12 @@ void Canvas::loadMiniGameImages() {
 	fixImage(app->vendingMachine->imgVending_arrow_down);
 }
 
-void Canvas::drawScroll(Graphics* graphics, int n, int n2, int n3, int n4) { // J2ME
-	int width = this->imgDialogScroll->width;
-	int height = this->imgDialogScroll->height;
-	graphics->drawRegion(this->imgDialogScroll, 0, 0, width, height, n, n2 + n4 - height, 0, 0, 0);
-	graphics->drawRegion(this->imgDialogScroll, 0, 0, width, height, n + n3 - width, n2 + n4 - height, 0, 2, 0);
-	graphics->drawRegion(this->imgDialogScroll, 0, 0, width, height, n, n2, 0, 1, 0);
-	graphics->drawRegion(this->imgDialogScroll, 0, 0, width, height, n + n3 - width, n2, 0, 3, 0);
-	graphics->fillRegion(this->imgDialogScroll, width - 14, 0, 14, height, n + width, n2, n3 - 2 * width, height, 3);
-	graphics->fillRegion(this->imgDialogScroll, width - 14, 0, 14, height, n + width, n2 + (n4 - height), n3 - 2 * width, height, 0);
-	graphics->fillRegion(this->imgDialogScroll, 0, 0, width, 6, n, n2 + height, width, n4 - 2 * height, 0);
-	graphics->fillRegion(this->imgDialogScroll, 0, 0, width, 6, n + n3 - width, n2 + height, width, n4 - 2 * height, 3);
-	graphics->fillRegion(this->imgDialogScroll, width - 6, 0, 6, 6, n + width, n2 + height, n3 - 2 * width, n4 - 2 * height, 0);
-}
+void Canvas::drawScroll(Graphics* graphics, int n, int n2, int n3, int n4) { this->introSequenceManager.drawScroll(graphics, n, n2, n3, n4); }
+void Canvas::initScrollingText(short i, short i2, bool dehyphenate, int spacingHeight, int numLines, int textMSLine) { this->introSequenceManager.initScrollingText(i, i2, dehyphenate, spacingHeight, numLines, textMSLine); }
+void Canvas::drawCredits(Graphics* graphics) { this->introSequenceManager.drawCredits(graphics); }
+void Canvas::drawScrollingText(Graphics* graphics) { this->introSequenceManager.drawScrollingText(graphics); }
 
-void Canvas::initScrollingText(short i, short i2, bool dehyphenate, int spacingHeight, int numLines, int textMSLine) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (this->dialogBuffer == nullptr) {
-		this->dialogBuffer = app->localization->getLargeBuffer();
-	}
-	else {
-		this->dialogBuffer->setLength(0);
-	}
-
-	app->localization->composeText(i, i2, this->dialogBuffer);
-
-	if (dehyphenate) {
-		this->dialogBuffer->dehyphenate();
-	}
-
-	this->dialogBuffer->wrapText((this->displayRect[2] - 8) / Applet::CHAR_SPACING[app->fontType]);
-	this->scrollingTextSpacing = spacingHeight;
-	this->scrollingTextStart = -1;
-	this->scrollingTextLines = (this->dialogBuffer->getNumLines() + numLines);
-	this->scrollingTextMSLine = textMSLine;
-	this->scrollingTextDone = false;
-	this->scrollingTextFontHeight = Applet::FONT_HEIGHT[app->fontType] + 2;
-	this->scrollingTextSpacingHeight = spacingHeight * ((316 - (Applet::FONT_HEIGHT[app->fontType] * 2)) / spacingHeight);
-}
-
-void Canvas::drawCredits(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-	Text* textBuff;
-
-	this->drawScrollingText(graphics);
-	if (this->scrollingTextDone != false) {
-		textBuff = app->localization->getSmallBuffer();
-		textBuff->setLength(0);
-		app->localization->composeText(0, 43, textBuff);
-		textBuff->dehyphenate();
-		graphics->drawString(textBuff, this->SCR_CX - 24, this->screenRect[3] - 32, 2);
-		textBuff->dispose();
-	}
-}
-
-void Canvas::drawScrollingText(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	int n = this->scrollingTextMSLine * ((this->scrollingTextSpacing << 16) >> 4) >> 16;
-	if (this->scrollingTextStart == -1) {
-		this->scrollingTextStart = app->gameTime;
-		int n2 = this->screenRect[3] / this->scrollingTextSpacing;
-		if (this->state == Canvas::ST_CREDITS) {
-			this->scrollingTextEnd = n * this->scrollingTextLines;
-		}
-		else {
-			this->scrollingTextEnd = n * (this->scrollingTextLines + (n2 - 2));
-		}
-	}
-
-	int gameTime = app->gameTime;
-	int scrollingTextStart = this->scrollingTextStart;
-	if (gameTime - scrollingTextStart > this->scrollingTextEnd) {
-		scrollingTextStart = gameTime - this->scrollingTextEnd;
-		this->scrollingTextDone = true;
-	}
-
-	graphics->eraseRgn(this->displayRect);
-
-	if (this->state == Canvas::ST_EPILOGUE || this->state == Canvas::ST_INTRO_MOVIE) {
-		int rect[4];
-		rect[0] = this->displayRect[0];
-		rect[1] = this->displayRect[1];
-		rect[2] = this->displayRect[2] - rect[0];
-		rect[3] = this->displayRect[3]; // missing line code?
-		graphics->clipRect(0, (this->displayRect[3] - 220) / 2, this->displayRect[2], 220);
-		graphics->drawRegion(this->imgProlog, 0, 65, 480, 307, 0, 0, 0, 0, 0);
-		graphics->fade(rect, 192, 0);
-		graphics->setScreenSpace(0, (this->displayRect[3] - 220) / 2, this->displayRect[2], 220);
-	}
-
-	graphics->drawString(this->dialogBuffer, this->SCR_CX, this->cinRect[3] - ((((gameTime - scrollingTextStart) << 8) / n) * (this->scrollingTextSpacing << 8) >> 16), this->scrollingTextSpacing, 1, 0, -1);
-	graphics->resetScreenSpace();
-}
-
-void Canvas::handleDialogEvents(int key) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	int action = this->getKeyAction(key);
-	if (action == Enums::ACTION_FIRE) {
-		if (this->dialogTypeLineIdx < this->dialogViewLines && this->dialogTypeLineIdx < this->numDialogLines - this->currentDialogLine) {
-			this->dialogTypeLineIdx = this->dialogViewLines;
-		}
-		else if (this->currentDialogLine < this->numDialogLines - this->dialogViewLines) {
-			this->dialogLineStartTime = app->time;
-			this->dialogTypeLineIdx = 0;
-			this->currentDialogLine += this->dialogViewLines;
-			if (((this->dialogFlags & 0x4) != 0x0 || (this->dialogFlags & 0x1) != 0x0) && this->currentDialogLine + this->dialogViewLines > this->numDialogLines) {
-				this->currentDialogLine = this->numDialogLines - this->dialogViewLines;
-			}
-		}
-		else {
-			this->closeDialog(false);
-		}
-	}
-	else if (action == Enums::ACTION_UP) {
-		if (this->currentDialogLine >= this->numDialogLines - this->dialogViewLines && 0x0 != (this->dialogFlags & 0x2)) {
-			if (app->game->scriptStateVars[4] == 0) {
-				this->currentDialogLine--;
-				if (this->currentDialogLine < 0) {
-					this->currentDialogLine = 0;
-				}
-			}
-			else {
-				app->game->scriptStateVars[4]--;
-			}
-		}
-		else {
-			this->currentDialogLine--;
-			if (this->currentDialogLine < 0) {
-				this->currentDialogLine = 0;
-			}
-		}
-	}
-	else if (action == Enums::ACTION_DOWN) {
-		if (this->currentDialogLine >= this->numDialogLines - this->dialogViewLines && 0x0 != (this->dialogFlags & 0x2)) {
-			if (app->game->scriptStateVars[4] < 1) {
-				app->game->scriptStateVars[4]++;
-			}
-		}
-		else {
-			this->currentDialogLine++;
-			if (this->currentDialogLine > this->numDialogLines - this->dialogViewLines) {
-				this->currentDialogLine = this->numDialogLines - this->dialogViewLines;
-				if (0x0 == (this->dialogFlags & 0x2)) {
-					if (this->currentDialogLine < 0) {
-						this->currentDialogLine = 0;
-					}
-				}
-			}
-			else {
-				this->dialogLineStartTime = app->time;
-				this->dialogTypeLineIdx = this->dialogViewLines - 1;
-			}
-		}
-	}
-	else if ((action == Enums::ACTION_LEFT || action == Enums::ACTION_RIGHT) && (this->dialogFlags & 0x5) != 0x0 && this->currentDialogLine >= this->numDialogLines - this->dialogViewLines) {
-		app->game->scriptStateVars[4] ^= 0x1;
-	}
-	else if (action == Enums::ACTION_PASSTURN || action == Enums::ACTION_AUTOMAP) {
-		this->closeDialog(true);
-	}
-	else if (action == Enums::ACTION_MENU || action == Enums::ACTION_LEFT) {
-		this->currentDialogLine -= this->dialogViewLines;
-		if (this->currentDialogLine < 0) {
-			this->currentDialogLine = 0;
-		}
-	}
-	else if (action == Enums::ACTION_RIGHT) {
-		this->currentDialogLine += this->dialogViewLines;
-		if (this->currentDialogLine > this->numDialogLines - this->dialogViewLines) {
-			this->currentDialogLine = std::max(this->numDialogLines - this->dialogViewLines, 0);
-		}
-	}
-	if (this->state == Canvas::ST_PLAYING && app->game->monstersTurn == 0) {
-		this->dequeueHelpDialog();
-	}
-}
+void Canvas::handleDialogEvents(int key) { this->dialogSystem.handleDialogEvents(key); }
 
 bool Canvas::handlePlayingEvents(int key, int action) {
 	Applet* app = CAppContainer::getInstance()->app;
@@ -2277,10 +1969,10 @@ bool Canvas::handlePlayingEvents(int key, int action) {
 	}
 	else if (action == Enums::ACTION_FIRE) {
 		if (app->player->facingEntity != nullptr && app->player->facingEntity->def->eType == 10) {
-			this->lootSource = app->player->facingEntity->name;
+			this->lootingSystem.lootSource = app->player->facingEntity->name;
 		}
 		else {
-			this->lootSource = -1;
+			this->lootingSystem.lootSource = -1;
 		}
 
 		int weapon2 = app->player->ce->weapon;
@@ -2916,7 +2608,7 @@ bool Canvas::handleEvent(int key) {
 	}
 	else if (state == Canvas::ST_CREDITS) {
 		if (this->endingGame) {
-			if ((keyAction == Enums::ACTION_FIRE && this->scrollingTextDone) || key == 18) {
+			if ((keyAction == Enums::ACTION_FIRE && this->introSequenceManager.scrollingTextDone) || key == 18) {
 				this->endingGame = false;
 				app->sound->soundStop();
 				delete app->menuSystem->imgMainBG;
@@ -3216,410 +2908,7 @@ void Canvas::combatState() {
 	}
 }
 
-void Canvas::dialogState(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (this->dialogBuffer != nullptr && this->dialogBuffer->length() == 0) {
-		return;
-	}
-
-	this->m_dialogButtons->GetButton(1)->drawButton = false;
-	this->m_dialogButtons->GetButton(2)->drawButton = false;
-	this->m_dialogButtons->GetButton(3)->drawButton = false;
-	this->m_dialogButtons->GetButton(4)->drawButton = false;
-	this->m_dialogButtons->GetButton(5)->drawButton = false;
-	this->m_dialogButtons->GetButton(6)->drawButton = false;
-	this->m_dialogButtons->GetButton(7)->drawButton = false;
-
-	int* dialogRect = this->dialogRect;
-	dialogRect[0] = -this->screenRect[0];
-	dialogRect[2] = this->hudRect[2];
-	dialogRect[3] = this->dialogViewLines * 16 + 8;
-	dialogRect[1] = 320 - dialogRect[3] - 1;//Canvas.screenRect[3] - dialogRect[3] - 1;
-	this->dialogTypeLineIdx = this->numDialogLines;
-	int n = dialogRect[0] + 1;
-	int n2 = 0xFF000000;
-	int color = 0xFFFFFFFF;
-	int color2 = 0xFF666666;
-	switch (this->dialogStyle) {
-		case 3: {
-			n = -this->screenRect[0] + 1;
-			dialogRect[1] = 320 - dialogRect[3] - 10;//Canvas.hudRect[3] - dialogRect[3] - 10;
-			//this->drawScroll(graphics, dialogRect[0], dialogRect[1] - 10, this->hudRect[2], dialogRect[3] + 20);
-			graphics->fillRect(dialogRect[0], dialogRect[1] - 10, this->hudRect[2], this->dialogRect[3] + 20, 12800);
-			graphics->setColor(color);
-			graphics->drawRect(dialogRect[0], dialogRect[1] - 10, dialogRect[2] - 1, dialogRect[3] + 19);
-			break;
-		}
-		case 16: {
-			color2 = 0xFF000066;
-			break;
-		}
-		case 4: {
-			if ((this->dialogFlags & 0x1) != 0x0) {
-				n2 = 0xFFB18A01;
-				break;
-			}
-			n2 = 0xFF005A00;
-			break;
-		}
-		case 11: {
-			n2 = 0xFF800000;
-			if ((this->dialogFlags & 0x2) != 0x0) {
-				dialogRect[1] = this->hudRect[1] + 20;
-				break;
-			}
-			break;
-		}
-		case 5: {
-			n2 = 0xFF800000;
-			if ((this->dialogFlags & 0x2) != 0x0) {
-				dialogRect[1] = this->hudRect[1] + 20;
-				break;
-			}
-			break;
-		}
-		case 8: {
-			dialogRect[1] -= 64;
-			n2 = Canvas::PLAYER_DLG_COLOR;
-			break;
-		}
-		case 14: {
-			n2 = 0xFF002864;
-			dialogRect[1] -= 20;
-		}
-		case 1:
-		case 6: {
-			n2 = 0xFF002864;
-			break;
-		}
-		case 9: {
-			n2 = 0xFF000000;
-			color2 = 0xFF000000;
-			break;
-		}
-		case 10: {
-			n2 = 0xFF2E0854;
-			dialogRect[1] = this->hudRect[1] + 20;
-			break;
-		}
-		case 12: {
-			n2 = 0xFFB18A01;
-			break;
-		}
-		case 13: {
-			n2 = 0xFFB18A01;
-			break;
-		}
-		case 15: {
-			n2 = 0xFFFF9600;
-			break;
-		}
-	}
-
-	if ((this->dialogFlags & 4) != 0 || (this->dialogFlags & 1) != 0) {
-		this->m_dialogButtons->GetButton(3)->drawButton = true;
-		this->m_dialogButtons->GetButton(4)->drawButton = true;
-	}
-	else
-	{
-		this->m_dialogButtons->GetButton(3)->drawButton = false;
-		assert(m_dialogButtons->GetButton(4));
-		//__symbol_stub4::___assert_rtn("dialogState","/Users/greghodges/doom2rpg/trunk/Doom2rpg_iphone/xcode/Classes/Canvas.cpp", 0x1499,"m_dialogButtons->GetButton(4)");
-		
-		this->m_dialogButtons->GetButton(4)->drawButton = false;
-	}
-
-	int currentDialogLine = 0;
-	if (this->dialogStyle == 2 || this->dialogStyle == 16 || this->dialogStyle == 9) {
-		currentDialogLine = 1;
-		graphics->setColor(n2);
-		graphics->fillRect(dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
-		graphics->setColor(color2);
-		graphics->fillRect(dialogRect[0], dialogRect[1] - 18, dialogRect[2], 18);
-		graphics->setColor(color);
-		graphics->drawRect(dialogRect[0], dialogRect[1] - 18, dialogRect[2] - 1, 18);
-		graphics->drawRect(dialogRect[0], dialogRect[1], dialogRect[2] - 1, dialogRect[3]);
-
-		this->m_dialogButtons->GetButton(8)->drawButton = true;
-		fmButton* Button = this->m_dialogButtons->GetButton(8);
-		int fontHeight = Applet::FONT_HEIGHT[app->fontType];
-		Button->SetTouchArea(*dialogRect, dialogRect[1] - fontHeight - 2, dialogRect[2], fontHeight + dialogRect[3] + 2);
-
-		if (this->specialLootIcon != -1) {
-			graphics->drawRegion(app->hud->imgActions, 0, 18 * this->specialLootIcon, 18, 18, dialogRect[0], dialogRect[1] - 17, 0, 0, 0);
-			graphics->drawRegion(app->hud->imgActions, 0, 18 * this->specialLootIcon, 18, 18, dialogRect[2] - 18, dialogRect[1] - 17, 0, 0, 0);
-		}
-		if (this->dialogStyle == 9) {
-			this->graphics.currentCharColor = 2;
-		}
-		graphics->drawString(this->dialogBuffer, this->SCR_CX, dialogRect[1] - 16, 1, this->dialogIndexes[0], this->dialogIndexes[1]);
-	}
-	else if (this->dialogStyle == 4) {
-		graphics->setColor(n2);
-		graphics->fillRect(dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
-		graphics->setColor(color);
-		graphics->drawRect(dialogRect[0], dialogRect[1], dialogRect[2] - 1, dialogRect[3]);
-		if (this->dialogItem != nullptr) {
-			currentDialogLine = 1;
-			graphics->setColor(n2);
-			graphics->fillRect(dialogRect[0], dialogRect[1] - 12, dialogRect[2], 12);
-			graphics->setColor(color);
-			graphics->drawRect(dialogRect[0], dialogRect[1] - 12, dialogRect[2] - 1, 12);
-			graphics->drawString(this->dialogBuffer, dialogRect[0] + (dialogRect[2] + 10 - 2 >> 1), dialogRect[1] - 5, 3, this->dialogIndexes[0], this->dialogIndexes[1]);
-			this->m_dialogButtons->GetButton(8)->drawButton = true;
-			fmButton* Button = this->m_dialogButtons->GetButton(8);
-			Button->SetTouchArea(*dialogRect, dialogRect[1] - 12, dialogRect[2], dialogRect[3] + 12);
-		}
-		else {
-			this->m_dialogButtons->GetButton(8)->drawButton = true;
-			fmButton* Button = this->m_dialogButtons->GetButton(8);
-			Button->SetTouchArea(*dialogRect, dialogRect[1], dialogRect[2], dialogRect[3]);
-		}
-	}
-	else if (this->dialogStyle != 3) {
-		graphics->setColor(n2);
-		graphics->fillRect(dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
-		graphics->setColor(color);
-		graphics->drawRect(dialogRect[0], dialogRect[1], dialogRect[2] - 1, dialogRect[3]);
-		if (this->dialogStyle == 8) {
-			int n6;
-			int n5 = n6 = dialogRect[1] + 1;
-			int n7 = n6 + (dialogRect[3] - 1);
-			while (++n5 < n7) {
-				int n8 = 96 + ((256 - (n5 - n6 << 8) / (n7 - n6)) * 160 >> 8);
-				graphics->setColor((((n2 & 0xFF00FF00) >> 8) * n8 & 0xFF00FF00) | ((n2 & 0xFF00FF) * n8 >> 8 & 0xFF00FF) & 0xDE);
-				graphics->drawLine(dialogRect[0] + 1, n5, dialogRect[0] + (dialogRect[2] - 2), n5);
-			}
-			graphics->drawRegion(this->imgUIImages, 30, 0, 15, 9, this->SCR_CX + 10, dialogRect[1] + dialogRect[3], 0, 0, 0);
-			int width = app->hud->imgPortraitsSM->width;
-			int n9 = app->hud->imgPortraitsSM->height / 3;
-			int n10 = 0;
-			switch (app->player->characterChoice) {
-			case 1: {
-				n10 = 0;
-				break;
-			}
-			case 2: {
-				n10 = 1;
-				break;
-			}
-			case 3: {
-				n10 = 2;
-				break;
-			}
-			}
-			graphics->drawRegion(app->hud->imgPortraitsSM, 0, n9 * n10, width, n9, dialogRect[0] + 2, dialogRect[1] + 3, 0, 0, 0);
-			n += app->hud->imgPortraitsSM->width;
-			n += 2;
-		}
-		else if (this->dialogStyle == 5) {
-			if ((this->dialogFlags & 0x2) != 0x0) {
-				graphics->drawRegion(this->imgUIImages, 0, 12, 10, 6, this->SCR_CX - 64, dialogRect[1] + dialogRect[3] + 6, 36, 0, 0);
-			}
-			else {
-				graphics->drawRegion(this->imgUIImages, 0, 0, 10, 6, this->SCR_CX - 64, dialogRect[1] + 1, 36, 0, 0);
-			}
-		}
-		else if (this->dialogStyle == 1) {
-			graphics->drawRegion(this->imgUIImages, 10, 0, 10, 6, this->SCR_CX - 64, dialogRect[1] + 1, 36, 0, 0);
-		}
-		else if (this->dialogStyle == 10) {
-			graphics->drawRegion(this->imgUIImages, 20, 6, 10, 6, this->SCR_CX + 10, dialogRect[1] + dialogRect[3], 0, 0, 0);
-		}
-		else if (this->dialogStyle == 14) {
-			graphics->drawRegion(this->imgUIImages, 45, 0, 15, 9, this->SCR_CX + 10, dialogRect[1] + dialogRect[3], 0, 0, 0);
-		}
-	}
-	if (this->currentDialogLine < currentDialogLine) {
-		this->currentDialogLine = currentDialogLine;
-	}
-	int n11 = dialogRect[1] + 2;
-	for (int n12 = 0; n12 < this->dialogViewLines && this->currentDialogLine + n12 < this->numDialogLines; ++n12) {
-		short n13 = this->dialogIndexes[(this->currentDialogLine + n12) * 2];
-		short n14 = this->dialogIndexes[(this->currentDialogLine + n12) * 2 + 1];
-		int n15 = 0;
-		if (n12 == this->dialogTypeLineIdx) {
-			n15 = (app->time - this->dialogLineStartTime) / 25;
-			if (n15 >= n14) {
-				n15 = n14;
-				++this->dialogTypeLineIdx;
-				this->dialogLineStartTime = app->time;
-			}
-		}
-		else if (n12 < this->dialogTypeLineIdx) {
-			n15 = n14;
-		}
-		if (this->dialogStyle == 9) {
-			this->graphics.currentCharColor = 2;
-		}
-		graphics->drawString(this->dialogBuffer, n, n11, 0, n13, n15);
-		n11 += 16;
-	}
-	int8_t b = this->OSC_CYCLE[app->time / 200 % 4];
-	short n16 = app->game->scriptStateVars[4];
-	if ((this->dialogFlags & 0x2) != 0x0) {
-		int y = this->screenRect[3] - 214;
-		int x = this->screenRect[0] + 3;
-
-		Text* smallBuffer = app->localization->getSmallBuffer();
-		Text* smallBuffer2 = app->localization->getSmallBuffer();
-		if ((this->dialogFlags & 0x8) != 0x0) {
-			app->localization->composeText((short)0, (short)214, smallBuffer); // VIOS_MALLOC
-			app->localization->composeText((short)0, (short)215, smallBuffer2); // VIOS_DELETE
-		}
-		else {
-			app->localization->composeText((short)0, (short)141, smallBuffer); // YES_LABEL
-			app->localization->composeText((short)0, (short)140, smallBuffer2); // NO_LABEL
-		}
-		smallBuffer->dehyphenate();
-		smallBuffer2->dehyphenate();
-
-		int strX = x + 4; // Old x + 8
-		int strY = y + 9; // Old y + 1
-		int strH = 32;
-		int strW = std::max(smallBuffer->getStringWidth(), smallBuffer2->getStringWidth());
-		strW += 20;// strW += 18
-
-		//------------------------------------------------------------------------
-		this->m_dialogButtons->GetButton(0)->drawButton = true;
-		int hColor = (this->m_dialogButtons->GetButton(0)->highlighted) ? 0xFF8A8A8A : 0xFF4A4A4A;
-		graphics->fillRect(x, y, strW, strH, hColor);
-		graphics->drawRect(x, y, strW, strH, -1);
-		graphics->drawString(smallBuffer, strX, strY, 4);
-		this->m_dialogButtons->GetButton(0)->SetTouchArea(x, y, strW, (strH - 5));
-
-		if (n16 == 0) { // J2ME/BREW
-			graphics->drawCursor(strX + strW + b - 8, strY, 0x18, false);
-		}
-
-		//------------------------------------------------------------------------
-		strY = y + 73; // Old y + 71
-		this->m_dialogButtons->GetButton(1)->drawButton = true;
-		hColor = (this->m_dialogButtons->GetButton(1)->highlighted) ? 0xFF8A8A8A : 0xFF4A4A4A;
-		graphics->fillRect(x, y + 64, strW, strH, hColor);
-		graphics->drawRect(x, y + 64, strW, strH, -1);
-		graphics->drawString(smallBuffer2, strX, strY, 4);
-		this->m_dialogButtons->GetButton(1)->SetTouchArea(x, y + 64, strW, (strH - 5));
-
-		if (n16 == 1) {// J2ME/BREW
-			graphics->drawCursor(strX + strW + b - 8, strY, 0x18, false);
-		}
-		//------------------------------------------------------------------------
-		smallBuffer->dispose();
-		smallBuffer2->dispose();
-	}
-	else if (this->dialogFlags != 0 && this->currentDialogLine >= this->numDialogLines - this->dialogViewLines) {
-		short n19 = 30;
-		short n20 = 31;
-		Text* smallBuffer3 = app->localization->getSmallBuffer();
-		if ((this->dialogFlags & 0x1) != 0x0) {
-			n19 = 140;
-			n20 = 141;
-		}
-		if ((this->dialogFlags & 0x4) != 0x0 || (this->dialogFlags & 0x1) != 0x0) {
-			int n21 = this->dialogRect[1] + (16 * this->dialogViewLines) - 14;
-
-			int v75 = Applet::FONT_HEIGHT[app->fontType] + 2;
-			int v113 = Applet::FONT_HEIGHT[app->fontType];
-
-			//------------------------------------------------------------------------
-			smallBuffer3->setLength(0);
-			app->localization->composeText((short)0, n19, smallBuffer3);
-			smallBuffer3->dehyphenate();
-			this->m_dialogButtons->GetButton(3)->drawButton = true;
-			int hColor = (this->m_dialogButtons->GetButton(3)->highlighted) ? ((n2 + 0x333333) | 0xFF000000) : n2;
-			graphics->fillRect(96, n21, 96, v75, hColor);
-			graphics->drawRect(96, n21, 96, v75, -1);
-			graphics->drawString(smallBuffer3, 144, n21 + (v75 >> 1) + 2, 3);
-			this->m_dialogButtons->GetButton(3)->SetTouchArea(96, n21 - 40, 96, v113 + 42);
-
-			if (n16 == 0) { // J2ME/BREW
-				graphics->drawCursor((128 - (smallBuffer3->getStringWidth() >> 1)) + b, n21 + (v113 >> 1) - 5, 0);
-			}
-			//------------------------------------------------------------------------
-			smallBuffer3->setLength(0);
-			app->localization->composeText((short)0, n20, smallBuffer3);
-			smallBuffer3->dehyphenate();
-			this->m_dialogButtons->GetButton(4)->drawButton = true;
-			hColor = (this->m_dialogButtons->GetButton(4)->highlighted) ? ((n2 + 0x333333) | 0xFF000000) : n2;
-			graphics->fillRect(288, n21, 96, v75, hColor);
-			graphics->drawRect(288, n21, 96, v75, -1);
-			graphics->drawString(smallBuffer3, 336, n21 + (v75 >> 1) + 2, 3);
-			this->m_dialogButtons->GetButton(4)->SetTouchArea(288, n21 - 40, 96, v113 + 42);
-
-			if (n16 == 1) { // J2ME/BREW
-				graphics->drawCursor((320 - (smallBuffer3->getStringWidth() >> 1)) + b, n21 + (v113 >> 1) - 5, 4);
-			}
-		}
-		smallBuffer3->dispose();
-	}
-
-	if (this->numDialogLines <= this->dialogViewLines) {
-		if (!(this->dialogFlags & 2) && !(this->dialogFlags & 4) && !(this->dialogFlags & 1)) {
-			this->m_dialogButtons->GetButton(7)->drawButton = true;
-			this->m_dialogButtons->GetButton(7)->Render(graphics);
-		}
-	}
-	else {
-		int numDialogLines;
-		if (this->currentDialogLine + this->dialogViewLines > this->numDialogLines) {
-			numDialogLines = this->numDialogLines;
-		}
-		else {
-			numDialogLines = this->currentDialogLine + this->dialogViewLines;
-		}
-
-		this->drawScrollBar(graphics, dialogRect[0] + dialogRect[2] - 1, dialogRect[1] + 2, dialogRect[3] - 4, this->currentDialogLine - currentDialogLine, numDialogLines - currentDialogLine, this->numDialogLines - currentDialogLine, this->dialogViewLines);
-
-		if (this->numDialogLines - currentDialogLine > this->dialogViewLines) {
-			if (this->currentDialogLine > 1) {
-				this->m_dialogButtons->GetButton(5)->drawButton = true;
-				this->m_dialogButtons->GetButton(5)->Render(graphics);
-			}
-			if (this->currentDialogLine < this->numDialogLines - this->dialogViewLines) {
-				this->m_dialogButtons->GetButton(6)->drawButton = true;
-				this->m_dialogButtons->GetButton(6)->Render(graphics);
-			}
-			else {
-				this->m_dialogButtons->GetButton(7)->drawButton = true;
-				this->m_dialogButtons->GetButton(7)->Render(graphics);
-			}
-		}
-		else {
-			this->m_dialogButtons->GetButton(7)->drawButton = true;
-			this->m_dialogButtons->GetButton(7)->Render(graphics);
-		}
-	}
-
-	this->m_dialogButtons->GetButton(8)->drawButton = true;
-	this->m_dialogButtons->GetButton(8)->Render(graphics);
-	this->clearLeftSoftKey();
-
-#if 0
-	if (this->dialogFlags > this->dialogViewLines) {
-		int numDialogLines;
-		if (this->currentDialogLine + this->dialogViewLines > this->numDialogLines) {
-			numDialogLines = this->numDialogLines;
-		}
-		else {
-			numDialogLines = this->currentDialogLine + this->dialogViewLines;
-		}
-		if (this->dialogStyle == 3) {
-			this->drawScrollBar(graphics, dialogRect[0] + dialogRect[2] - 1, dialogRect[1] - 8, dialogRect[3] + 16, this->currentDialogLine - currentDialogLine, numDialogLines - currentDialogLine, this->numDialogLines - currentDialogLine, this->dialogViewLines);
-		}
-		else {
-			this->drawScrollBar(graphics, dialogRect[0] + dialogRect[2] - 1, dialogRect[1] + 2, dialogRect[3] - 4, this->currentDialogLine - currentDialogLine, numDialogLines - currentDialogLine, this->numDialogLines - currentDialogLine, this->dialogViewLines);
-		}
-	}
-	if (this->currentDialogLine > currentDialogLine) {
-		this->setLeftSoftKey((short)0, (short)125);
-	}
-	else {
-		//this->clearLeftSoftKey();
-	}
-#endif
-}
+void Canvas::dialogState(Graphics* graphics) { this->dialogSystem.dialogState(graphics); }
 
 void Canvas::automapState() {
 	Applet* app = CAppContainer::getInstance()->app;
@@ -3726,7 +3015,7 @@ void Canvas::playingState() {
 	if (app->hud->isShiftingCenterMsg()) {
 		this->staleView = true;
 	}
-	if (this->knockbackDist == 0 && app->game->activePropogators == 0 && app->game->animatingEffects == 0 && app->game->monstersTurn != 0 && this->numHelpMessages == 0) {
+	if (this->knockbackDist == 0 && app->game->activePropogators == 0 && app->game->animatingEffects == 0 && app->game->monstersTurn != 0 && this->dialogSystem.numHelpMessages == 0) {
 		app->game->updateMonsters();
 	}
 	app->game->updateLerpSprites();
@@ -4235,229 +3524,14 @@ void Canvas::drawAutomap(Graphics* graphics, bool b) {
 	LargeBuffer->dispose();
 }
 
-void Canvas::closeDialog(bool skipDialog) {
-	Applet* app = CAppContainer::getInstance()->app;
+void Canvas::closeDialog(bool skipDialog) { this->dialogSystem.closeDialog(skipDialog); }
 
-	this->dialogClosing = true;
-	this->specialLootIcon = -1;
-	this->showingLoot = false;
-	app->player->unpause(app->time - this->dialogStartTime);
-	this->dialogBuffer->dispose();
-	this->dialogBuffer = nullptr;
-	if (this->numHelpMessages == 0 && (this->dialogStyle == 3 || this->dialogStyle == 4 || (this->dialogStyle == 2 && this->dialogType == 1) || (this->dialogStyle == 12 && app->game->scriptStateVars[4] == 1 && !skipDialog))) {
-		app->game->queueAdvanceTurn = true;
-	}
-	if (this->dialogStyle == 11 && (this->dialogFlags & 0x2) != 0x0) {
-		if (app->game->scriptStateVars[4] == 0) {
-			++app->game->numMallocsForVIOS;
-		}
-		else {
-			app->game->angryVIOS = true;
-		}
-	}
-	if (this->oldState == Canvas::ST_INTER_CAMERA) {
-		app->game->activeCameraTime = app->gameTime - app->game->activeCameraTime;
-		this->setState(Canvas::ST_INTER_CAMERA);
-	}
-	else if (app->game->isCameraActive()) {
-		app->game->activeCameraTime = app->gameTime - app->game->activeCameraTime;
-		this->setState(Canvas::ST_CAMERA);
-	}
-	else if (this->oldState == Canvas::ST_COMBAT && !this->combatDone) {
-		this->setState(Canvas::ST_COMBAT);
-	}
-	else {
-		this->setState(Canvas::ST_PLAYING);
-	}
-	if (this->dialogResumeMenu) {
-		this->setState(Canvas::ST_MENU);
-	}
-	this->dialogClosing = false;
-	if (this->dialogResumeScriptAfterClosed) {
-		app->game->skipDialog = skipDialog;
-		this->dialogThread->run();
-		app->game->skipDialog = false;
-	}
-	if (this->dialogStyle == 12 && app->player->attemptingToSelfDestructFamiliar) {
-		app->player->attemptingToSelfDestructFamiliar = false;
-		if (app->game->scriptStateVars[4] == 1 && !skipDialog) {
-			app->player->familiarDying(true);
-		}
-	}
-	else if (this->dialogStyle == 13 && this->repairingArmor) {
-		if (app->game->scriptStateVars[4] == 1 && !skipDialog) {
-			if (app->player->inventory[12] >= 5) {
-				app->player->give(0, 12, -5);
-				app->player->give(0, 11, 1);
-				app->sound->playSound(1054, 0, 3, 0);
-				int modifyStat = app->player->modifyStat(3, 1);
-				if (modifyStat > 0) {
-					app->localization->resetTextArgs();
-					app->localization->addTextArg(modifyStat);
-					app->hud->addMessage((short)0, (short)212, 3);
-				}
-				else {
-					app->hud->addMessage((short)0, (short)213, 3);
-				}
-			}
-			else {
-				if (app->player->characterChoice == 1) {
-					app->sound->playSound(1073, 0, 3, 0);
-				}
-				else if (app->player->characterChoice >= 1 && app->player->characterChoice <= 3) {
-					app->sound->playSound(1072, 0, 3, 0);
-				}
-				app->hud->addMessage((short)0, (short)210, 3);
-			}
-		}
-		this->endArmorRepair();
-	}
-	this->repaintFlags |= Canvas::REPAINT_VIEW3D;
-}
+void Canvas::prepareDialog(Text* text, int dialogStyle, int dialogFlags) { this->dialogSystem.prepareDialog(text, dialogStyle, dialogFlags); }
 
-void Canvas::prepareDialog(Text* text, int dialogStyle, int dialogFlags) {
-	Applet* app = CAppContainer::getInstance()->app;
-	int i = 0;
-	int n = 0;
-	Text* smallBuffer = app->localization->getSmallBuffer();
-	if (dialogStyle == 3) {
-		this->dialogViewLines = 4;
-	}
-	else if (dialogStyle == 8) {
-		this->dialogViewLines = 3;
-	}
-	else if (dialogStyle == 2) {
-		this->dialogViewLines = 3;
-	}
-	else {
-		this->dialogViewLines = 4;
-	}
-	if (dialogStyle == 1 || (dialogStyle == 5 && ((dialogFlags & 0x2) != 0x0 || (dialogFlags & 0x4) != 0x0))) {
-		this->updateFacingEntity = true;
-		Entity* facingEntity = app->player->facingEntity;
-		if (facingEntity != nullptr && facingEntity->def != nullptr && (facingEntity->def->eType == 2 || facingEntity->def->eType == 3)) {
-			app->combat->curTarget = facingEntity;
-			int sprite = facingEntity->getSprite();
-			if (facingEntity->def->eType == 2) {
-				app->render->mapSpriteInfo[sprite] = ((app->render->mapSpriteInfo[sprite] & 0xFFFF00FF) | 96 << 8);
-			}
-			app->game->scriptStateVars[4] = 0;
-		}
-	}
-	if (this->dialogBuffer == nullptr) {
-		this->dialogBuffer = app->localization->getLargeBuffer();
-	}
-	else {
-		this->dialogBuffer->setLength(0);
-	}
-	if ((dialogFlags & 0x4) != 0x0 || (dialogFlags & 0x1) != 0x0) {
-		if (dialogStyle == 12) {
-			app->game->scriptStateVars[4] = 0;
-		}
-		else {
-			app->game->scriptStateVars[4] = 1;
-		}
-		smallBuffer->setLength(0);
-		app->localization->composeText((short)0, (short)50, smallBuffer);
-		text->append(smallBuffer);
-	}
-	if (dialogStyle == 8) {
-		int n2 = this->dialogMaxChars;
-		//int n3 = Hud.imgPortraitsSM.getWidth() / 9 + 1;
-		smallBuffer->setLength(0);
-		smallBuffer->append("   ");
-		int n3 = smallBuffer->length();
-		for (int j = 0; j < 2; ++j) {
-			Text* dialogBuffer = this->dialogBuffer;
-			int length;
-			for (int k = 0; k < text->length(); k += dialogBuffer->wrapText(length, n2 - n3, 1, '|')) {
-				length = dialogBuffer->length();
-				dialogBuffer->append(text, k);
-			}
-			if (j == 0) {
-				if (dialogBuffer->getNumLines() <= 3) {
-					break;
-				}
-				dialogBuffer->setLength(0);
-				n2 = this->dialogWithBarMaxChars;
-			}
-		}
-	}
-	else if (dialogStyle == 3) {
-		this->dialogBuffer->append(text);
-		this->dialogBuffer->wrapText(this->scrollMaxChars);
-		if (this->dialogBuffer->getNumLines() > this->dialogViewLines) {
-			this->dialogBuffer->setLength(0);
-			this->dialogBuffer->append(text);
-			this->dialogBuffer->wrapText(this->scrollWithBarMaxChars);
-		}
-	}
-	else {
-		this->dialogBuffer->append(text);
-		this->dialogBuffer->wrapText(this->dialogMaxChars);
-		int numLines = this->dialogBuffer->getNumLines();
-		if (dialogStyle == 2 || dialogStyle == 16 || dialogStyle == 9) {
-			--numLines;
-		}
-		if (numLines > this->dialogViewLines) {
-			this->dialogBuffer->setLength(0);
-			this->dialogBuffer->append(text);
-			this->dialogBuffer->wrapText(this->dialogWithBarMaxChars);
-		}
-	}
-	int length2 = this->dialogBuffer->length();
-	this->numDialogLines = 0;
-	while (i < length2) {
-		if (this->dialogBuffer->charAt(i) == '|') {
-			this->dialogIndexes[this->numDialogLines * 2] = (short)n;
-			this->dialogIndexes[this->numDialogLines * 2 + 1] = (short)(i - n);
-			this->numDialogLines++;
-			n = i + 1;
-		}
-		++i;
-	}
-	this->dialogIndexes[this->numDialogLines * 2] = (short)n;
-	this->dialogIndexes[this->numDialogLines * 2 + 1] = (short)(length2 - n);
-	this->numDialogLines++;
-	this->currentDialogLine = 0;
-	this->dialogLineStartTime = app->time;
-	this->dialogTypeLineIdx = 0;
-	this->dialogStartTime = app->time;
-	this->dialogItem = nullptr;
-	this->dialogFlags = dialogFlags;
-	this->dialogStyle = dialogStyle;
-	smallBuffer->dispose();
-
-	if (dialogStyle == 2) {
-		app->sound->playSound(1027, 0, 3, 0);
-	}
-}
-
-void Canvas::startDialog(ScriptThread* scriptThread, short n, int n2, int n3) {
-	this->startDialog(scriptThread, (short)0, n, n2, n3, false);
-}
-
-void Canvas::startDialog(ScriptThread* scriptThread, short n, short n2, int n3, int n4, bool b) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	Text* largeBuffer = app->localization->getLargeBuffer();
-	app->localization->composeText(n, n2, largeBuffer);
-	this->startDialog(scriptThread, largeBuffer, n3, n4, b);
-	largeBuffer->dispose();
-}
-
-void Canvas::startDialog(ScriptThread* scriptThread, Text* text, int n, int n2) {
-	this->startDialog(scriptThread, text, n, n2, false);
-}
-
-void Canvas::startDialog(ScriptThread* dialogThread, Text* text, int n, int n2, bool dialogResumeScriptAfterClosed) {
-	this->dialogResumeScriptAfterClosed = dialogResumeScriptAfterClosed;
-	this->dialogResumeMenu = false;
-	this->dialogThread = dialogThread;
-	this->readyWeaponSound = 0;
-	this->prepareDialog(text, n, n2);
-	this->setState(Canvas::ST_DIALOG);
-}
+void Canvas::startDialog(ScriptThread* scriptThread, short n, int n2, int n3) { this->dialogSystem.startDialog(scriptThread, n, n2, n3); }
+void Canvas::startDialog(ScriptThread* scriptThread, short n, short n2, int n3, int n4, bool b) { this->dialogSystem.startDialog(scriptThread, n, n2, n3, n4, b); }
+void Canvas::startDialog(ScriptThread* scriptThread, Text* text, int n, int n2) { this->dialogSystem.startDialog(scriptThread, text, n, n2); }
+void Canvas::startDialog(ScriptThread* dialogThread, Text* text, int n, int n2, bool dialogResumeScriptAfterClosed) { this->dialogSystem.startDialog(dialogThread, text, n, n2, dialogResumeScriptAfterClosed); }
 
 void Canvas::renderScene(int viewX, int viewY, int viewZ, int viewAngle, int viewPitch, int viewRoll, int viewFov) {
 	Applet* app = CAppContainer::getInstance()->app;
@@ -4562,498 +3636,22 @@ void Canvas::drawPlayingSoftKeys() {
 	}
 }
 
-void Canvas::changeStoryPage(int i) {
-	if (i < 0 && this->storyPage == 0) {
-		if (this->state == Canvas::ST_INTRO) {
-			this->setState(Canvas::ST_CHARACTER_SELECTION);
-			this->dialogBuffer->dispose();
-			this->dialogBuffer = nullptr;
-		}
-	}
-	else {
-		this->storyPage += i;
-	}
-}
+void Canvas::changeStoryPage(int i) { this->introSequenceManager.changeStoryPage(i); }
+void Canvas::drawStory(Graphics* graphics) { this->introSequenceManager.drawStory(graphics); }
+int Canvas::getCharacterConstantByOrder(int i) { return this->introSequenceManager.getCharacterConstantByOrder(i); }
 
-void Canvas::drawStory(Graphics* graphics)
-{
-	Applet* app = CAppContainer::getInstance()->app;
+void Canvas::drawCharacterSelection(Graphics* graphics) { this->introSequenceManager.drawCharacterSelection(graphics); }
+void Canvas::drawCharacterSelectionAvatar(int i, int x, int y, Graphics* graphics) { this->introSequenceManager.drawCharacterSelectionAvatar(i, x, y, graphics); }
+void Canvas::drawCharacterSelectionStats(int i, Text* text, int x, int y, Graphics* graphics) { this->introSequenceManager.drawCharacterSelectionStats(i, text, x, y, graphics); }
 
-	Text* this_00;
-	Text* this_01;
-	short i2;
-	Text* text;
+void Canvas::dequeueHelpDialog() { this->dialogSystem.dequeueHelpDialog(); }
+void Canvas::dequeueHelpDialog(bool b) { this->dialogSystem.dequeueHelpDialog(b); }
 
-	if (this->storyPage < this->storyTotalPages) {
-		graphics->drawImage(app->hackingGame->imgHelpScreenAssets, 0, 0, 0, 0, 0);
-
-		this_00 = app->localization->getLargeBuffer();
-		if ((this->state != Canvas::ST_EPILOGUE) || (0 < this->storyPage)) {
-			this_00->setLength(0);
-			app->localization->composeText(3, 80, this_00); // "Back"
-			this_00->dehyphenate();
-			app->setFontRenderMode(2);
-			if (this->m_storyButtons->GetButton(0)->highlighted != false) {
-				app->setFontRenderMode(0);
-			}
-			graphics->drawString(this_00, 17, 310, 36); // Old -> 2, 319, 36
-			app->setFontRenderMode(0);
-		}
-
-		this_00->setLength(0);
-		this_01 = app->localization->getSmallBuffer();
-		if (this->storyPage < this->storyTotalPages + -1) {
-			app->localization->composeText(0, 56, this_00); // more
-			i2 = 40; // Skip
-			text = this_01;
-			this->m_storyButtons->GetButton(1)->touchAreaDrawing.x = 420; // [GEC], ajusta la posicion X de la caja de toque
-			this->m_storyButtons->GetButton(1)->touchAreaDrawing.w = 60; // [GEC], ajusta el ancho de la caja de toque
-		}
-		else {
-			i2 = 43; // Continue
-			text = this_00;
-			this->m_storyButtons->GetButton(1)->touchAreaDrawing.x = 380; // [GEC], ajusta la posicion X de la caja de toque
-			this->m_storyButtons->GetButton(1)->touchAreaDrawing.w = 100; // [GEC], ajusta el ancho de la caja de toque
-		}
-
-		app->localization->composeText(0, i2, text);
-		this_00->dehyphenate();
-		this_01->dehyphenate();
-		app->setFontRenderMode(2);
-		if (this->m_storyButtons->GetButton(1)->highlighted != false) {
-			app->setFontRenderMode(0);
-		}
-		graphics->drawString(this_00, 463, 310, 40); // Old -> 478, 319, 40);
-		app->setFontRenderMode(0);
-
-		app->setFontRenderMode(2);
-		if (this->m_storyButtons->GetButton(2)->highlighted != false) {
-			app->setFontRenderMode(0);
-		}
-		graphics->drawString(this_01, 463, 10, 8); // Old -> 478, 1, 8);
-
-		app->setFontRenderMode(0);
-		this_00->dispose();
-		this_01->dispose();
-
-		graphics->drawString(this->dialogBuffer, this->storyX, this->storyY, 21, 0, this->storyIndexes[0],
-			this->storyIndexes[1] - this->storyIndexes[0]);
-	}
-}
-
-int Canvas::getCharacterConstantByOrder(int i) {
-	switch (i) {
-	case 0: {
-		return 1;
-	}
-	case 1: {
-		return 3;
-	}
-	case 2: {
-		return 2;
-	}
-	}
-	return 0;
-}
-
-void Canvas::drawCharacterSelection(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-	fmButton* button;
-	Text* textBuff;
-	Image* img;
-	int textID;
-
-
-	graphics->clipRect(0, 0, this->screenRect[2], this->screenRect[3]);
-	graphics->drawImage(this->imgCharSelectionBG, 0, 0, 0, 0, 0);
-	graphics->drawImage(this->imgTopBarFill, this->SCR_CX - this->imgTopBarFill->width / 2, 0, 0, 0, 0);
-
-	textBuff = app->localization->getSmallBuffer();
-	textBuff->setLength(0);
-
-	switch (this->stateVars[0]) {
-		case 1: {
-			app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::CHARACTER_SELECT_MAJOR_NAME, textBuff);
-			break;
-		}
-		case 3: {
-			app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::CHARACTER_SELECT_SCIENTIST_NAME, textBuff);
-			break;
-		}
-		case 2: {
-			app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::CHARACTER_SELECT_SERGEANT_NAME, textBuff);
-			break;
-		}
-	}
-
-	textBuff->dehyphenate();
-	graphics->drawString(textBuff, this->SCR_CX, 3, 1);
-
-	int j = 152;
-	for (int i = 0; i < ((this->stateVars[1] == 0) ? 3 : 1); i++) {
-		bool b = this->getCharacterConstantByOrder(i) == this->stateVars[0] || this->stateVars[1] != 0;
-
-		//iVar2 = j + -0xf;
-		graphics->drawRegion(this->imgCharacterSelectionAssets, 0, 0, 31, 83, j - 15, 55, 0, 0, 0);
-		graphics->drawRegion(this->imgCharacterSelectionAssets, 0, 0, 31, 83, j + 16, 55, 0, 4, 0);
-
-		button = this->m_characterButtons->GetButton(i);
-		if (button->highlighted)
-		{
-			graphics->fillRect(j - 15, 55, 62, 83, 0x2896ff);
-			graphics->drawRegion(this->imgCharacterSelectionAssets, 31, 0, 27, 60, j - 11, 64, 0, 0, 0);
-			graphics->drawRegion(this->imgCharacterSelectionAssets, 31, 0, 27, 60, j + 16, 64, 0, 4, 0);
-		}
-
-		button->SetTouchArea(j - 15, 55, 62, 83);
-
-		if (i < 2 && this->stateVars[1] == 0) {
-			for (int x = (j + 46); x < (j + 64); x += 6) {
-				graphics->drawRegion(this->imgCharacterSelectionAssets, 51, 60, 6, 19, x, 81, 0, 0, 0);
-			}
-		}
-
-		if (b != 0) {
-			graphics->drawRegion(this->imgCharacterSelectionAssets, 31, 60, 20, 32, j - 3, 161, 0, 0, 0);
-			graphics->drawRegion(this->imgCharacterSelectionAssets, 31, 60, 19, 32, j + 17, 161, 0, 4, 0);
-		}
-
-		switch ((this->stateVars[1] == 0) ? this->getCharacterConstantByOrder(i) : this->stateVars[0]) {
-			case 1: {
-				img = this->imgMajorMugs;
-				textID = MenuStrings::CHARACTER_SELECT_MAJOR;
-				this->graphics.currentCharColor = 5;
-				break;
-			}
-			case 3: {
-				img = this->imgScientistMugs;
-				textID = MenuStrings::CHARACTER_SELECT_SCIENTIST;
-				this->graphics.currentCharColor = 5;
-				break;
-			}
-			case 2: {
-				img = this->imgSargeMugs;
-				textID = MenuStrings::CHARACTER_SELECT_SERGEANT;
-				this->graphics.currentCharColor = 5;
-				break;
-			}
-		}
-
-		graphics->drawRegion(img, 0, 0, 0x20, 0x20, j, 0x4b, 0, 0, 0);
-		textBuff->setLength(0);
-		app->localization->composeText(Strings::FILE_MENUSTRINGS, textID, textBuff);
-		textBuff->dehyphenate();
-		graphics->drawString(textBuff, j + (img->width / 2), 142, 1);
-
-		j += 75;
-	}
-
-	this->drawCharacterSelectionAvatar(this->stateVars[0], -10, 0x8c, graphics);
-	this->drawCharacterSelectionStats(this->stateVars[0], textBuff, 0x16a, 0x73, graphics);
-
-	textBuff->setLength(0);
-	app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::CHARACTER_SELECT_CONFIRM, textBuff);
-	textBuff->wrapText(0x18, '\n');
-	graphics->drawString(textBuff, this->SCR_CX, this->screenRect[3] - 85, 1);
-
-	textBuff->setLength(0);
-	app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::BACK_ITEM, textBuff);
-	button = this->m_characterButtons->GetButton(4);
-	graphics->fillRect(this->SCR_CX - 85, this->screenRect[3] - 60, 70, 30, button->highlighted ? 0x2896ff : 0x646464);
-	graphics->drawRect(this->SCR_CX - 85, this->screenRect[3] - 60, 70, 30);
-	button->SetTouchArea(this->SCR_CX - 85, this->screenRect[3] - 60, 70, 30);
-	graphics->drawString(textBuff, this->SCR_CX - 50, this->screenRect[3] - 50, 1);
-
-	int8_t b = this->OSC_CYCLE[app->time / 100 % 4];
-
-	// [GEC]
-	if (this->stateVars[2] == 0 && this->stateVars[8] == 1) { // J2ME/BREW
-		graphics->drawCursor((this->SCR_CX - 50 - 6) - (textBuff->getStringWidth() / 2) + b, this->screenRect[3] - 50, 0x18, true);
-	}
-
-	textBuff->setLength(0);
-	app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::YES_LABEL, textBuff);
-	button = this->m_characterButtons->GetButton(3);
-	graphics->fillRect(this->SCR_CX + 15, this->screenRect[3] - 60, 70, 30, button->highlighted ? 0x2896ff : 0x646464);
-	graphics->drawRect(this->SCR_CX + 15, this->screenRect[3] - 60, 70, 30);
-	button->SetTouchArea(this->SCR_CX + 15, this->screenRect[3] - 60, 70, 30);
-	graphics->drawString(textBuff, this->SCR_CX + 50, this->screenRect[3] - 50, 1);
-
-	// [GEC]
-	if (this->stateVars[2] == 1 && this->stateVars[8] == 1) { // J2ME/BREW
-		graphics->drawCursor((this->SCR_CX + 50 - 6) - (textBuff->getStringWidth() / 2) + b, this->screenRect[3] - 50, 0x18, true);
-	}
-
-	textBuff->dispose();
-}
-
-void Canvas::drawCharacterSelectionAvatar(int i, int x, int y, Graphics* graphics)
-{
-	Applet* app = CAppContainer::getInstance()->app;
-	Image* troso, * legs;
-
-	switch (i) {
-	case 1: {
-		legs = this->imgMajor_legs;
-		troso = this->imgMajor_torso;
-		break;
-	}
-	case 3: {
-		legs = this->imgRiley_legs;
-		troso = this->imgRiley_torso;
-		break;
-	}
-	case 2: {
-		legs = this->imgSarge_legs;
-		troso = this->imgSarge_torso;
-		break;
-	}
-	}
-
-	graphics->drawImage(legs, x, y, 0, 0, 0);
-	graphics->drawImage(troso, x, y - (app->time / 1000 & 1U), 0, 0, 0);
-}
-
-void Canvas::drawCharacterSelectionStats(int i, Text* text, int x, int y, Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-	int defense;
-	int strength;
-	int accuracy;
-	int agility;
-	int iq;
-
-	switch (i) {
-	case 1: {
-		defense = 8;
-		strength = 9;
-		accuracy = 97;
-		agility = 12;
-		iq = 110;
-		break;
-	}
-	case 3: {
-		defense = 8;
-		strength = 8;
-		accuracy = 87;
-		agility = 6;
-		iq = 150;
-		break;
-	}
-	case 2: {
-		defense = 12;
-		strength = 14;
-		accuracy = 92;
-		agility = 6;
-		iq = 100;
-		break;
-	}
-	}
-
-	if (app->game->difficulty == 2) {
-		defense = 0;
-	}
-
-	graphics->drawImage(this->imgCharacter_select_stat_header, x - 2, y - 4, 0, 0, 0);
-	graphics->drawImage(this->imgCharacter_select_stat_bar, x - 2, y + 14, 0, 0, 0);
-
-	int yFix = -2; // [GEC] ajusta el texto
-
-	text->setLength(0);
-	app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::DEFENSE_LABEL, text);
-	text->dehyphenate();
-	text->append(defense);
-	this->graphics.currentCharColor = 5;
-	graphics->drawString(text, x, y + 18 + yFix, 20);
-	graphics->drawImage(this->imgCharacter_select_stat_bar, x - 2, y + 34, 0, 0, 0);
-
-	text->setLength(0);
-	app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::STRENGTH_LABEL, text);
-	text->dehyphenate();
-	text->append(strength);
-	this->graphics.currentCharColor = 5;
-	graphics->drawString(text, x, y + 38 + yFix, 20);
-	graphics->drawImage(this->imgCharacter_select_stat_bar, x - 2, y + 54, 0, 0, 0);
-
-	text->setLength(0);
-	app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::ACCURACY_LABEL, text);
-	text->dehyphenate();
-	text->append(accuracy);
-	this->graphics.currentCharColor = 5;
-	graphics->drawString(text, x, y + 58 + yFix, 20);
-	graphics->drawImage(this->imgCharacter_select_stat_bar, x - 2, y + 74, 0, 0, 0);
-
-	text->setLength(0);
-	app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::AGILITY_LABEL, text);
-	text->dehyphenate();
-	text->append(agility);
-	this->graphics.currentCharColor = 5;
-	graphics->drawString(text, x, y + 78 + yFix, 20);
-	graphics->drawImage(this->imgCharacter_select_stat_bar, x - 2, y + 94, 0, 0, 0);
-
-	text->setLength(0);
-	app->localization->composeText(Strings::FILE_MENUSTRINGS, MenuStrings::IQ_LABEL, text);
-	text->dehyphenate();
-	text->append(iq);
-	this->graphics.currentCharColor = 5;
-	graphics->drawString(text, x, y + 98 + yFix, 20);
-}
-
-void Canvas::dequeueHelpDialog() {
-	this->dequeueHelpDialog(false);
-}
-
-void Canvas::dequeueHelpDialog(bool b) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (this->numHelpMessages == 0) {
-		return;
-	}
-	if (this->state == Canvas::ST_DIALOG || this->dialogClosing) {
-		return;
-	}
-	if (!b && this->state != Canvas::ST_PLAYING && this->state != Canvas::ST_INTER_CAMERA && app->game->monstersTurn == 0) {
-		return;
-	}
-	if (app->game->secretActive) {
-		return;
-	}
-
-	int n = 2;
-	int n2 = 0;
-	Text* largeBuffer = app->localization->getLargeBuffer();
-	this->dialogType = this->helpMessageTypes[0];
-	void* object = this->helpMessageObjs[0];
-	short n3 = this->helpMessageThreads[0];
-	if (this->dialogType == 1) {
-		EntityDef* entityDef = (EntityDef*)object;
-		uint8_t eSubType = entityDef->eSubType;
-		short n4 = -1;
-		if (eSubType == 0) {
-			if (entityDef->parm >= 0 && entityDef->parm < 11) {
-				n4 = 32;
-			}
-			else if ((entityDef->parm >= 16 && entityDef->parm < 18) || (entityDef->parm >= 11 && entityDef->parm < 13)) {
-				n4 = 35;
-			}
-			else if (entityDef->parm == 18) {
-				n4 = 34;
-			}
-		}
-		else if (eSubType == 1) {
-			n4 = 36;
-		}
-		else if (eSubType != 2) {
-			app->Error(0); // ERR_DEQUEUEHELP
-			return;
-		}
-		if (entityDef != nullptr) {
-			app->localization->composeText((short)1, entityDef->longName, largeBuffer);
-			largeBuffer->append("|");
-			app->localization->composeText((short)1, entityDef->description, largeBuffer);
-			if (n4 != -1) {
-				largeBuffer->append(" ");
-				app->localization->composeText((short)0, n4, largeBuffer);
-			}
-		}
-	}
-	else if (this->dialogType == 2) {
-		int n5 = this->helpMessageInts[0];
-		app->localization->composeText((short)(n5 >> 16), (short)(n5 & 0xFFFF), largeBuffer);
-	}
-	else if (this->dialogType == 3) {
-		largeBuffer->dispose();
-		largeBuffer = (Text*)object;
-	}
-	else {
-		largeBuffer->dispose();
-		largeBuffer = (Text*)object;
-	}
-	for (int i = 0; i < 15; ++i) {
-		this->helpMessageTypes[i] = this->helpMessageTypes[i + 1];
-		this->helpMessageInts[i] = this->helpMessageInts[i + 1];
-		this->helpMessageObjs[i] = this->helpMessageObjs[i + 1];
-		this->helpMessageThreads[i] = this->helpMessageThreads[i + 1];
-	}
-	this->helpMessageObjs[15] = object;
-	this->numHelpMessages--;
-	if (app->player->enableHelp) {
-		if (n3 == -1) {
-			this->startDialog(nullptr, largeBuffer, n, n2, false);
-		}
-		else {
-			this->startDialog(&app->game->scriptThreads[n3], largeBuffer, n, n2, true);
-		}
-	}
-	largeBuffer->dispose();
-}
-
-void Canvas::enqueueHelpDialog(short n) {
-	this->enqueueHelpDialog((short)0, n, (uint8_t)(-1));
-}
-
-bool Canvas::enqueueHelpDialog(short n, short n2, uint8_t b) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (!app->player->enableHelp || this->state == Canvas::ST_DYING) {
-		return false;
-	}
-	if (this->numHelpMessages == 16) {
-		app->Error(41); // ERR_MAXHELP
-		return false;
-	}
-	this->helpMessageTypes[this->numHelpMessages] = 2;
-	this->helpMessageInts[this->numHelpMessages] = (n << 16 | n2);
-	this->helpMessageObjs[this->numHelpMessages] = nullptr;
-	this->helpMessageThreads[this->numHelpMessages] = b;
-	this->numHelpMessages++;
-	if (this->state == Canvas::ST_PLAYING) {
-		this->dequeueHelpDialog();
-	}
-	return true;
-}
-
-bool Canvas::enqueueHelpDialog(Text* text) {
-	return this->enqueueHelpDialog(text, 0);
-}
-
-bool Canvas::enqueueHelpDialog(Text* text, int n) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (!app->player->enableHelp || this->state == Canvas::ST_DYING) {
-		return false;
-	}
-	if (this->numHelpMessages == 16) {
-		app->Error(41); // ERR_MAXHELP
-		return false;
-	}
-	this->helpMessageTypes[this->numHelpMessages] = n;
-	this->helpMessageObjs[this->numHelpMessages] = text;
-	this->helpMessageThreads[this->numHelpMessages] = -1;
-	this->numHelpMessages++;
-	if (this->state == Canvas::ST_PLAYING) {
-		this->dequeueHelpDialog();
-	}
-	return true;
-}
-
-void Canvas::enqueueHelpDialog(EntityDef* entityDef) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (!app->player->enableHelp || this->state == Canvas::ST_DYING) {
-		return;
-	}
-	if (this->numHelpMessages == 16) {
-		app->Error(41); // ERR_MAXHELP
-		return;
-	}
-	this->helpMessageTypes[this->numHelpMessages] = 1;
-	this->helpMessageObjs[this->numHelpMessages] = entityDef;
-	this->helpMessageThreads[this->numHelpMessages] = -1;
-	this->numHelpMessages++;
-	if (this->state == Canvas::ST_PLAYING) {
-		this->dequeueHelpDialog();
-	}
-}
+void Canvas::enqueueHelpDialog(short n) { this->dialogSystem.enqueueHelpDialog(n); }
+bool Canvas::enqueueHelpDialog(short n, short n2, uint8_t b) { return this->dialogSystem.enqueueHelpDialog(n, n2, b); }
+bool Canvas::enqueueHelpDialog(Text* text) { return this->dialogSystem.enqueueHelpDialog(text); }
+bool Canvas::enqueueHelpDialog(Text* text, int n) { return this->dialogSystem.enqueueHelpDialog(text, n); }
+void Canvas::enqueueHelpDialog(EntityDef* entityDef) { this->dialogSystem.enqueueHelpDialog(entityDef); }
 
 void Canvas::updateView() {
 	Applet* app = CAppContainer::getInstance()->app;
@@ -5527,1597 +4125,95 @@ bool Canvas::handleZoomEvents(int key, int action, bool b) {
 	return true;
 }
 
-void Canvas::handleCharacterSelectionInput(int key, int action) {
-	Applet* app = CAppContainer::getInstance()->app;
-	//printf("handleCharacterSelectionInput key %d, action %d\n", key, action);
-	if (this->stateVars[1]) {
-		if (this->stateVars[1] == 1) {
-
-			if ((action == Enums::ACTION_LEFT) || (action == Enums::ACTION_RIGHT)) {
-				this->stateVars[2] = this->stateVars[2] != 1;
-			}
-			else if (action == Enums::ACTION_FIRE) {
-				if (this->stateVars[2] == 1) {
-					app->player->setCharacterChoice(this->stateVars[0]);
-					app->player->reset();
-					app->canvas->setState(Canvas::ST_INTRO);
-					this->disposeCharacterSelection();
-				}
-				else {
-					this->stateVars[1] = 0;
-					this->stateVars[2] = 1;
-				}
-			}
-			
-		}
-	}
-	else {
-		for (int i = 0; i < 3; i++) { // Characters
-			if (this->m_characterButtons->GetButton(i)->highlighted) {
-				if (i == 0) {
-					this->stateVars[0] = 1;
-				}
-				else if (i == 1) {
-					this->stateVars[0] = 3;
-				}
-				else {
-					this->stateVars[0] = 2;
-				}
-			}
-		}
-
-		if (this->m_characterButtons->GetButton(3)->highlighted) { // Yes
-			app->player->setCharacterChoice(this->stateVars[0]);
-			app->player->reset();
-			app->canvas->setState(Canvas::ST_INTRO);
-			this->disposeCharacterSelection();
-		}
-
-		if (this->m_characterButtons->GetButton(4)->highlighted) { // Back
-			app->canvas->backToMain(false);
-		}
-
-		this->m_characterButtons->HighlightButton(0, 0, false);
-
-		if (!this->touched) {
-			if (this->stateVars[8] == 0) { // [GEC]
-				if (action == Enums::ACTION_RIGHT) {
-					for (int i = 0; i < 3; ++i) {
-						if (this->stateVars[0] == this->getCharacterConstantByOrder(i)) {
-							this->stateVars[0] = this->getCharacterConstantByOrder((i + 1) % 3);
-							app->menuSystem->soundClick();
-							break;
-						}
-					}
-				}
-				else if (action == Enums::ACTION_LEFT) {
-					for (int j = 0; j < 3; ++j) {
-						if (this->stateVars[0] == this->getCharacterConstantByOrder(j)) {
-							this->stateVars[0] = this->getCharacterConstantByOrder((j + 2) % 3);
-							app->menuSystem->soundClick();
-							break;
-						}
-					}
-				}
-				else if (action == Enums::ACTION_FIRE) {
-					this->stateVars[8] = 1; // [GEC]
-					app->sound->playSound(1086, 0, 5, false);
-				}
-				else if (action == Enums::ACTION_MENU) {
-					this->disposeCharacterSelection();
-					this->backToMain(false);
-				}
-			}
-			else if (this->stateVars[8] == 1) { // [GEC]
-				if ((action == Enums::ACTION_LEFT) || (action == Enums::ACTION_RIGHT)) {
-					this->stateVars[2] = this->stateVars[2] != 1;
-					app->menuSystem->soundClick();
-				}
-				else if (action == Enums::ACTION_FIRE) {
-					if (this->stateVars[2] == 1) {
-						app->player->setCharacterChoice(this->stateVars[0]);
-						app->player->reset();
-						app->canvas->setState(Canvas::ST_INTRO);
-						this->disposeCharacterSelection();
-					}
-					else {
-						this->disposeCharacterSelection();
-						this->backToMain(false);
-					}
-					app->sound->playSound(1086, 0, 5, false);
-				}
-				else if (action == Enums::ACTION_MENU) {
-					this->stateVars[1] = 0;
-					this->stateVars[2] = 1;
-					this->stateVars[8] = 0; // [GEC]
-					app->sound->playSound(1122, 0, 5, false);
-				}
-			}
-		}
-	}
-}
-
-void Canvas::handleStoryInput(int key, int action) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (action == Enums::ACTION_LEFT || action == Enums::ACTION_RIGHT) {
-		if (this->stateVars[0] != 2) {
-			this->stateVars[0] ^= 1;
-		}
-	}
-	else if (action == Enums::ACTION_UP) {
-		if (this->stateVars[0] != 2 && this->storyPage < this->storyTotalPages - 1) {
-			this->stateVars[0] = 2;
-		}
-	}
-	else if (action == Enums::ACTION_DOWN) {
-		if (this->stateVars[0] == 2) {
-			this->stateVars[0] = 1;
-		}
-	}
-	else if (action == Enums::ACTION_FIRE) {
-		switch (this->stateVars[0]) {
-		case 0: {
-			this->changeStoryPage(-1);
-			if (this->state == Canvas::ST_CHARACTER_SELECTION) {
-				this->stateVars[0] = app->player->characterChoice;
-				break;
-			}
-			break;
-		}
-		case 1: {
-			this->changeStoryPage(1);
-			break;
-		}
-		case 2: {
-			this->storyPage = this->storyTotalPages;
-			break;
-		}
-		}
-	}
-	else if (action == Enums::ACTION_AUTOMAP) {
-		this->changeStoryPage(1);
-		this->stateVars[0] = 1;
-	}
-	else if (action == Enums::ACTION_BACK || action == Enums::ACTION_MENU) {
-		this->changeStoryPage(-1);
-		if (this->state == Canvas::ST_CHARACTER_SELECTION) {
-			this->stateVars[0] = app->player->characterChoice;
-		}
-		else {
-			this->stateVars[0] = 0;
-		}
-	}
-}
+void Canvas::handleCharacterSelectionInput(int key, int action) { this->introSequenceManager.handleCharacterSelectionInput(key, action); }
+void Canvas::handleStoryInput(int key, int action) { this->introSequenceManager.handleStoryInput(key, action); }
 
 void Canvas::lootingState() {
-	Applet* app = CAppContainer::getInstance()->app;
-	app->hud->repaintFlags |= 0x22;
-	this->repaintFlags |= (Canvas::REPAINT_HUD | Canvas::REPAINT_VIEW3D);
-	//app->hud->repaintFlags &= 0xFFFFFFBF; // J2ME
-	int height = app->render->getHeight(this->destX, this->destY);
-	int height2 = app->render->getHeight(this->destX + this->viewStepX, this->destY + this->viewStepY);
-	if (app->time < this->lootingTime + 500) {
-		int n = (500 - (app->time - this->lootingTime) << 16) / 500;
-		int n2 = 65536 - n;
-		if (this->crouchingForLoot) {
-			int n3 = (height > height2) ? height : (height * n + height2 * n2 >> 16);
-			this->viewX = this->destX + (48 + (-48 * n >> 16)) * (this->viewStepX >> 6);
-			this->viewY = this->destY + (48 + (-48 * n >> 16)) * (this->viewStepY >> 6);
-			this->viewZ = n3 + 26 + (10 * n >> 16);
-			this->viewPitch = std::max(-(64 - (64 * n >> 16)) + this->lootingCachedPitch, -64);
-		}
-		else {
-			int n4 = (height > height2) ? height : (height * n2 + height2 * n >> 16);
-			this->viewX = this->destX + (48 * n >> 16) * (this->viewStepX >> 6);
-			this->viewY = this->destY + (48 * n >> 16) * (this->viewStepY >> 6);
-			this->viewZ = n4 + 36 + (-10 * n >> 16);
-			this->viewPitch = std::max(-(64 * n >> 16) + this->lootingCachedPitch, -64);
-		}
-		this->updateView();
-	}
-	else {
-		if (!this->field_0xac5_) {
-			this->field_0xac5_ = true;
-			app->sound->playSound(1055, 0, 3, 0);
-		}
-		if (this->crouchingForLoot) {
-			this->viewX = this->destX + 48 * (this->viewStepX >> 6);
-			this->viewY = this->destY + 48 * (this->viewStepY >> 6);
-			this->viewZ = std::max(height, height2) + 26;
-			this->viewPitch = std::max(-64 + this->lootingCachedPitch, -64);
-			this->updateView();
-		}
-		else {
-			this->viewX = this->destX;
-			this->viewY = this->destY;
-			this->viewZ = height + 36;
-			this->viewPitch = this->lootingCachedPitch;
-			this->updateView();
-			this->setState(Canvas::ST_PLAYING);
-			app->game->advanceTurn();
-		}
-	}
+	this->lootingSystem.lootingState();
 }
 
 void Canvas::handleLootingEvents(int action) {
-	Applet* app = CAppContainer::getInstance()->app;
-	if (this->crouchingForLoot && app->time > this->lootingTime + 500) {
-		int max = std::max(this->numPoolItems + ((this->lootPoolCredits != 0) ? 1 : 0) - 3, 0);
-		if (action == Enums::ACTION_FIRE) {
-			if (this->lootLineNum >= max) {
-				this->lootingTime = app->time;
-				this->crouchingForLoot = false;
-				this->giveLootPool();
-			}
-			else {
-				this->lootLineNum = std::min(this->lootLineNum + 3, max);
-			}
-		}
-		else if (action == Enums::ACTION_PASSTURN || action == Enums::ACTION_BACK) {
-			this->lootingTime = app->time;
-			this->crouchingForLoot = false;
-			this->giveLootPool();
-		}
-		else if (action == Enums::ACTION_DOWN) {
-			this->lootLineNum = std::min(this->lootLineNum + 1, max);
-		}
-		else if (action == Enums::ACTION_UP) {
-			this->lootLineNum = std::max(this->lootLineNum - 1, 0);
-		}
-		else if (action == Enums::ACTION_LEFT) {
-			this->lootLineNum = 0;
-		}
-		else if (action == Enums::ACTION_RIGHT) {
-			this->lootLineNum = max;
-		}
-	}
+	this->lootingSystem.handleLootingEvents(action);
 }
 
 void Canvas::drawLootingMenu(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-	if (this->crouchingForLoot && app->time > this->lootingTime + 500) {
-		int* dialogRect = this->dialogRect;
-		dialogRect[0] = this->viewRect[0] + 0;
-		dialogRect[1] = this->viewRect[1] + 0 + 16;
-		dialogRect[2] = this->viewRect[2] - dialogRect[0] - 0 - 1;
-		dialogRect[3] = 48;
-		graphics->setColor(0xFF660000);
-		graphics->fillRect(dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
-		graphics->setColor(0xFF000000);
-		graphics->fillRect(dialogRect[0], dialogRect[1] - 18, dialogRect[2], 18);
-		graphics->setColor(0xFFFFFFFF);
-		graphics->drawRect(dialogRect[0], dialogRect[1] - 18, dialogRect[2], 18);
-		graphics->drawRect(dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
-		Text* smallBuffer = app->localization->getSmallBuffer();
-		app->localization->composeText((short)0, (short)227, smallBuffer);
-		smallBuffer->dehyphenate();
-		graphics->drawString(smallBuffer, this->SCR_CX, dialogRect[1] - 16, 1);
-		smallBuffer->dispose();
-		for (int i = 0; i < 3; ++i) {
-			graphics->drawString(this->lootText, dialogRect[0] + 5, dialogRect[1] + 1 + i * 16, 20, this->lootPoolIndices[2 * (i + this->lootLineNum)], this->lootPoolIndices[2 * (i + this->lootLineNum) + 1]);
-		}
-		int n = this->numPoolItems + ((this->lootPoolCredits != 0) ? 1 : 0);
-		this->drawScrollBar(graphics, dialogRect[0] + dialogRect[2], dialogRect[1] + 1, dialogRect[3] - 1, this->lootLineNum, (this->lootLineNum + 3 > n) ? n : (this->lootLineNum + 3), n, 3);
-	}
+	this->lootingSystem.drawLootingMenu(graphics);
 }
 
 void Canvas::poolLoot(int* array) {
-	Applet* app = CAppContainer::getInstance()->app;
-	Entity* entity = app->game->findMapEntity(array[0], array[1], 512);
-	this->lootText = app->localization->getLargeBuffer();
-	this->lootText->setLength(0);
-	this->numPoolItems = 0;
-	this->numLootItems = 0;
-	this->lootLineNum = 0;
-	this->lootPoolCredits = 0;
-	while (entity != nullptr) {
-		if (entity->def->eType == 9) {
-			if (entity->monster == nullptr) {
-				if (entity->param != 0) {
-					entity = entity->nextOnTile;
-					continue;
-				}
-				++entity->param;
-			}
-			else {
-				if ((entity->monster->flags & 0x800) != 0x0) {
-					entity = entity->nextOnTile;
-					continue;
-				}
-				entity->monster->flags |= 0x800;
-			}
-			entity->info |= 0x400000;
-			for (int i = 0; i < 3; ++i) {
-				if (entity->lootSet[i] == 0) {
-					break;
-				}
-				bool b = true;
-				int n = entity->lootSet[i] >> 12 & 0xF;
-				if (n == 6) {
-					int n2 = entity->lootSet[i] & 0xFFF;
-					for (int j = 0; j < this->numPoolItems; ++j) {
-						if ((entity->lootSet[j] >> 12 & 0xF) == 0x6 && n2 == (this->lootPool[j] & 0xFFF)) {
-							b = false;
-							break;
-						}
-					}
-				}
-				else {
-					int n3 = entity->lootSet[i] & 0x3F;
-					++this->numLootItems;
-					int n4 = (entity->lootSet[i] & 0xFC0) >> 6;
-					if (n == 0) {
-						if (n4 == 24) {
-							this->lootPoolCredits += n3;
-							continue;
-						}
-						if (n4 == 25) {
-							this->lootPoolCredits += n3 * 100;
-							continue;
-						}
-					}
-					int n5 = entity->lootSet[i] >> 6;
-					for (int k = 0; k < this->numPoolItems; ++k) {
-						if (n5 == this->lootPool[k] >> 6) {
-							b = false;
-							this->lootPool[k] = ((this->lootPool[k] & 0xFFFFFFC0) | (n3 + (this->lootPool[k] & 0x3F) & 0x3F));
-							break;
-						}
-					}
-				}
-				if (b) {
-					this->lootPool[this->numPoolItems++] = entity->lootSet[i];
-				}
-			}
-		}
-		entity = entity->nextOnTile;
-	}
-	for (int l = 0; l < this->numPoolItems; ++l) {
-		int n6 = this->lootPool[l];
-		int n7 = n6 >> 12 & 0xF;
-		if (n7 == 6) {
-			short n8 = (short)(n6 & 0xFFF);
-			this->lootText->append('\x88');
-			app->localization->composeText(this->loadMapStringID, n8, this->lootText);
-			this->lootText->append("|");
-		}
-		else {
-			int n9 = (n6 & 0xFC0) >> 6;
-			int n10 = n6 & 0x3F;
-			app->localization->resetTextArgs();
-			app->localization->addTextArg('\x88');
-			EntityDef* find = app->entityDefManager->find(6, n7, n9);
-			if (n7 == 1) {
-				app->localization->addTextArg((short)1, find->longName);
-				app->localization->composeText((short)0, (short)91, this->lootText);
-			}
-			else {
-				app->localization->addTextArg(n10);
-				app->localization->addTextArg((short)1, find->longName);
-				app->localization->composeText((short)0, (short)90, this->lootText);
-			}
-		}
-	}
-	if (this->lootPoolCredits != 0) {
-		app->localization->resetTextArgs();
-		app->localization->addTextArg('\x88');
-		app->localization->addTextArg(this->lootPoolCredits);
-		app->localization->addTextArg((short)1, (short)157);
-		app->localization->composeText((short)0, (short)90, this->lootText);
-	}
-	if (this->numPoolItems == 0 && this->lootPoolCredits == 0) {
-		app->localization->composeText((short)0, (short)228, this->lootText);
-	}
-	this->lootText->dehyphenate();
-	for (int n13 = 0; n13 < 18; ++n13) {
-		this->lootPoolIndices[n13] = (short)0;
-	}
-	int length = this->lootText->length();
-	int n11 = 0;
-	int n12 = 0;
-	for (int n13 = 0; n13 < length; ++n13) {
-		if (this->lootText->charAt(n13) == '|') {
-			this->lootPoolIndices[n12 * 2] = (short)n11;
-			this->lootPoolIndices[n12 * 2 + 1] = (short)(n13 - n11);
-			++n12;
-			n11 = n13 + 1;
-		}
-	}
-	this->lootPoolIndices[n12 * 2] = (short)n11;
-	this->lootPoolIndices[n12 * 2 + 1] = (short)(length - n11);
+	this->lootingSystem.poolLoot(array);
 }
 
 void Canvas::giveLootPool() {
-	Applet* app = CAppContainer::getInstance()->app;
-	for (int i = 0; i < this->numPoolItems; ++i) {
-		int n = this->lootPool[i];
-		int n2 = n >> 12 & 0xF;
-		if (n2 != 6) {
-			int n3 = (n & 0xFC0) >> 6;
-			app->player->give(n2, n3, n & 0x3F, false);
-			if (n2 == 1) {
-				int n4 = n3 * 9;
-				uint8_t a = app->combat->weapons[n4 + 5];
-				if (a != 0) {
-					app->player->give(2, app->combat->weapons[n4 + 4], std::max((int)a, 10), false);
-				}
-			}
-		}
-	}
-	if (this->lootPoolCredits != 0) {
-		app->player->give(0, 24, this->lootPoolCredits, false);
-		this->lootPoolCredits = 0;
-	}
-	app->game->foundLoot(this->viewX + this->viewStepX, this->viewY + this->viewStepY, this->viewZ, this->numLootItems);
-	this->numPoolItems = 0;
-	this->numLootItems = 0;
-	this->lootText->dispose();
+	this->lootingSystem.giveLootPool();
 }
 
 bool Canvas::handleTreadmillEvents(int action) {
-	Applet* app = CAppContainer::getInstance()->app;
-	if (this->treadmillReturnCode != 0) {
-		return true;
-	}
-	if (this->treadmillLastStepTime + 300 > app->time) {
-		if (this->numEvents == 4) {
-			app->hud->addMessage((short)247, 3);
-		}
-		return false;
-	}
-	if (action == Enums::ACTION_DOWN) {
-		this->treadmillReturnCode = 2;
-		return true;
-	}
-	if (action == Enums::ACTION_STRAFELEFT || action == Enums::ACTION_STRAFERIGHT) {
-		if (action == this->treadmillLastStep) {
-			this->treadmillReturnCode = 3;
-		}
-		else {
-			this->treadmillLastStep = action;
-			if (++this->treadmillNumSteps * 2 >= 100) {
-				this->treadmillReturnCode = 1;
-			}
-		}
-		this->treadmillLastStepTime = app->time;
-		return true;
-	}
-	if (action == Enums::ACTION_AUTOMAP) {
-		this->treadmillReturnCode = 2;
-		return true;
-	}
-	return true;
+	return this->miniGameManager.handleTreadmillEvents(action);
 }
 
 void Canvas::treadmillState() {
-	Applet* app = CAppContainer::getInstance()->app;
-	app->hud->repaintFlags |= 0x22;
-	this->repaintFlags |= (Canvas::REPAINT_HUD | Canvas::REPAINT_VIEW3D);
-	app->hud->repaintFlags &= 0xFFFFFFBF;
-	bool b = false;
-	if (this->treadmillReturnCode != 0) {
-		if (this->treadmillReturnCode == 1 && app->time > this->treadmillLastStepTime + 300) {
-			app->localization->resetTextArgs();
-			app->localization->addTextArg(2);
-			if (app->player->modifyStat(Enums::STAT_AGILITY, 2) == 0) {
-				app->hud->addMessage((short)244, 3);
-			}
-			else {
-				app->hud->addMessage((short)243, 3);
-			}
-			b = true;
-		}
-		else if (this->treadmillReturnCode == 3) {
-			if (this->treadmillFall()) {
-				app->hud->addMessage((short)245, 3);
-				b = true;
-			}
-		}
-		else if (this->treadmillReturnCode == 2) {
-			this->attemptMove(this->viewX - this->viewStepX, this->viewY - this->viewStepY);
-			app->hud->addMessage((short)246, 3);
-			b = true;
-		}
-	}
-	if (b) {
-		app->combat->shiftWeapon(false);
-		this->setState(Canvas::ST_PLAYING);
-		return;
-	}
-	if (this->treadmillLastStep == 1) {
-		this->updateView();
-		return;
-	}
-	if (this->treadmillReturnCode == 0 && app->time > 1500 + this->treadmillLastStepTime) {
-		this->treadmillReturnCode = 3;
-		this->treadmillLastStepTime = app->time;
-		return;
-	}
-	if (app->time <= this->treadmillLastStepTime + 300) {
-		bool b2 = this->treadmillLastStep == 9;
-		bool b3 = this->treadmillLastStepTime + 150 > app->time;
-		bool b4 = b2 ^ !b3;
-		int n = 4 + (-4 * ((std::abs(150 - (app->time - this->treadmillLastStepTime)) << 16) / 150) >> 16);
-		if (b4 == b3) {
-			n = -n;
-		}
-		int n2 = n * n;
-		this->viewX = this->destX + n * (this->viewRightStepX >> 6);
-		this->viewY = this->destY + n * (this->viewRightStepY >> 6);
-		this->viewZ = 36 + n2 + app->render->getHeight(this->destX, this->destY);
-		this->invalidateRect();
-	}
-
-	this->renderScene(this->viewX, this->viewY, this->viewZ, this->viewAngle, this->viewPitch, this->viewRoll, 290);
+	this->miniGameManager.treadmillState();
 }
 
 bool Canvas::treadmillFall() {
-	Applet* app = CAppContainer::getInstance()->app;
-	if (app->time > this->treadmillLastStepTime + 1000 + 500 + 500) {
-		this->viewX = this->destX;
-		this->viewY = this->destY;
-		this->viewZ = this->destZ;
-		this->viewPitch = this->destPitch;
-		return true;
-	}
-	int n = (this->viewStepX >> 6) * 32;
-	int n2 = (this->viewStepY >> 6) * 32;
-	if (this->treadmillLastStepTime + 1000 > app->time) {
-		int n3 = 1000 - (app->time - this->treadmillLastStepTime);
-		int n4 = (n3 << 16) / 1000;
-		this->viewX = this->destX + (-n + (n * n4 >> 16));
-		this->viewY = this->destY + (-n2 + (n2 * n4 >> 16));
-		this->viewZ = 36;
-		if (n3 < 250) {
-			this->viewZ -= 12 - (12 * n4 >> 16);
-		}
-		if (n3 > 500) {
-			this->viewPitch = 128 - (128 * n4 >> 16);
-		}
-		else {
-			this->viewPitch = 128 * n4 >> 16;
-		}
-	}
-	else if (this->treadmillLastStepTime + 1000 + 500 > app->time) {
-		this->viewX = this->destX - n;
-		this->viewY = this->destY - n2;
-		this->viewZ = 24;
-		this->viewPitch = 0;
-	}
-	else {
-		int n5 = 500 - (app->time - 1000 - 500 - this->treadmillLastStepTime);
-		int n6 = (n5 << 16) / 500;
-		this->viewX = this->destX - (n * n6 >> 16);
-		this->viewY = this->destY - (n2 * n6 >> 16);
-		this->viewZ = 36 - (12 * n6 >> 16);
-		if (n5 > 250) {
-			this->viewPitch = -128 + (128 * n6 >> 16);
-		}
-		else {
-			this->viewPitch = -(128 * n6 >> 16);
-		}
-	}
-	this->viewZ += app->render->getHeight(this->destX, this->destY);
-	this->invalidateRect();
-	this->renderScene(this->viewX, this->viewY, this->viewZ, this->viewAngle, this->viewPitch, this->viewRoll, 290);
-	return false;
+	return this->miniGameManager.treadmillFall();
 }
 
 void Canvas::drawTreadmillReadout(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-	Text* smallBuffer = app->localization->getSmallBuffer();
-	app->localization->resetTextArgs();
-	app->localization->addTextArg(this->treadmillNumSteps * 2);
-	app->localization->composeText((short)0, (short)242, smallBuffer);
-	app->hud->drawImportantMessage(graphics, smallBuffer, 0xFF666666);
-	smallBuffer->dispose();
-	this->m_treadmillButtons->Render(graphics);
+	this->miniGameManager.drawTreadmillReadout(graphics);
 }
 
 void Canvas::drawTargetPracticeScore(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-	if (app->hud->msgCount != 0 && (app->hud->messageFlags[0] & 0x4) != 0x0) {
-		return;
-	}
-	Text* smallBuffer = app->localization->getSmallBuffer();
-	app->localization->resetTextArgs();
-	app->localization->composeText((short)0, (short)229, smallBuffer);
-	smallBuffer->append(app->player->targetPracticeScore);
-	app->hud->drawImportantMessage(graphics, smallBuffer, 0xFF7F0000);
-	smallBuffer->dispose();
+	this->miniGameManager.drawTargetPracticeScore(graphics);
 }
 
-void Canvas::drawTravelMap(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
+void Canvas::drawTravelMap(Graphics* graphics) { this->travelMapManager.drawTravelMap(graphics); }
 
-	if (this->stateVars[5] == 1) {
-		this->drawStarFieldPage(graphics);
-		this->staleView = true;
-		return;
-	}
+bool Canvas::newLevelSamePlanet() { return this->travelMapManager.newLevelSamePlanet(); }
 
-	graphics->drawImage(this->imgTravelBG, this->SCR_CX, (this->displayRect[3] - this->imgTravelBG->height) / 2, 17, 0, 0);
+void Canvas::drawAppropriateCloseup(Graphics* graphics, int n, bool b) { this->travelMapManager.drawAppropriateCloseup(graphics, n, b); }
 
-	if (this->xDiff > 1 || this->yDiff > 1) {
-		graphics->fillRegion(this->imgFabricBG, 0, 0, this->displayRect[2], this->yDiff);
-		graphics->fillRegion(this->imgFabricBG, 0, this->yDiff, this->xDiff, this->displayRect[3] - this->yDiff);
-		graphics->fillRegion(this->imgFabricBG, this->xDiff, this->yDiff + this->mapHeight, this->mapWidth, this->yDiff);
-		graphics->fillRegion(this->imgFabricBG, this->xDiff + this->mapWidth, this->yDiff, this->xDiff, this->displayRect[3] - this->yDiff);
-		graphics->drawRect(this->xDiff + -1, this->yDiff + -1, this->mapWidth + 1, this->mapHeight + 1, 0xFF000000);
-		graphics->clipRect(this->xDiff, this->yDiff, this->imgTravelBG->width, this->imgTravelBG->height);
-	}
+bool Canvas::drawDottedLine(Graphics* graphics, int n) { return this->travelMapManager.drawDottedLine(graphics, n); }
 
-	int time = app->upTimeMs - this->stateVars[0];
-	this->drawGridLines(graphics, time + this->totalTMTimeInPastAnimations);
+bool Canvas::drawDottedLine(Graphics* graphics) { return this->travelMapManager.drawDottedLine(graphics); }
 
-	bool levelSamePlanet = this->newLevelSamePlanet();
-	if (this->stateVars[1] != 1) {
-		if (time > (levelSamePlanet ? 1500 : 700)) {
-			this->totalTMTimeInPastAnimations += time;
-			this->stateVars[0] += time;
-			this->stateVars[1] = 1;
-			time = 0;
-			if (levelSamePlanet) {
-				this->stateVars[2] = 1;
-				this->stateVars[3] = 1;
-			}
-		}
-		else if (levelSamePlanet) {
-			this->drawAppropriateCloseup(graphics, this->TM_LastLevelId, false);
-			Text* smallBuffer = app->localization->getSmallBuffer();
-			smallBuffer->setLength(0);
-			app->localization->composeText((short)3, app->game->levelNames[this->TM_LastLevelId - 1], smallBuffer);
-			smallBuffer->dehyphenate();
-			this->drawLocatorBoxAndName(graphics, (time & 0x200) == 0x0, this->TM_LastLevelId, smallBuffer);
-			smallBuffer->dispose();
-		}
-	}
+bool Canvas::drawMarsToMoonLinePlusSpaceShip(Graphics* graphics, int n) { return this->travelMapManager.drawMarsToMoonLinePlusSpaceShip(graphics, n); }
 
-	if (this->stateVars[1] == 1) {
-		if (this->stateVars[2] != 1) {
-			if (this->drawDottedLine(graphics, time)) {
-				this->totalTMTimeInPastAnimations += time;
-				this->stateVars[0] += time;
-				this->stateVars[2] = 1;
-			}
-		}
-		else if (this->stateVars[2] == 1) {
-			if (this->stateVars[3] != 1) {
-				this->drawDottedLine(graphics);
-				if (time > 500 || levelSamePlanet) {
-					this->totalTMTimeInPastAnimations += time;
-					this->stateVars[0] += time;
-					this->stateVars[3] = 1;
-				}
-			}
-			else if (this->stateVars[3] == 1) {
-				this->drawAppropriateCloseup(graphics, this->TM_LoadLevelId, this->stateVars[8] == 1);
-				if (this->stateVars[6] == 1) {
-					Text* smallBuffer2 = app->localization->getSmallBuffer();
-					smallBuffer2->setLength(0);
-					app->localization->composeText((short)3, app->game->levelNames[this->TM_LoadLevelId - 1], smallBuffer2);
-					smallBuffer2->dehyphenate();
+int Canvas::yCoordOfSpaceShip(int n) { return this->travelMapManager.yCoordOfSpaceShip(n); }
 
-					drawLocatorBoxAndName(graphics, (time & 0x200) == 0x0, this->TM_LoadLevelId, smallBuffer2);
-					smallBuffer2->setLength(0);
-					app->localization->composeText((short)0, (short)96, smallBuffer2);
-					smallBuffer2->wrapText(24);
-					smallBuffer2->dehyphenate();
-					graphics->drawString(smallBuffer2, this->SCR_CX, this->displayRect[3] - 21, 17);
-					smallBuffer2->dispose();
-				}
-				else if (this->stateVars[4] != 1) {
-					if (this->drawLocatorLines(graphics, time, levelSamePlanet, this->stateVars[8] == 1)) {
-						this->totalTMTimeInPastAnimations += time;
-						this->stateVars[0] += time;
-						this->stateVars[4] = 1;
-					}
-				}
-				else {
-					this->drawLocatorLines(graphics, -1, levelSamePlanet, this->stateVars[8] == 1);
-					if (time > 800) {
-						this->totalTMTimeInPastAnimations += time;
-						this->stateVars[0] += time;
-						if (this->stateVars[8] == 0) {
-							this->stateVars[6] = 1;
-						}
-						else {
-							this->stateVars[4] = 0;
-							this->stateVars[8] = 0;
-							int n7 = 123;
-							int n8 = 150;
-							short n9 = (short)(2 * (this->TM_LoadLevelId - 1));
-							this->targetX = Canvas::CROSS_HAIR_CORDS[n9] + this->xDiff + n7;
-							this->targetY = Canvas::CROSS_HAIR_CORDS[n9 + 1] + this->yDiff + n8;
-						}
-					}
-				}
-			}
-		}
-	}
+bool Canvas::drawMoonToEarthLine(Graphics* graphics, int n, bool b) { return this->travelMapManager.drawMoonToEarthLine(graphics, n, b); }
 
-	this->staleView = true;
-}
+bool Canvas::drawEarthToHellLine(Graphics* graphics, int n, bool b) { return this->travelMapManager.drawEarthToHellLine(graphics, n, b); }
 
-bool Canvas::newLevelSamePlanet() {
-	return this->TM_LastLevelId != this->TM_LoadLevelId && ((onMoon(this->TM_LastLevelId) && onMoon(this->TM_LoadLevelId)) || (onEarth(this->TM_LastLevelId) && onEarth(this->TM_LoadLevelId)) || (inHell(this->TM_LastLevelId) && inHell(this->TM_LoadLevelId)));
-}
+void Canvas::drawLocatorBoxAndName(Graphics* graphics, bool b, int n, Text* text) { this->travelMapManager.drawLocatorBoxAndName(graphics, b, n, text); }
 
-void Canvas::drawAppropriateCloseup(Graphics* graphics, int n, bool b) {
-	if (this->onMoon(n)) {
-		graphics->drawImage(this->imgTierCloseUp, Canvas::moonCoords[0], Canvas::moonCoords[1], 0, 0, 0);
-	}
-	else if (this->onEarth(n)) {
-		if (b) {
-			graphics->drawImage(this->imgEarthCloseUp, Canvas::earthCoords[0], Canvas::earthCoords[1], 0, 0, 0);
-		}
-		else {
-			graphics->drawImage(this->imgTierCloseUp, Canvas::earthCoords[2], Canvas::earthCoords[3], 0, 0, 0);
-		}
-	}
-	else {
-		graphics->drawImage(this->imgTierCloseUp, Canvas::hellCoords[0], Canvas::hellCoords[1], 0, 0, 0);
-	}
-}
+void Canvas::drawGridLines(Graphics* graphics, int i) { this->travelMapManager.drawGridLines(graphics, i); }
 
-bool Canvas::drawDottedLine(Graphics* graphics, int n) {
-	int n2 = n / 22;
-	bool b;
-	if (this->TM_LastLevelId == 0 && onMoon(this->TM_LoadLevelId)) {
-		b = this->drawMarsToMoonLinePlusSpaceShip(graphics, n2);
-	}
-	else if (this->onMoon(this->TM_LastLevelId) && this->onEarth(this->TM_LoadLevelId)) {
-		b = this->drawMoonToEarthLine(graphics, n2, false);
-	}
-	else if (this->onEarth(this->TM_LastLevelId) && this->onMoon(this->TM_LoadLevelId)) {
-		b = this->drawMoonToEarthLine(graphics, n2, true);
-	}
-	else if (this->onEarth(this->TM_LastLevelId) && inHell(this->TM_LoadLevelId)) {
-		b = this->drawEarthToHellLine(graphics, n2, false);
-	}
-	else {
-		b = (!inHell(this->TM_LastLevelId) || !onEarth(this->TM_LoadLevelId) || this->drawEarthToHellLine(graphics, n2, true));
-	}
-	return b;
-}
+bool Canvas::onMoon(int n) { return this->travelMapManager.onMoon(n); }
 
-bool Canvas::drawDottedLine(Graphics* graphics) {
-	return drawDottedLine(graphics, 22 * std::max(this->screenRect[2], this->screenRect[3]));
-}
+bool Canvas::onEarth(int n) { return this->travelMapManager.onEarth(n); }
 
-bool Canvas::drawMarsToMoonLinePlusSpaceShip(Graphics* graphics, int n) {
-	Applet* app = CAppContainer::getInstance()->app;
+bool Canvas::inHell(int n) { return this->travelMapManager.inHell(n); }
 
-	bool b = false;
-	int width = this->imgTravelPath->width;
-	int n2 = n;
-	if (n2 > width) {
-		b = true;
-		n2 = width;
-	}
-	if (n > width / 3) {
-		Text* smallBuffer = app->localization->getSmallBuffer();
-		smallBuffer->setLength(0);
-		app->localization->composeText((short)3, (short)165, smallBuffer);
-		smallBuffer->dehyphenate();
-		graphics->drawString(smallBuffer, Canvas::moonNameCoords[0], Canvas::moonNameCoords[1], 4);
-		smallBuffer->dispose();
-	}
-	graphics->drawRegion(this->imgTravelPath, width - n2, 0, n2, this->imgTravelPath->height, Canvas::moonPathCoords[0] + width - n2, Canvas::moonPathCoords[1], 0, 0, 0);
-	int n3 = width - n2;
-	graphics->drawImage(this->imgSpaceShip, Canvas::moonPathCoords[0] + n3 - this->imgSpaceShip->width, this->yCoordOfSpaceShip(n3) + Canvas::moonPathCoords[1] - (this->imgSpaceShip->height >> 1), 0, 0, 0);
-	return b;
-}
+void Canvas::handleTravelMapInput(int key, int action) { this->travelMapManager.handleInput(key, action); }
 
-int Canvas::yCoordOfSpaceShip(int n) {
-	int iVar1;
-	iVar1 = (n * 11) / 15;
-	return ((-851 * (iVar1 * iVar1) / 110880 + 6115 * iVar1 / 22176 + 40) * 15) / 11;
-}
+void Canvas::finishTravelMapAndLoadLevel() { this->travelMapManager.finishAndLoadLevel(); }
 
-bool Canvas::drawMoonToEarthLine(Graphics* graphics, int n, bool b) {
-	Applet* app = CAppContainer::getInstance()->app;
+bool Canvas::drawLocatorLines(Graphics* graphics, int n, bool b, bool b2) { return this->travelMapManager.drawLocatorLines(graphics, n, b, b2); }
 
-	bool b2 = false;
-	int height = this->imgTravelPath->height;
-	int n2 = n;
-	if (n2 > height) {
-		b2 = true;
-		n2 = height;
-	}
-	int n3 = b ? 0 : (height - n2);
-	int width = this->imgTravelPath->width;
-	if (n > height / 2) {
-		Text* smallBuffer = app->localization->getSmallBuffer();
-		smallBuffer->setLength(0);
-		if (!b) {
-			app->localization->composeText((short)3, (short)164, smallBuffer);
-			smallBuffer->dehyphenate();
-			graphics->drawString(smallBuffer, Canvas::earthNameCoords[0], Canvas::earthNameCoords[1], 4);
-		}
-		else {
-			app->localization->composeText((short)3, (short)165, smallBuffer);
-			smallBuffer->dehyphenate();
-			graphics->drawString(smallBuffer, Canvas::moonNameCoords[2], Canvas::moonNameCoords[3], 4);
-		}
-		smallBuffer->dispose();
-	}
-	graphics->drawRegion(this->imgTravelPath, 0, n3, width, n2, Canvas::earthPathCoords[0], Canvas::earthPathCoords[1] + n3, 0, 0, 0);
-	return b2;
-}
+void Canvas::initTravelMap() { this->travelMapManager.init(); }
 
-bool Canvas::drawEarthToHellLine(Graphics* graphics, int n, bool b) {
-	Applet* app = CAppContainer::getInstance()->app;
+void Canvas::disposeTravelMap() { this->travelMapManager.dispose(); }
 
-	bool b2 = false;
-	int height = this->imgTravelPath->height;
-	int n2 = n;
-	if (n2 > height) {
-		b2 = true;
-		n2 = height;
-	}
-	int n3 = b ? 0 : (height - n2);
-	int width = this->imgTravelPath->width;
-	if (n > 2 * height / 3) {
-		Text* smallBuffer = app->localization->getSmallBuffer();
-		smallBuffer->setLength(0);
-		if (!b) {
-			app->localization->composeText((short)3, (short)166, smallBuffer);
-			smallBuffer->dehyphenate();
-			graphics->drawString(smallBuffer, Canvas::hellNameCoords[0], Canvas::hellNameCoords[1], 4);
-		}
-		else {
-			app->localization->composeText((short)3, (short)164, smallBuffer);
-			smallBuffer->dehyphenate();
-			graphics->drawString(smallBuffer, Canvas::earthNameCoords[2], Canvas::earthNameCoords[3], 4);
-		}
-		smallBuffer->dispose();
-	}
-	graphics->drawRegion(this->imgTravelPath, 0, n3, width, n2, Canvas::hellPathCoords[0], Canvas::hellPathCoords[1] + n3, 0, 0, 0);
-	return b2;
-}
+void Canvas::drawStarFieldPage(Graphics* graphics) { this->travelMapManager.drawStarFieldPage(graphics); }
 
-void Canvas::drawLocatorBoxAndName(Graphics* graphics, bool b, int n, Text* text) {
-	int n2;
-	int n3;
-	if (this->onMoon(n)) {
-		n2 = Canvas::moonCoords[0];
-		n3 = Canvas::moonCoords[1];
-	}
-	else if (this->onEarth(n)) {
-		n2 = Canvas::earthCoords[0];
-		n3 = Canvas::earthCoords[1];
-	}
-	else {
-		n2 = Canvas::hellCoords[0];
-		n3 = Canvas::hellCoords[1];
-	}
-	short n4 = (short)(2 * (n - 1));
-	int n5 = Canvas::CROSS_HAIR_CORDS[n4] + this->xDiff + n2;
-	int n6 = Canvas::CROSS_HAIR_CORDS[n4 + 1] + this->yDiff + n3;
-	if (b) {
-		graphics->drawImage(this->imgMagGlass, n5, n6, 3, 0, 0);
-	}
+void Canvas::drawStarField(Graphics* graphics, int x, int y) { this->travelMapManager.drawStarField(graphics, x, y); }
 
-	int x = Canvas::LOCATOR_BOX_CORDS[n4] + this->xDiff + n2;
-	int y = Canvas::LOCATOR_BOX_CORDS[n4 + 1] + this->yDiff + n3 + (this->imgNameHighlight->height >> 1);
-	graphics->drawImage(this->imgNameHighlight, x, y, 6, 0, 0);
-	this->graphics.currentCharColor = 3;
-	graphics->drawString(text, x + (this->imgNameHighlight->width >> 1), y, 3);
-}
+void Canvas::runStarFieldFrame() { this->travelMapManager.runStarFieldFrame(); }
 
-void Canvas::drawGridLines(Graphics* graphics, int i) {
-	int iVar1;
-
-	for (iVar1 = (i / 200) % 44 + this->displayRect[0]; iVar1 < this->displayRect[2]; iVar1 += 44) {
-		graphics->drawImage(this->imgMapVertGridLines, iVar1, this->displayRect[1], 0x14, 0, 2);
-	}
-	for (iVar1 = this->displayRect[1] + 5; iVar1 < this->displayRect[3]; iVar1 += 44) {
-		graphics->drawImage(this->imgMapHorzGridLines, this->displayRect[0], iVar1, 20, 0, 2);
-		graphics->drawImage(this->imgMapHorzGridLines, 240, iVar1, 20, 0, 2);
-	}
-}
-
-bool Canvas::onMoon(int n) {
-	return n >= 1 && n <= 3;
-}
-
-bool Canvas::onEarth(int n) {
-	return n >= 4 && n <= 6;
-}
-
-bool Canvas::inHell(int n) {
-	return n >= 7;
-}
-
-void Canvas::handleTravelMapInput(int key, int action) {
-#if 0 // IOS
-	if ((this->stateVars[6] == 1) || (key == 18) || (action == Enums::ACTION_FIRE)) {
-		this->finishTravelMapAndLoadLevel();
-	}
-	else {
-		this->stateVars[6] = 1;
-	}
-#else // J2ME/BREW
-	Applet* app = CAppContainer::getInstance()->app;
-	bool hasSavedState = app->game->hasSavedState();
-
-	if (action == Enums::ACTION_MENU) { // [GEC] skip all
-		this->finishTravelMapAndLoadLevel();
-		return;
-	}
-
-	if (action == Enums::ACTION_FIRE) {
-		if (this->stateVars[6] == 1) {
-#if 0 // [GEC] no esta disponible en ningina de las versiones del juego
-			if (this->TM_LastLevelId == 0 && onMoon(this->TM_LoadLevelId)) {
-				this->stateVars[5] = 1; // Draw start field
-			}
-			else {
-				this->finishTravelMapAndLoadLevel();
-			}
-#else
-			this->finishTravelMapAndLoadLevel();
-#endif
-		}
-		else if (hasSavedState) {
-			if (this->stateVars[2] == 1) {
-				if (this->stateVars[8] == 0) {
-					this->stateVars[3] = 1;
-					this->stateVars[4] = 1;
-					this->stateVars[6] = 1;
-				}
-				else {
-					int n3 = app->upTimeMs - this->stateVars[0];
-					this->totalTMTimeInPastAnimations += n3;
-					this->stateVars[0] += n3;
-					if (this->stateVars[4] == 1) {
-						this->stateVars[4] = 0;
-						this->stateVars[8] = 0;
-						int n5 = this->earthCoords[0];
-						int n6 = this->earthCoords[1];
-						short n7 = (short)(2 * (this->TM_LoadLevelId - 1));
-						this->targetX = this->CROSS_HAIR_CORDS[n7] + this->xDiff + n5;
-						this->targetY = this->CROSS_HAIR_CORDS[n7 + 1] + this->yDiff + n6;
-					}
-					else {
-						this->stateVars[3] = 1;
-						this->stateVars[4] = 1;
-					}
-				}
-			}
-			else {
-				this->totalTMTimeInPastAnimations += app->upTimeMs - this->stateVars[0];
-				this->stateVars[0] = app->upTimeMs;
-				this->stateVars[1] = 1;
-				this->stateVars[2] = 1;
-				if (this->newLevelSamePlanet()) {
-					this->stateVars[3] = 1;
-				}
-			}
-		}
-	}
-	else if (action == Enums::ACTION_AUTOMAP && this->stateVars[5] == 1) {
-		this->finishTravelMapAndLoadLevel();
-	}
-#endif
-}
-void Canvas::finishTravelMapAndLoadLevel() {
-	this->clearSoftKeys();
-	this->disposeTravelMap();
-	this->setLoadingBarText((short)0, (short)41);
-	this->setState(Canvas::ST_LOADING);
-}
-
-bool Canvas::drawLocatorLines(Graphics* graphics, int n, bool b, bool b2) {
-	int targetX;
-	int targetY;
-	int targetX2;
-	int targetY2;
-	if (n >= 0) {
-		int n2 = n / (b ? 15 : 7);
-		if (b) {
-			int n3;
-			int n4;
-			if (this->onMoon(this->TM_LastLevelId)) {
-				n3 = Canvas::moonCoords[0];
-				n4 = Canvas::moonCoords[1];
-			}
-			else if (this->onEarth(this->TM_LastLevelId)) {
-				if (b2) {
-					n3 = Canvas::earthCoords[2];
-					n4 = Canvas::earthCoords[3];
-				}
-				else {
-					n3 = Canvas::earthCoords[0];
-					n4 = Canvas::earthCoords[1];
-				}
-			}
-			else {
-				n3 = Canvas::hellCoords[0];
-				n4 = Canvas::hellCoords[1];
-			}
-			short n5 = (short)(2 * (this->TM_LastLevelId - 1));
-			targetX = Canvas::CROSS_HAIR_CORDS[n5] + this->xDiff + n3;
-			targetY = Canvas::CROSS_HAIR_CORDS[n5 + 1] + this->yDiff + n4;
-		}
-		else {
-			targetX = this->displayRect[2] - this->xDiff;
-			targetY = this->displayRect[3] - this->yDiff;
-		}
-		int n6 = (this->targetX > targetX) ? 1 : ((this->targetX == targetX) ? 0 : -1);
-		int n7 = (this->targetY > targetY) ? 1 : ((this->targetY == targetY) ? 0 : -1);
-		targetX2 = targetX + n6 * n2;
-		targetY2 = targetY + n7 * n2;
-	}
-	else {
-		targetX2 = (targetX = this->targetX);
-		targetY2 = (targetY = this->targetY);
-	}
-	bool b3 = false;
-	bool b4 = false;
-	if ((this->targetX - targetX) * (this->targetX - targetX2) < 0 || this->targetX == targetX2) {
-		targetX2 = this->targetX;
-		b3 = true;
-	}
-	if ((this->targetY - targetY) * (this->targetY - targetY2) < 0 || this->targetY == targetY2) {
-		targetY2 = this->targetY;
-		b4 = true;
-	}
-	graphics->drawLine(targetX2 + 1, this->displayRect[1], targetX2 + 1, this->displayRect[3], 0xFF000000);
-	graphics->drawLine(this->displayRect[0], targetY2 + 1, this->displayRect[2], targetY2 + 1, 0xFF000000);
-	graphics->drawLine(targetX2, this->displayRect[1], targetX2, this->displayRect[3], 0xFFBDFD80);
-	graphics->drawLine(this->displayRect[0], targetY2, this->displayRect[2], targetY2, 0xFFBDFD80);
-	return b3 && b4;
-}
-
-void Canvas::initTravelMap() {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	this->TM_LoadLevelId = (short)std::max(1, std::min(this->loadMapID, 9));
-	this->TM_LastLevelId = ((getRecentLoadType() == 1 && !this->TM_NewGame) ? this->TM_LoadLevelId : ((short)std::max(0, std::min(this->lastMapID, 9))));
-
-	if (this->TM_LastLevelId == 0 && this->TM_LoadLevelId > 1) {
-		this->TM_LastLevelId = (short)(this->TM_LoadLevelId - 1);
-	}
-	short n;
-	if (this->TM_LoadLevelId > this->TM_LastLevelId) {
-		n = 0;
-	}
-	else if (this->TM_LoadLevelId == this->TM_LastLevelId) {
-		n = 1;
-	}
-	else {
-		n = 2;
-	}
-	app->game->scriptStateVars[15] = n;
-
-	app->beginImageLoading();
-	this->imgNameHighlight = app->loadImage("highlight.bmp", true);
-	this->imgMagGlass = app->loadImage("magnifyingGlass.bmp", true);
-	this->imgSpaceShip = app->loadImage("spaceShip.bmp", true);
-
-	bool b = false;
-	if (onMoon(this->TM_LoadLevelId)) {
-		this->imgTierCloseUp = app->loadImage("TM_Levels1.bmp", true);
-	}
-	else if (onEarth(this->TM_LoadLevelId)) {
-		if (onMoon(this->TM_LastLevelId) || inHell(this->TM_LastLevelId)) {
-			this->imgEarthCloseUp = app->loadImage("TM_Levels2.bmp", true);
-			b = true;
-		}
-		this->imgTierCloseUp = app->loadImage("TM_Levels4.bmp", true);
-	}
-	else {
-		this->imgTierCloseUp = app->loadImage("TM_Levels3.bmp", true);
-	}
-
-	if (onMoon(this->TM_LoadLevelId) && this->TM_LastLevelId == 0) {
-		this->imgTravelPath = app->loadImage("toMoon.bmp", true);
-	}
-	else if ((onEarth(this->TM_LoadLevelId) && onMoon(this->TM_LastLevelId)) || (onMoon(this->TM_LoadLevelId) && onEarth(this->TM_LastLevelId))) {
-		this->imgTravelPath = app->loadImage("toEarth.bmp", true);
-	}
-	else if ((inHell(this->TM_LoadLevelId) && onEarth(this->TM_LastLevelId)) || (onEarth(this->TM_LoadLevelId) && inHell(this->TM_LastLevelId))) {
-		this->imgTravelPath = app->loadImage("toHell.bmp", true);
-	}
-
-	this->imgTravelBG = app->loadImage("TravelMap.bmp", true);
-	this->imgMapHorzGridLines = app->loadImage("travelMapHorzGrid.bmp", true);
-	this->imgMapVertGridLines = app->loadImage("travelMapVertGrid.bmp", true);
-	app->endImageLoading();
-
-	this->totalTMTimeInPastAnimations = 0;
-	this->mapWidth = this->imgTravelBG->width;
-	this->mapHeight = this->imgTravelBG->height;
-	this->xDiff = std::max(0, (this->displayRect[2] - this->imgTravelBG->width) / 2);
-	this->yDiff = std::max(0, (this->displayRect[3] - this->imgTravelBG->height) / 2);
-
-	int n2;
-	int n3;
-	if (onMoon(this->TM_LoadLevelId)) {
-		n2 = 137;
-		n3 = 216;
-	}
-	else if (onEarth(this->TM_LoadLevelId)) {
-		if (b) {
-			n2 = 123;
-			n3 = 150;
-		}
-		else {
-			n2 = 123;
-			n3 = 150;
-		}
-	}
-	else {
-		n2 = 150;
-		n3 = 11;
-	}
-
-	if (!b) {
-		short n4 = (short)(2 * (this->TM_LoadLevelId - 1));
-		this->targetX = Canvas::CROSS_HAIR_CORDS[n4] + this->xDiff + n2;
-		this->targetY = Canvas::CROSS_HAIR_CORDS[n4 + 1] + this->yDiff + n3;
-	}
-	else {
-		this->targetX = Canvas::UAC_BUILDING_LOCATION_ON_EARTH[0] + this->xDiff + n2;
-		this->targetY = Canvas::UAC_BUILDING_LOCATION_ON_EARTH[1] + this->yDiff + n3;
-	}
-
-	this->stateVars[0] = app->upTimeMs;;
-	if (b) {
-		this->stateVars[8] = 1;
-	}
-
-	// Unused
-	this->imgStarField = app->loadImage("cockpit.bmp", true);
-	this->_field_0xf24 = 480;
-	this->_field_0xf20 = this->imgStarField->height;
-	this->_field_0xf28 = 0;
-	this->_field_0xf2c = 1;
-}
-
-void Canvas::disposeTravelMap() {
-	delete this->imgNameHighlight;
-	this->imgNameHighlight = nullptr;
-	delete this->imgMagGlass;
-	this->imgMagGlass = nullptr;
-	delete this->imgTravelBG;
-	this->imgTravelBG = nullptr;
-	delete this->imgTravelPath;
-	this->imgTravelPath = nullptr;
-	delete this->imgSpaceShip;
-	this->imgSpaceShip = nullptr;
-	delete this->imgTierCloseUp;
-	this->imgTierCloseUp = nullptr;
-	delete this->imgEarthCloseUp;
-	this->imgEarthCloseUp = nullptr;
-	delete this->imgMapHorzGridLines;
-	this->imgMapHorzGridLines = nullptr;
-	delete this->imgMapVertGridLines;
-	this->imgMapVertGridLines = nullptr;
-
-	// Unused
-	delete this->imgStarField;
-	this->imgStarField = nullptr;
-}
-
-void Canvas::drawStarFieldPage(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (app->upTimeMs - this->stateVars[0] > 5250) {
-		this->_field_0xf2c = 2u;
-		this->finishTravelMapAndLoadLevel();
-	}
-	else {
-		int yPos = this->screenRect[3] - this->screenRect[1] - this->imgStarField->height;
-		graphics->fillRect(0, 0, this->menuRect[2], this->menuRect[3], 0xFF000000);
-		this->drawStarField(graphics, 1, yPos / 2);
-		graphics->drawImage(this->imgStarField, 1, yPos / 2, 0, 0, 0);
-		graphics->drawImage(this->imgStarField, this->screenRect[2] - 1, yPos / 2, 24, 4, 0);
-		app->canvas->softKeyRightID = -1;
-		app->canvas->softKeyLeftID = -1;
-		app->canvas->repaintFlags |= Canvas::REPAINT_SOFTKEYS;
-		if (app->canvas->displaySoftKeys) {
-			app->canvas->softKeyRightID = 40;
-			app->canvas->repaintFlags |= Canvas::REPAINT_SOFTKEYS;
-		}
-	}
-}
-
-void Canvas::drawStarField(Graphics* graphics, int x, int y) {
-	Applet* app = CAppContainer::getInstance()->app;
-	int upTimeMs; // r2
-	int result; // r0
-	int field_0xf20; // r2
-	unsigned int v8; // r2
-	unsigned int v9; // r11
-	int v10; // r6
-	int v11; // r0
-	signed int v12; // r5
-	int v13; // r6
-	int v14; // r3
-	int v15; // r0
-	int i; // r4
-	int v17; // r10
-	int v18; // r8
-	int v23; // [sp+18h] [bp-2Ch]
-	int v24; // [sp+1Ch] [bp-28h]
-	int v25; // [sp+20h] [bp-24h]
-	int v26; // [sp+24h] [bp-20h]
-	int v27; // [sp+28h] [bp-1Ch]
-
-	graphics->fillRect(x, y, this->_field_0xf24, this->_field_0xf20, 0xFF000000);
-	if (app->upTimeMs - this->stateVars[7] > 59) {
-		this->stateVars[7] = app->upTimeMs;
-		this->runStarFieldFrame();
-	}
-
-	v23 = this->_field_0xf24 / 2;
-	field_0xf20 = this->_field_0xf20;
-	v26 = y;
-	v25 = 0;
-	v24 = field_0xf20 / 2;
-	v27 = field_0xf20 / -2;
-LABEL_20:
-	if (v25 < field_0xf20 - this->_field_0xf28)
-	{
-		v17 = x;
-		v18 = -v23;
-		for (i = 0; ; ++i)
-		{
-			if (i >= this->_field_0xf24)
-			{
-				++v25;
-				++v26;
-				++v27;
-				field_0xf20 = this->_field_0xf20;
-				goto LABEL_20;
-			}
-			v8 = app->tinyGL->pixels[i + this->_field_0xf24 * v25];
-			v9 = v8 >> 10;
-			if ((v8 & 0x3FF) != 0)
-				break;
-		LABEL_17:
-			++v17;
-			++v18;
-		}
-		v10 = (int)(abs(v18) << 10) / v23;
-		v11 = (int)(abs(v27) << 10) / v24;
-		v12 = v10 + v11 + ((unsigned int)(v10 + v11) >> 31);
-		v13 = (v10 + v11) / 2;
-		graphics->setColor(65793 * ((v13 << 7 >> 10) + 128) - 0x1000000);
-		if (v9 == 1)
-		{
-			v15 = 8 * v13;
-		}
-		else
-		{
-			if (!v9 || v9 != 2)
-			{
-				v14 = v12 >> 11;
-			LABEL_9:
-				if (v14 <= 0 || v14 == 1)
-				{
-					graphics->fillRect(v17, v26, 1, 1);
-				}
-				else
-				{
-					graphics->fillCircle(v17, v26, v14);
-				}
-				goto LABEL_17;
-			}
-			v15 = 10 * v13;
-		}
-		v14 = v15 >> 10;
-		goto LABEL_9;
-	}
-}
-
-void Canvas::runStarFieldFrame() {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	int v1; // r11
-	int v2; // r3
-	TinyGL* tinyGL; // r5
-	unsigned int v4; // r3
-	unsigned int v5; // r3
-	int v6; // r6
-	signed int v7; // r0
-	int* v8; // r10
-	int v9; // r0
-	int v10; // r4
-	int v11; // r8
-	unsigned int v12; // r3
-	TinyGL* v13; // r5
-	unsigned int v14; // r3
-	unsigned int v15; // r3
-	int v16; // r6
-	signed int v17; // r0
-	int* v18; // r10
-	int v19; // r0
-	int v20; // r4
-	int v21; // r8
-	int v22; // r11
-	unsigned int v23; // r3
-	int v24; // r6
-	int v25; // r10
-	int v26; // r4
-	int v27; // r5
-	int v28; // r0
-	int result; // r0
-	int v30; // [sp+0h] [bp-78h]
-	int v31; // [sp+4h] [bp-74h]
-	int v32; // [sp+8h] [bp-70h]
-	int v33; // [sp+Ch] [bp-6Ch]
-	int v34; // [sp+10h] [bp-68h]
-	int v35; // [sp+14h] [bp-64h]
-	int v38; // [sp+20h] [bp-58h]
-	int v39; // [sp+24h] [bp-54h]
-	int v40; // [sp+28h] [bp-50h]
-	int v41; // [sp+30h] [bp-48h]
-	int i; // [sp+34h] [bp-44h]
-	int v43; // [sp+3Ch] [bp-3Ch]
-	unsigned short* v44; // [sp+44h] [bp-34h]
-	unsigned short* pixels; // [sp+48h] [bp-30h]
-	int v46; // [sp+4Ch] [bp-2Ch]
-	int v47; // [sp+54h] [bp-24h]
-	int v48; // [sp+58h] [bp-20h]
-	int v49; // [sp+5Ch] [bp-1Ch]
-
-	v1 = this->_field_0xf24;
-	v38 = v1 / 2;
-	v2 = this->_field_0xf20;
-	v39 = v2 / 2;
-	for (i = 0; i < v2 / 2; ++i)
-	{
-		v10 = 0;
-		v48 = v39 - i;
-		v12 = abs(v39 - i);
-		v35 = 60 * v12;
-		v34 = 20 * v12;
-		v11 = -v38;
-		while (v10 < v1)
-		{
-			tinyGL = app->tinyGL;
-			pixels = tinyGL->pixels;
-			v4 = pixels[v10 + v1 * i];
-			v47 = v4 & 0x3FF;
-			if ((v4 & 0x3FF) != 0)
-			{
-				v5 = v4 >> 10;
-				if (v5 == 1)
-				{
-					v6 = v34;
-					v7 = 20 * abs(v11);
-				}
-				else if (v5)
-				{
-					v6 = v35;
-					v7 = 60 * abs(v11);
-				}
-				else
-				{
-					v6 = 300;
-					v7 = 300;
-				}
-				v31 = this->_field_0xf2c;
-				v8 = app->render->sinTable;
-				v46 = (v8[(v47 + 256) & 0x3FF] * (v7 / v31) / v38) >> 16;
-				v9 = (v8[v47] * (v6 / v31) / v39) >> 16;
-				if (v48 + v9 >= -v39 && v39 > v48 + v9 && -v38 <= v11 + v46 && v38 > v11 + v46)
-				{
-					pixels[v10 + v1 * (i - v9) + v46] = v47 | ((short)v5 << 10);
-					v1 = this->_field_0xf24;
-					tinyGL = app->tinyGL;
-				}
-				tinyGL->pixels[v10 + v1 * i] = 0;
-				v1 = this->_field_0xf24;
-			}
-			++v10;
-			++v11;
-		}
-		v2 = this->_field_0xf20;
-	}
-	v49 = v2 - 1;
-	v43 = v39 - (v2 - 1);
-	while (v49 >= v2 / 2)
-	{
-		v20 = 0;
-		v23 = abs(v43);
-		v21 = -v38;
-		v33 = 60 * v23;
-		v32 = 20 * v23;
-		while (v20 < v1)
-		{
-			v13 = app->tinyGL;
-			v44 = v13->pixels;
-			v14 = v44[v20 + v1 * v49];
-			v40 = v14 & 0x3FF;
-			if ((v14 & 0x3FF) != 0)
-			{
-				v15 = v14 >> 10;
-				if (v15 == 1)
-				{
-					v16 = v32;
-					v17 = 20 * abs(v21);
-				}
-				else if (v15)
-				{
-					v16 = v33;
-					v17 = 60 * abs(v21);
-				}
-				else
-				{
-					v16 = 300;
-					v17 = 300;
-				}
-				v30 = this->_field_0xf2c;
-				v18 = app->render->sinTable;
-				v41 = (v18[(v40 + 256) & 0x3FF] * (v17 / v30) / v38) >> 16;
-				v19 = (v18[v40] * (v16 / v30) / v39) >> 16;
-				if (v43 + v19 >= -v39 && v39 > v43 + v19 && v21 + v41 >= -v38 && v38 > v21 + v41)
-				{
-					v44[v20 + v1 * (v49 - v19) + v41] = v40 | ((short)v15 << 10);
-					v1 = this->_field_0xf24;
-					v13 = app->tinyGL;
-				}
-				v13->pixels[v20 + v1 * v49] = 0;
-				v1 = this->_field_0xf24;
-			}
-			++v20;
-			++v21;
-		}
-		--v49;
-		++v43;
-		v2 = this->_field_0xf20;
-	}
-	v22 = 0;
-	while (1)
-	{
-		result = 4 / this->_field_0xf2c;
-		if (v22 >= result)
-			break;
-		++v22;
-		v24 = app->nextInt() % 1023;
-		v25 = v24 + 1;
-		v26 = app->nextInt() % 3;
-		v27 = app->nextInt() % 15 + 1;
-		if ((unsigned int)(v24 - 256) <= 0x1FE)
-			v27 = -v27;
-		v28 = app->nextInt() % 15 + 1;
-		if (v25 >= 512)
-			v28 = -v28;
-		app->tinyGL->pixels[v27 + v38 + this->_field_0xf24 * (v39 - v28)] = v25 | ((short)v26 << 10);
-	}
-}
-
-void Canvas::playIntroMovie(Graphics* graphics) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	if (app->canvas->skipIntro != false) {
-		this->backToMain(true);
-		return;
-	}
-
-	if (app->game->hasSeenIntro && app->game->skipMovie) {
-		this->exitIntroMovie(false);
-		return;
-	}
-
-	if (this->stateVars[1] == 0) {  // load table camera
-		this->stateVars[1] = app->gameTime;
-		app->game->loadTableCamera(14, 15);
-		this->numEvents = 0;
-		this->keyDown = false;
-		this->keyDownCausedMove = false;
-		this->ignoreFrameInput = 1;
-		this->imgProlog = app->loadImage("prolog.bmp", true);
-	}
-
-	if (app->game) {
-		if (app->game->mayaCameras)
-		{
-			if (this->stateVars[3] == 0) { // init movie prolog
-				app->sound->playSound(1068, 1, 6, false);
-				if (this->stateVars[1] < app->gameTime) {
-					app->game->activeCameraKey = -1;
-					this->stateVars[3] = 0;
-					this->stateVars[1] = app->gameTime;
-					this->stateVars[2] = 0;
-					this->stateVars[0] = 0;
-					this->fadeRect = this->displayRect;
-					this->fadeFlags = Canvas::FADE_FLAG_FADEIN;
-					this->fadeColor = 0;
-					this->fadeTime = app->time;
-					this->fadeDuration = 1500;
-					this->stateVars[3] = 1;
-				}
-			}
-			else if (this->stateVars[3] == 1) { // draw movie prolog
-				if (this->displayRect[3] > 220) {
-					graphics->clipRect(0, (this->displayRect[3] - 220) / 2, this->displayRect[2], 220);
-				}
-
-				this->stateVars[0] = app->gameTime - app->game->activeCameraTime;
-				this->stateVars[2] = app->gameTime - this->stateVars[1];
-
-				app->game->mayaCameras->Update(app->game->activeCameraKey, this->stateVars[0]);
-
-				int uVar3 = app->game->posShift;
-				int texW = this->displayRect[2];
-				int texH = this->displayRect[3];
-
-				int posX = app->game->mayaCameras->x >> (uVar3 & 0xff);
-				int posY = app->game->mayaCameras->y >> (uVar3 & 0xff);
-
-				int texX = posX - this->SCR_CX; 
-				if (texX < 0) {
-					texX = 0;
-				}
-
-				int texY = posY - this->SCR_CY;
-				if (texY < 0) {
-					texY = 0;
-				}
-
-				posY = this->SCR_CY - posY;
-				if (posY < 0) {
-					posY = 0;
-				}
-
-				if (texX + texW > this->imgProlog->width) {
-					texW = this->imgProlog->width - texX;
-				}
-
-				if (texY + texH > this->imgProlog->height) {
-					texH = this->imgProlog->height - texY;
-				}
-
-				graphics->drawRegion(this->imgProlog, texX, texY, texW, texH, 0, posY, 0, 0, 0);
-				if (app->game->mayaCameras->complete) {
-					this->stateVars[3] += 1;
-				}
-			}
-			else if (this->stateVars[3] == 2) { // init Scrolling Text
-				this->initScrollingText(0, 133, false, 32, 1, 800);
-				this->drawScrollingText(graphics);
-				this->stateVars[3] += 1;
-			}
-			else if (this->stateVars[3] == 3) { // draw Scrolling Text
-				this->drawScrollingText(graphics);
-				if (this->scrollingTextDone) {
-					this->exitIntroMovie(false);
-				}
-			}
-
-			this->staleView = true;
-			return;
-		}
-	}
-}
-
-void Canvas::exitIntroMovie(bool b) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	app->game->cleanUpCamMemory();
-
-	delete this->imgProlog;
-	this->imgProlog = nullptr;
-
-	if (this->dialogBuffer) {
-		this->dialogBuffer->dispose();
-		this->dialogBuffer = nullptr;
-	}
-
-	app->sound->soundStop();
-	if (b == false) {
-		app->game->hasSeenIntro = true;
-		app->game->saveConfig();
-		this->backToMain(false);
-	}
-}
+void Canvas::playIntroMovie(Graphics* graphics) { this->introSequenceManager.playIntroMovie(graphics); }
+void Canvas::exitIntroMovie(bool b) { this->introSequenceManager.exitIntroMovie(b); }
 
 void Canvas::setMenuDimentions(int x, int y, int w, int h)
 {
@@ -7212,16 +4308,16 @@ void Canvas::touchStart(int pressX, int pressY) {
 		this->m_mixingButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_INTRO) {
-		this->m_storyButtons->HighlightButton(pressX, pressY, true);
+		this->introSequenceManager.m_storyButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_DIALOG) {
 		this->m_dialogButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_TREADMILL) {
-		this->m_treadmillButtons->HighlightButton(pressX, pressY, true);
+		this->miniGameManager.m_treadmillButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_CHARACTER_SELECTION) {
-		this->m_characterButtons->HighlightButton(pressX, pressY, true);
+		this->introSequenceManager.m_characterButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_MINI_GAME) {
 		if (app->canvas->stateVars[0] == 2) {
@@ -7343,16 +4439,16 @@ void Canvas::touchMove(int pressX, int pressY) {
 		this->m_mixingButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_INTRO) {
-		this->m_storyButtons->HighlightButton(pressX, pressY, true);
+		this->introSequenceManager.m_storyButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_DIALOG) {
 		this->m_dialogButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_TREADMILL) {
-		this->m_treadmillButtons->HighlightButton(pressX, pressY, true);
+		this->miniGameManager.m_treadmillButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_CHARACTER_SELECTION) {
-		this->m_characterButtons->HighlightButton(pressX, pressY, true);
+		this->introSequenceManager.m_characterButtons->HighlightButton(pressX, pressY, true);
 	}
 	else if (this->state == Canvas::ST_MINI_GAME) {
 		if (app->canvas->stateVars[0] == 2) {
@@ -7386,10 +4482,10 @@ void Canvas::touchEnd(int pressX, int pressY) {
 	}
 
 	if (this->state == Canvas::ST_INTRO) {
-		state = this->m_storyButtons->GetTouchedButtonID(pressX, pressY);
+		state = this->introSequenceManager.m_storyButtons->GetTouchedButtonID(pressX, pressY);
 		if (state != 1) {
 			if (state == 2) {
-				if (this->storyPage >= this->storyTotalPages - 1) {
+				if (this->introSequenceManager.storyPage >= this->introSequenceManager.storyTotalPages - 1) {
 					return;
 				}
 			}
@@ -7454,7 +4550,7 @@ void Canvas::touchEnd(int pressX, int pressY) {
 								goto LAB_00022c64;
 							}
 							if (this->state != Canvas::ST_TREADMILL) goto LAB_00022c60;
-							state = this->m_treadmillButtons->GetTouchedButtonID(pressX, pressY);
+							state = this->miniGameManager.m_treadmillButtons->GetTouchedButtonID(pressX, pressY);
 							if (state == 0) {
 								state = this->numEvents;
 								if (state != 4) {
@@ -7497,8 +4593,8 @@ void Canvas::touchEnd(int pressX, int pressY) {
 		if (state - 7U < 2) {
 			state = 6;
 		LAB_00022944:
-			if (this->currentDialogLine < this->numDialogLines - this->dialogViewLines) goto LAB_00022980;
-			uVar5 = this->dialogFlags;
+			if (this->dialogSystem.currentDialogLine < this->dialogSystem.numDialogLines - this->dialogSystem.dialogViewLines) goto LAB_00022980;
+			uVar5 = this->dialogSystem.dialogFlags;
 			if ((uVar5 & 2) != 0) {
 				return;
 			}
@@ -7514,13 +4610,13 @@ void Canvas::touchEnd(int pressX, int pressY) {
 		}
 		if (state == 6) goto LAB_00022944;
 	LAB_00022980:
-		if ((1 < state - 5U) || (this->numDialogLines <= this->dialogViewLines)) {
-			uVar5 = this->dialogFlags;
+		if ((1 < state - 5U) || (this->dialogSystem.numDialogLines <= this->dialogSystem.dialogViewLines)) {
+			uVar5 = this->dialogSystem.dialogFlags;
 			if ((uVar5 & 2) == 0) {
 				if (uVar5 == 0) {
 					return;
 				}
-				if (this->currentDialogLine < this->numDialogLines - this->dialogViewLines) {
+				if (this->dialogSystem.currentDialogLine < this->dialogSystem.numDialogLines - this->dialogSystem.dialogViewLines) {
 					return;
 				}
 				if (((uVar5 & 4) == 0) && ((uVar5 & 1) == 0)) {
@@ -7537,7 +4633,7 @@ void Canvas::touchEnd(int pressX, int pressY) {
 				}
 			}
 			else {
-				iVar3 = this->dialogStyle;
+				iVar3 = this->dialogSystem.dialogStyle;
 				sVar1 = (short)state;
 				if (iVar3 == 11) {
 					if (state == 0) {
@@ -7555,7 +4651,7 @@ void Canvas::touchEnd(int pressX, int pressY) {
 						this->numEvents = iVar3 + 1;
 						this->keyPressedTime = app->upTimeMs;
 					}
-					iVar3 = this->dialogStyle;
+					iVar3 = this->dialogSystem.dialogStyle;
 				}
 				if (iVar3 != 10) {
 					return;
@@ -7593,7 +4689,7 @@ void Canvas::touchEndUnhighlight() {
 		this->m_mixingButtons->HighlightButton(0, 0, false);
 	}
 	else if (this->state == Canvas::ST_INTRO) {
-		this->m_storyButtons->HighlightButton(0, 0, false);
+		this->introSequenceManager.m_storyButtons->HighlightButton(0, 0, false);
 	}
 
 	if (this->state == Canvas::ST_PLAYING || this->state == Canvas::ST_COMBAT || this->state == Canvas::ST_AUTOMAP || this->state == Canvas::ST_DIALOG || this->state == Canvas::ST_CAMERA) {
@@ -7603,150 +4699,30 @@ void Canvas::touchEndUnhighlight() {
 		this->m_sniperScopeButtons->HighlightButton(0, 0, false);
 		this->m_softKeyButtons->HighlightButton(0, 0, false);
 		this->m_dialogButtons->HighlightButton(0, 0, false);
-		this->m_characterButtons->HighlightButton(0, 0, false);
+		this->introSequenceManager.m_characterButtons->HighlightButton(0, 0, false);
 	}
 	else if (this->state == Canvas::ST_TREADMILL) {
-		this->m_treadmillButtons->HighlightButton(0, 0, false);
+		this->miniGameManager.m_treadmillButtons->HighlightButton(0, 0, false);
 	}
 }
 
 void Canvas::initMiniGameHelpScreen() {
-	this->miniGameHelpScrollPosition = 0;
+	this->miniGameManager.initMiniGameHelpScreen();
 }
 
 void Canvas::drawMiniGameHelpScreen(Graphics* graphics, int i, int i2, Image* image) {
-	graphics->drawImage(image, 0, 0, 0, 0, 0);
-	this->drawMiniGameHelpText(graphics, i, i2);
+	this->miniGameManager.drawMiniGameHelpScreen(graphics, i, i2, image);
 }
 
 void Canvas::drawMiniGameHelpText(Graphics* graphics, int i, int i2) {
-	Applet* app = CAppContainer::getInstance()->app;
-
-	int x;
-	Text* textBuff1;
-	int iVar1;
-	Text* textBuff2;
-	int iVar2;
-	Text* textBuff3;
-	int iVar3;
-
-	textBuff1 = app->localization->getSmallBuffer();
-	x = (this->screenRect[2] - this->screenRect[0]) / 2;
-	textBuff1->setLength(0);
-	app->localization->composeText(i, textBuff1);
-	textBuff1->dehyphenate();
-	graphics->drawString(textBuff1, x, this->screenRect[1] + 0x19, 3);
-
-	textBuff1->setLength(0);
-	app->localization->composeText(i2, textBuff1);
-	textBuff1->wrapText(0x31, '\n');
-	iVar1 = textBuff1->getNumLines();
-	this->helpTextNumberOfLines = iVar1;
-
-	textBuff2 = app->localization->getSmallBuffer();
-	textBuff2->setLength(0);
-	for (iVar1 = 0; iVar1 < this->miniGameHelpScrollPosition; iVar1 = iVar1 + 1) {
-		iVar3 = textBuff1->findFirstOf('\n');
-		textBuff3 = textBuff1;
-		if (iVar3 != -1) {
-			iVar2 = textBuff1->length();
-			textBuff1->substring(textBuff2, iVar3 + 1, (iVar2 - iVar3) + -1);
-			textBuff1->setLength(0);
-			textBuff3 = textBuff2;
-			textBuff2 = textBuff1;
-		}
-		textBuff1 = textBuff3;
-	}
-	for (iVar1 = this->miniGameHelpScrollPosition + 0x10; iVar1 < this->helpTextNumberOfLines;
-		iVar1 = iVar1 + 1) {
-		iVar3 = textBuff1->findLastOf('\n');
-		textBuff3 = textBuff1;
-		if (iVar3 != -1) {
-			textBuff1->substring(textBuff2, 0, iVar3);
-			textBuff1->setLength(0);
-			textBuff3 = textBuff2;
-			textBuff2 = textBuff1;
-		}
-		textBuff1 = textBuff3;
-	}
-	textBuff2->dispose();
-
-	graphics->drawString(textBuff1, this->screenRect[0] + 0x12, this->screenRect[1] + 0x2d, 0x14);
-	iVar3 = this->helpTextNumberOfLines;
-	iVar1 = this->miniGameHelpScrollPosition + 0x10;
-	if (iVar3 < iVar1) {
-		iVar1 = iVar3;
-	}
-	this->drawScrollBar(graphics, this->screenRect[2] + -0x12, this->screenRect[1] + 0x2d, 0x100,
-		this->miniGameHelpScrollPosition, iVar1, iVar3, 0x10);
-	textBuff1->setLength(0);
-	app->localization->composeText(0, 0x60, textBuff1);
-	textBuff1->dehyphenate();
-	graphics->drawString(textBuff1, x, this->screenRect[3] + -0x14, 3);
-	textBuff1->dispose();
+	this->miniGameManager.drawMiniGameHelpText(graphics, i, i2);
 }
 
 void Canvas::handleMiniGameHelpScreenScroll(int i) {
-	int iVar1;
-	int iVar2;
-
-	if (i < 0) {
-		iVar1 = i + this->miniGameHelpScrollPosition;
-		if (iVar1 < 0) {
-			iVar1 = 0;
-		}
-		this->miniGameHelpScrollPosition = iVar1;
-		return;
-	}
-	if (0 < i) {
-		iVar1 = this->helpTextNumberOfLines + -0x10;
-		if (iVar1 < 0) {
-			iVar1 = 0;
-		}
-		iVar2 = i + this->miniGameHelpScrollPosition;
-		if (iVar1 < iVar2) {
-			this->miniGameHelpScrollPosition = iVar1;
-		}
-		else {
-			this->miniGameHelpScrollPosition = iVar2;
-		}
-		return;
-	}
-	return;
+	this->miniGameManager.handleMiniGameHelpScreenScroll(i);
 }
 
-void Canvas::disposeCharacterSelection() {
-	delete this->imgCharacter_select_stat_bar;
-	this->imgCharacter_select_stat_bar = nullptr;
-	delete this->imgCharacter_select_stat_header;
-	this->imgCharacter_select_stat_header = nullptr;
-	delete this->imgTopBarFill;
-	this->imgTopBarFill = nullptr;
-	delete this->imgCharacter_upperbar;
-	this->imgCharacter_upperbar = nullptr;
-	delete this->imgCharacterSelectionAssets;
-	this->imgCharacterSelectionAssets = nullptr;
-	delete this->imgCharSelectionBG;
-	this->imgCharSelectionBG = nullptr;
-	delete this->imgMajorMugs;
-	this->imgMajorMugs = nullptr;
-	delete this->imgSargeMugs;
-	this->imgSargeMugs = nullptr;
-	delete this->imgScientistMugs;
-	this->imgScientistMugs = nullptr;
-	delete this->imgMajor_legs;
-	this->imgMajor_legs = nullptr;
-	delete this->imgMajor_torso;
-	this->imgMajor_torso = nullptr;
-	delete this->imgRiley_legs;
-	this->imgRiley_legs = nullptr;
-	delete this->imgRiley_torso;
-	this->imgRiley_torso = nullptr;
-	delete this->imgSarge_legs;
-	this->imgSarge_legs = nullptr;
-	delete this->imgSarge_torso;
-	this->imgSarge_torso = nullptr;
-}
+void Canvas::disposeCharacterSelection() { this->introSequenceManager.disposeCharacterSelection(); }
 
 bool Canvas::pitchIsControlled(int n, int n2, int n3) {
 
@@ -8040,18 +5016,7 @@ void Canvas::setControlLayout() {
 }
 
 void Canvas::evaluateMiniGameResults(int n) {
-	Applet* app = CAppContainer::getInstance()->app;
-	if (n == 1) {
-		int modifyStat = app->player->modifyStat(7, 2);
-		app->localization->resetTextArgs();
-		if (modifyStat > 0) {
-			app->localization->addTextArg(modifyStat);
-			app->hud->addMessage((short)236, 3);
-		}
-		else {
-			app->hud->addMessage((short)237, 3);
-		}
-	}
+	this->miniGameManager.evaluateMiniGameResults(n);
 }
 void Canvas::addEvents(int event) { // [GEC]
 	if (this->numEvents < Canvas::MAX_EVENTS) {

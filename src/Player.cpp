@@ -1684,7 +1684,7 @@ void Player::giveAll() {
     for (int k = 0; k < 26; ++k) {
         if (k != 24) {
             this->give(0, (uint8_t)k, 999, true);
-            app->canvas->numHelpMessages = 0;
+            app->canvas->dialogSystem.numHelpMessages = 0;
         }
     }
     this->give(0, 24, 9999, true);
