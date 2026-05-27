@@ -7,6 +7,14 @@
 #include "MiniGameManager.h"
 #include "TravelMapManager.h"
 #include "DialogSystem.h"
+#include "AutomapController.h"
+#include "MovementController.h"
+#include "LoadingManager.h"
+#include "LoadingScreenController.h"
+#include "SoftKeyController.h"
+#include "ZoomController.h"
+#include "TouchController.h"
+#include "InputEventController.h"
 
 class Image;
 class Text;
@@ -342,6 +350,14 @@ public:
 	LootingSystem lootingSystem;
 	TravelMapManager travelMapManager;
 	DialogSystem dialogSystem;
+	AutomapController automapController;
+	MovementController movementController;
+	LoadingManager loadingManager;
+	LoadingScreenController loadingScreenController;
+	SoftKeyController softKeyController;
+	ZoomController zoomController;
+	TouchController touchController;
+	InputEventController inputEventController;
 
 	// Constructor
 	Canvas();
