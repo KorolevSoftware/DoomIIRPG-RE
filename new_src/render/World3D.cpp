@@ -476,18 +476,16 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	auto it = spriteTexByMedia_.find(mediaId);
 	if (it == spriteTexByMedia_.end()) return;
 
-	// Image bounds for UVs and billboard size. Legacy uses two branches:
-	// RLE sprites (Size != w*h) draw with FULL-texture UVs (0..1024) and a
-	// fixed 518/1036 size; raw textures / z-sprites use bounds-based UVs
-	// and bounds-based size. Using bounds UVs on RLE sprites samples the
-	// mirror region -> flipped/invisible sprites.
+	// Image bounds for UVs and billboard size. Legacy (Render.cpp:461/492)
+	// uses bounds-based UVs/size when the sprite has the TILE flag (0x400000)
+	// OR the texture is raw (Size == w*h). Otherwise (RLE, no TILE) it uses
+	// full-texture UVs with a fixed 518/1036 size and crops to 176 rows
+	// (DrawWorldSpaceSpriteLine:176).
 	bool isRle = spriteIsRle_.count(mediaId) ? spriteIsRle_[mediaId] : false;
+	bool useBounds = (info & 0x400000) != 0 || !isRle;
 	int n13, n14, n15, n16, n19, n20;
-	if (isRle) {
-		n13 = 0; n14 = 1024; n15 = 0; n16 = 1024;
-		n19 = (518 * scaleFactor) / 0x10000;
-		n20 = (1036 * scaleFactor) / 0x10000;
-	} else {
+	int cropS = 1024, cropT = 1024;
+	if (useBounds) {
 		int16_t b[4] = {
 			(int16_t)(m.bounds[mediaId * 4 + 0]),
 			(int16_t)(m.bounds[mediaId * 4 + 1]),
@@ -506,6 +504,17 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		n16 = (n12 << 10) / tHeight;
 		n19 = ((((n11 >> 2) << 4) + 7) * scaleFactor) / 0x10000;
 		n20 = ((((n12 >> 1) << 4) + 7) * scaleFactor) / 0x10000;
+	} else {
+		int wb = (media.mappings().dimensions[mediaId] >> 4) & 0xF;
+		int hb = media.mappings().dimensions[mediaId] & 0xF;
+		int sWidth = 1 << wb;
+		int tHeight = 1 << hb;
+		n13 = 0; n14 = 1024; n15 = 0; n16 = 1024;
+		n19 = (518 * scaleFactor) / 0x10000;
+		n20 = (1036 * scaleFactor) / 0x10000;
+		// DrawWorldSpaceSpriteLine crops the frame to 176 rows/cols.
+		cropS = 176 * 1024 / sWidth;
+		cropT = 176 * 1024 / tHeight;
 	}
 
 	// Flush on texture change.
@@ -533,15 +542,18 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		// Legacy: z -= 512; position nudged back by n17 (10 raw, 12 RLE).
 		z -= 512;
 		int n17 = isRle ? 12 : 10;
-		int viewSin = st[(camera.viewYaw() + 0) & 0x3FF];
-		int viewCos = st[(camera.viewYaw() + 256) & 0x3FF];
+		// viewSin/viewCos come from the sine table (NOT the view matrix!).
+		const int32_t* sinTbl = camera.sinTable();
+		int yaw = camera.viewYaw() & 0x3FF;
+		int viewSin = sinTbl[yaw];
+		int viewCos = sinTbl[(yaw + 256) & 0x3FF];
 		x -= n17 * viewCos >> 16;
 		y += n17 * viewSin >> 16;
 
 		// Four billboard corners (viewMtxMove: right += view[i]*n2>>14,
 		// up: n3=-n3). view_ row0=(view[0],view[4],view[8]) right axis,
 		// row1=(view[1],view[5],view[9]) up axis (14.14).
-		Vertex quad[4];
+		float wx[4], wy[4], wz[4];
 		for (int ci = 0; ci < 4; ++ci) {
 			int n21 = (ci & 2) >> 1;
 			int n22 = (ci & 1) ^ n21 ^ 1;
@@ -554,12 +566,19 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 			px += (st[0] * n2 + st[1] * m3) * k1;
 			py += (st[4] * n2 + st[5] * m3) * k1;
 			pz += (st[8] * n2 + st[9] * m3) * k1;
+			wx[ci] = px; wy[ci] = py; wz[ci] = pz;
+		}
 
-			float s = (float)(n13 + n22 * n14) * (1.f / 1024.f);
+		Vertex quad[4];
+		for (int ci = 0; ci < 4; ++ci) {
+			int n21 = (ci & 2) >> 1;
+			int n22 = (ci & 1) ^ n21 ^ 1;
+			float s = (float)(n13 + n22 * n14) * (1.f / 1024.f) * (cropS / 1024.f);
 			// Vertical flip for billboards: texel data is top-down (row 0 =
-			// top of image) but GL v=0 is the bottom texel row.
-			float t = (1.f - (float)(n15 + n21 * n16) * (1.f / 1024.f));
-			quad[ci] = { px * k1, py * k1, pz * k1, s, t };
+			// top of image) but GL v=0 is the bottom texel row. RLE frames
+			// are cropped to 176 rows (legacy DrawWorldSpaceSpriteLine).
+			float t = (1.f - (float)(n15 + n21 * n16) * (1.f / 1024.f)) * (cropT / 1024.f);
+			quad[ci] = { wx[ci] * k1, wy[ci] * k1, wz[ci] * k1, s, t };
 		}
 		// Fan triangles 0,1,2 and 0,2,3 (matches quad_indexes).
 		Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
@@ -708,31 +727,67 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 	walkNode(map, 0, camera.viewX(), camera.viewY(), camera.viewZ());
 
 	// Precompute the BSP leaf for every sprite (legacy relinkSprite does this
-	// once at level load). Sprites get drawn right after their leaf's geometry,
-	// so nearer leaves overdraw farther sprites (painter's algorithm).
+	// once at level load, AFTER postProcessSprites added terrain height to Z).
+	// Sprites get drawn right after their leaf's geometry, so nearer leaves
+	// overdraw farther sprites (painter's algorithm).
 	std::vector<int> spriteLeaf(map.numSprites, -1);
 	for (int i = 0; i < map.numSprites; ++i) {
 		if (map.mapSpriteInfo[i] & 0x10000) continue; // invisible
 		int x = map.mapSprites[i + 0 * map.numSprites];
 		int y = map.mapSprites[i + 1 * map.numSprites];
 		int z = map.mapSprites[i + 2 * map.numSprites];
-		spriteLeaf[i] = getNodeForPoint(map, x << 4, y << 4, z << 4, map.mapSpriteInfo[i]);
+		// Match legacy: Z includes terrain height before node lookup.
+		int hz = z << 4;
+		if (!map.heightMap.empty()) {
+			int hx = x & 0x7FF, hy = y & 0x7FF;
+			int h = (map.heightMap[((hy >> 6) * 32 + (hx >> 6))] << 3) << 4;
+			if (i >= map.numNormalSprites) h -= 32 << 4;
+			hz += h;
+		}
+		spriteLeaf[i] = getNodeForPoint(map, x << 4, y << 4, hz, map.mapSpriteInfo[i]);
 	}
 
 	begin(camera);
 	// Legacy renderBSP draws nodeIdxs in reverse (far leaves first, so that
 	// nearer leaves overdraw them — painter's algorithm). All sprites of a
-	// leaf are drawn right after its geometry so walls of nearer leaves
-	// correctly occlude them (culling).
+	// leaf (decals + billboards) are drawn right after its geometry, sorted
+	// by mvp depth (legacy addSprite) so nearer sprites overdraw farther ones
+	// (e.g. a billboard is not overdrawn by a wall decal behind it).
+	const int* mvp = camera.mvpInt();
+	std::vector<int> leafSprites;
+	std::vector<int> leafDepth;
 	for (int k = (int)nodeIdxs_.size() - 1; k >= 0; --k) {
 		int leaf = nodeIdxs_[k];
 		for (size_t i = 0; i < map.polygons.size(); ++i) {
 			if (map.polygons[i].leafNode == leaf) drawPoly(map, (int)i);
 		}
 		// Sprites of this leaf, drawn after its geometry.
+		leafSprites.clear();
+		leafDepth.clear();
 		for (int i = 0; i < map.numSprites; ++i) {
-			if (spriteLeaf[i] == leaf) drawSprite(map, media, camera, i);
+			if (spriteLeaf[i] != leaf) continue;
+			if (map.mapSpriteInfo[i] & 0x10000) continue;
+			int x = map.mapSprites[i + 0 * map.numSprites];
+			int y = map.mapSprites[i + 1 * map.numSprites];
+			int z = map.mapSprites[i + 2 * map.numSprites];
+			int d = (x * mvp[2] + y * mvp[6] + z * mvp[10] >> 14) + mvp[14];
+			int info = map.mapSpriteInfo[i];
+			if (info & 0x400000) d += 6;
+			else if ((info & 0xFF) == 240 || (info & 0xFF) == 246 || (info & 0xFF) == 245 || (info & 0xFF) == 247) d = (int)0x80000000;
+			else if (info & 0xF000000) d += 5;
+			leafSprites.push_back(i);
+			leafDepth.push_back(d);
 		}
+		// Sort descending by depth (larger = farther, drawn first).
+		for (size_t a = 0; a < leafSprites.size(); ++a) {
+			for (size_t b = a + 1; b < leafSprites.size(); ++b) {
+				if (leafDepth[b] > leafDepth[a]) {
+					std::swap(leafSprites[a], leafSprites[b]);
+					std::swap(leafDepth[a], leafDepth[b]);
+				}
+			}
+		}
+		for (int i : leafSprites) drawSprite(map, media, camera, i);
 	}
 	end();
 }

@@ -22,6 +22,7 @@ public:
 	// sinTable: 1024-entry fixed-point sine table (legacy/TinyGL format,
 	// sinTable[i] ~ sin(i * 2pi / 1024) << 14).
 	void setSinTable(const int32_t* sinTable) { sinTable_ = sinTable; }
+	const int32_t* sinTable() const { return sinTable_; }
 
 	// Builds the combined MVP matrix from a camera.
 	// viewAspect = (viewFov<<14) / ((viewportW<<14)/viewportH), like legacy.
