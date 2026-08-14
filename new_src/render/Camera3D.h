@@ -36,6 +36,9 @@ public:
 	// Raw 14.14 view matrix (used for billboard placement, e.g. viewMtxMove).
 	const int* viewInt() const { return view_; }
 
+	// View matrix as float[16] (14.14 -> /16384), for shader eye-space depth.
+	const float* viewFloat() const { return viewF_; }
+
 	// Raw 14.14 combined MVP (used for sprite depth sorting like legacy).
 	const int* mvpInt() const { return mvp_; }
 
@@ -60,6 +63,7 @@ private:
 	int projection_[16];
 	int mvp_[16];
 	float mvpF_[16];
+	float viewF_[16];
 };
 
 } // namespace newcore

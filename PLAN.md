@@ -38,11 +38,23 @@ GL 3.3 core + шейдеры, канвас 480x320 (letterbox), CMake.
         painter's). nodeClassifyPoint — знак (view·normal)+offset.
       - [ ] drawNodeGeometry + faceCull/swapXY/expandEdgePoly (расширение
         2-вертексных граней уже в MapParser; GL-путь рисует как есть).
-      - [ ] fog/скрин-эффекты (fogMin/fogRange, columnScale).
+      - [x] fog/скрин-эффекты: World3D::setFog (fogColor ARGB, fogMin,
+        fogRange; alpha==0 → выкл; fogScale=1/8000; legacy swap R/B),
+        шейдер: uView → eye-depth, линейный fog по RGB (alpha не трогаем,
+        чтобы прозрачные пиксели билбордов не «туманились» в квадрат).
+        Пользователь подтвердил: туман красивый, альфа корректна.
       - [x] Небо (DrawSkyMap/skyMap): uploadSky из tables.bin (skyPaletteA/
         skyTexelA для map00, skyIndex=((mapID-1)/5%2)*2), drawSky —
         полноэкранный NDC-квад, UV = (ndc*0.5, -ndc.y*0.5+0.5) - yaw/256,
         identity MVP. Пользователь подтвердил: небо корректно.
+      - [x] Спрайты-билборды (renderSpriteObject/renderStreamSpriteGL):
+        uploadSpriteTextures (RLE-декод column-RLE, bounds), drawSprite —
+        билборды (raw bounds / RLE 518·1036 + 176-crop) и настенные декали
+        (Wall-ветка с viewStepValues, терминалы/порталы z-коррекции);
+        привязка спрайтов к BSP-листам (getNodeForPoint, высота как в
+        postProcessSprites), сортировка по mvp-глубине; ящики z-=224.
+        Без depth buffer (как GLES::SetGLState), painter's алгоритм.
+        viewSin/viewCos — из sin-таблицы, НЕ из view-матрицы.
       - [x] Реальная камера вместо автовращения: WASD/стрелки (движение
         вперёд = +cos*K,-sin*K, стрейф, поворот ←/→), ESC — выход.
 - [ ] Фаза 4. Игровые сущности: Player, Entity, инвентарь, оружие,

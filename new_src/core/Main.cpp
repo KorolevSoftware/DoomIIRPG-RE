@@ -201,6 +201,9 @@ int main(int argc, char* argv[]) {
 	} else if (!tables.skyTexelB.empty() && !tables.skyPaletteB.empty()) {
 		world.uploadSky(tables.skyTexelB, tables.skyPaletteB);
 	}
+	// Temporary fog so the effect can be verified (real values come from the
+	// map/save). Opaque dark green fog.
+	world.setFog(0xFF1A2A1A, 500, 900);
 
 	// Camera placed at the map spawn (matches legacy Game::setSpawnPosition).
 	// viewX = n*64+32 world units (tile grid), then render shifts by <<4+8.

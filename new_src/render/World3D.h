@@ -69,6 +69,10 @@ public:
 	// Renders a single polygon list (used for per-node BSP traversal later).
 	void drawPolys(const MapData& map, const std::vector<int>& polyIdx, const Camera3D& camera);
 
+	// Sets fog. Legacy GL_FOG linear in eye space: fogStart = fogMin * (1/8000),
+	// fogEnd = (fogRange/fogColor.a + fogMin) * (1/8000). alpha==0 disables fog.
+	void setFog(int fogColorARGB, int fogMin, int fogRange);
+
 	bool initialized() const { return initialized_; }
 
 private:
@@ -103,6 +107,14 @@ private:
 
 	// BSP traversal state (mirrors legacy Render fields).
 	std::vector<int> nodeIdxs_; // visible leaf node indices
+
+	// Fog state (uniforms set in begin()).
+	bool fogEnabled_ = false;
+	float fogStart_ = 0.f;
+	float fogEnd_ = 0.f;
+	float fogColor_[4] = { 0.f, 0.f, 0.f, 1.f };
+	GLint locFogEnabled_ = -1, locFogStart_ = -1, locFogEnd_ = -1, locFogColor_ = -1;
+	GLint locView_ = -1;
 
 	// Current bound texture (index + palette) so drawPoly can flush on change.
 	GLuint currentTex_ = 0;

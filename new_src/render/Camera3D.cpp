@@ -98,6 +98,7 @@ void Camera3D::setView(int viewX, int viewY, int viewZ, int viewYaw, int viewPit
 	multMatrix(view_, projection_, mvp_);
 	for (int i = 0; i < 16; ++i) {
 		mvpF_[i] = (float)mvp_[i] * (1.f / 16384.f);
+		viewF_[i] = (float)view_[i] * (1.f / 16384.f);
 	}
 }
 

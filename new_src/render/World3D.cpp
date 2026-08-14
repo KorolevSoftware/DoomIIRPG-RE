@@ -59,9 +59,13 @@ const char* kWorldVertex = R"(
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aUV;
 uniform mat4 uMVP;
+uniform mat4 uView; // view matrix for eye-space depth (fog)
 out vec2 vUV;
+out float vFogDepth; // eye-space depth (positive forward)
 void main() {
 	vUV = aUV;
+	vec4 eye = uView * vec4(aPos, 1.0);
+	vFogDepth = -eye.z;
 	gl_Position = uMVP * vec4(aPos, 1.0);
 }
 )";
@@ -69,12 +73,24 @@ void main() {
 const char* kWorldFragment = R"(
 #version 330 core
 in vec2 vUV;
+in float vFogDepth;
 uniform sampler2D uTexture; // R8 index texture
 uniform sampler2D uPalette; // RGBA8 palette LUT (256x1)
+uniform int uFogEnabled;
+uniform float uFogStart;
+uniform float uFogEnd;
+uniform vec4 uFogColor;
 out vec4 fragColor;
 void main() {
 	float index = texture(uTexture, vUV).r;
-	fragColor = texture(uPalette, vec2(index, 0.5));
+	vec4 col = texture(uPalette, vec2(index, 0.5));
+	if (uFogEnabled != 0) {
+		// Fog affects RGB only (GL fog leaves alpha untouched) so transparent
+		// billboard texels stay transparent instead of fogging into a box.
+		float f = clamp((uFogEnd - vFogDepth) / max(uFogEnd - uFogStart, 1e-6), 0.0, 1.0);
+		col.rgb = mix(uFogColor.rgb, col.rgb, f);
+	}
+	fragColor = col;
 }
 )";
 
@@ -135,6 +151,11 @@ bool World3D::initialize() {
 		return false;
 	}
 	locMVP_ = shader_.uniform("uMVP");
+	locView_ = shader_.uniform("uView");
+	locFogEnabled_ = shader_.uniform("uFogEnabled");
+	locFogStart_ = shader_.uniform("uFogStart");
+	locFogEnd_ = shader_.uniform("uFogEnd");
+	locFogColor_ = shader_.uniform("uFogColor");
 
 	glGenVertexArrays(1, &vao_);
 	glBindVertexArray(vao_);
@@ -154,8 +175,31 @@ bool World3D::initialize() {
 	return true;
 }
 
-void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {
-	media_ = &media;
+// Legacy gles fog setup (GLES.cpp:178-190). fogColor packed ARGB; alpha==0
+// disables fog (buildFogTables:1857-1861). fogScale = 1/8000.
+void World3D::setFog(int fogColorARGB, int fogMin, int fogRange) {
+	int a = (fogColorARGB >> 24) & 0xFF;
+	int r = (fogColorARGB >> 16) & 0xFF;
+	int g = (fogColorARGB >> 8) & 0xFF;
+	int b = fogColorARGB & 0xFF;
+	const float fogScale = 1.f / 8000.f;
+
+	if (a == 0) {
+		fogEnabled_ = false;
+		return;
+	}
+	fogEnabled_ = true;
+	float alpha = (float)a / 255.f;
+	fogColor_[0] = (float)b / 255.f; // legacy swaps R/B
+	fogColor_[1] = (float)g / 255.f;
+	fogColor_[2] = (float)r / 255.f;
+	fogColor_[3] = alpha;
+	fogStart_ = (float)fogMin * fogScale;
+	fogEnd_ = ((float)fogRange / alpha + (float)fogMin) * fogScale;
+	if (fogEnd_ > 0.499f) { fogStart_ = 9999.f; fogEnd_ = 10000.f; }
+}
+
+void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	media_ = &media;
 	map_ = &map;
 	textureByTile_.clear();
 
@@ -241,8 +285,13 @@ void World3D::begin(const Camera3D& camera) {
 
 	shader_.use();
 	shader_.setMat4("uMVP", camera.mvp());
+	shader_.setMat4("uView", camera.viewFloat());
 	shader_.setInt("uTexture", 0);
 	shader_.setInt("uPalette", 1);
+	shader_.setInt("uFogEnabled", fogEnabled_ ? 1 : 0);
+	shader_.setFloat("uFogStart", fogStart_);
+	shader_.setFloat("uFogEnd", fogEnd_);
+	shader_.setVec4("uFogColor", fogColor_[0], fogColor_[1], fogColor_[2], fogColor_[3]);
 	glBindVertexArray(vao_);
 
 	vertices_.clear();
@@ -549,6 +598,8 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		int viewCos = sinTbl[(yaw + 256) & 0x3FF];
 		x -= n17 * viewCos >> 16;
 		y += n17 * viewSin >> 16;
+		// Crates sit lower (legacy renderSprite:476-478).
+		if (tileNum == 152 /* TILENUM_OBJ_CRATE */) z -= 224;
 
 		// Four billboard corners (viewMtxMove: right += view[i]*n2>>14,
 		// up: n3=-n3). view_ row0=(view[0],view[4],view[8]) right axis,
