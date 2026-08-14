@@ -331,9 +331,6 @@ public:
 	void unloadMap();
 	inline static int upSamplePixel(int pixel) { return (pixel >> 8 & 0xf800) | (pixel >> 5 & 0x07e0) | (pixel >> 3 & 0x001f); } // rgb888 to rgb565
 	inline static int RGB888ToRGB565(int r, int g, int b) { return ((r >> 3 & 0x1f) << 11) | ((g >> 2 & 0x3f) << 5) | (b >> 3 & 0x1f); }; // rgb888 to rgb565
-	void RegisterMedia(int n);
-	void FinalizeMedia();
-	bool beginLoadMap(int mapNameID);
 	void draw2DSprite(int tileNum, int frame, int x, int y, int flags, int renderMode, int renderFlags, int scaleFactor);
 	void renderSprite(int x, int y, int z, int tileNum, int frame, int flags, int renderMode, int scaleFactor, int renderFlags);
 	void renderSprite(int x, int y, int z, int tileNum, int frame, int flags, int renderMode, int scaleFactor, int renderFlags, int palIndex);

@@ -16,6 +16,11 @@ public:
     bool loadMedia();
     void unloadMedia();
     int getRecentLoadType();
+
+private:
+    void registerMapMedia(int mediaID);
+    void finalizeMapMedia();
+    bool loadMapData(int mapNameID);
 };
 
 #endif

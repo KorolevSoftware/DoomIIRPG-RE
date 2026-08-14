@@ -17,11 +17,17 @@ endif()
 
 find_package(SDL2 REQUIRED)
 find_package(ZLIB REQUIRED)
-find_package(OpenAL REQUIRED)
 find_package(OpenGL REQUIRED)
 
+option(BUILD_LEGACY "Build the legacy reference implementation" OFF)
 
 # Global identifiers for each project/target
 set(HASH_LIBRARY_TGT_NAME           Hash-Library)
-add_subdirectory("${PROJECT_SOURCE_DIR}/src")
-add_subdirectory("${PROJECT_SOURCE_DIR}/third_party_libs/hash-library")
+
+# New architecture (rewrite) is the primary target
+add_subdirectory("${PROJECT_SOURCE_DIR}/new_src")
+
+if(BUILD_LEGACY)
+	add_subdirectory("${PROJECT_SOURCE_DIR}/src")
+	add_subdirectory("${PROJECT_SOURCE_DIR}/third_party_libs/hash-library")
+endif()

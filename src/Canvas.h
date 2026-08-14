@@ -15,6 +15,9 @@
 #include "ZoomController.h"
 #include "TouchController.h"
 #include "InputEventController.h"
+#include "ArmorRepairSystem.h"
+#include "GameStateRunner.h"
+#include "PlayingInputHandler.h"
 
 class Image;
 class Text;
@@ -358,6 +361,9 @@ public:
 	ZoomController zoomController;
 	TouchController touchController;
 	InputEventController inputEventController;
+	ArmorRepairSystem armorRepairSystem;
+	GameStateRunner gameStateRunner;
+	PlayingInputHandler playingInputHandler;
 
 	// Constructor
 	Canvas();

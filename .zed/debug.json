@@ -1,0 +1,18 @@
+// Project-local debug tasks
+//
+// For more documentation on how to configure debug tasks,
+// see: https://zed.dev/docs/debugger
+[
+  {
+    "label": "Debug native binary",
+    "build": {
+      "command": "sh",
+      "args": ["-c", "cmake -DCMAKE_BUILD_TYPE=Debug -S $ZED_WORKTREE_ROOT -B $ZED_WORKTREE_ROOT/build && make -j8 -C $ZED_WORKTREE_ROOT/build"],
+      "cwd": "$ZED_WORKTREE_ROOT",
+    },
+    "program": "$ZED_WORKTREE_ROOT/build/src/DoomIIRPG",
+    "request": "launch",
+    "adapter": "CodeLLDB",
+    "cwd": "$ZED_WORKTREE_ROOT/build/src",
+  },
+]

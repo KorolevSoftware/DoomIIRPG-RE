@@ -1,0 +1,5 @@
+/Volumes/Goida/Project/DoomIIRPG-RE/build_new/CMakeFiles/edit_cache.dir
+/Volumes/Goida/Project/DoomIIRPG-RE/build_new/CMakeFiles/rebuild_cache.dir
+/Volumes/Goida/Project/DoomIIRPG-RE/build_new/new_src/CMakeFiles/DoomIIRPG.dir
+/Volumes/Goida/Project/DoomIIRPG-RE/build_new/new_src/CMakeFiles/edit_cache.dir
+/Volumes/Goida/Project/DoomIIRPG-RE/build_new/new_src/CMakeFiles/rebuild_cache.dir
