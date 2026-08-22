@@ -60,7 +60,10 @@ public:
 	// leaves in near-to-far order (painter's algorithm) with each leaf's
 	// sprites interleaved after its geometry — faithful to legacy renderBSP
 	// (no depth buffer). Ports walkNode/nodeClassifyPoint/getNodeForPoint.
-	void drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera);
+	// spriteSortBias: optional per-sprite extra depth bias (+1/-1 hook,
+	// src/Render.cpp:856-862), indexed by sprite index; may be null.
+	void drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
+		const int* spriteSortBias = nullptr);
 
 	// Renders map sprite billboards (legacy renderSpriteObject/renderSprite).
 	// Static sprites only for now; entity-driven monsters/NPCs come later.
@@ -72,6 +75,10 @@ public:
 	// Sets fog. Legacy GL_FOG linear in eye space: fogStart = fogMin * (1/8000),
 	// fogEnd = (fogRange/fogColor.a + fogMin) * (1/8000). alpha==0 disables fog.
 	void setFog(int fogColorARGB, int fogMin, int fogRange);
+
+	// Sets the game time (ms) used for animated textures/sprites (lava UV
+	// shift, auto-animate sprite frames). Mirrors legacy app->time.
+	void setTime(int timeMs) { timeMs_ = timeMs; }
 
 	bool initialized() const { return initialized_; }
 
@@ -115,6 +122,9 @@ private:
 	float fogColor_[4] = { 0.f, 0.f, 0.f, 1.f };
 	GLint locFogEnabled_ = -1, locFogStart_ = -1, locFogEnd_ = -1, locFogColor_ = -1;
 	GLint locView_ = -1;
+
+	// Game time (ms) for animated textures/sprites.
+	int timeMs_ = 0;
 
 	// Current bound texture (index + palette) so drawPoly can flush on change.
 	GLuint currentTex_ = 0;

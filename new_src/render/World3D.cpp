@@ -222,6 +222,10 @@ void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	
 		const MediaTexel& tex = media.texel(texIdx);
 		const MediaPalette& pal = media.palette(palIdx);
 
+		if (tile == 275 || tile == 276)
+			fprintf(stderr, "WALL tex tile=%d mediaId=%d texIdx=%d palIdx=%d %dx%d data=%zu\n",
+				tile, mediaId, texIdx, palIdx, tex.width, tex.height, tex.data.size());
+
 		Texture t;
 		// Legacy CreateTextureForMediaID always maps palette color 0xF81F
 		// (magenta 250,0,250) to fully transparent alpha — for world geometry
@@ -233,44 +237,50 @@ void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	
 	}
 
 	// ---- Sprite textures (may be column-RLE) ----
+	// TILE-flagged sprites (0x400000) are wall/doors: legacy adds 257 to map
+	// the tile into the wall range, so their textures (mediaMappings[tile+257])
+	// must be loaded too.
 	spriteTexByMedia_.clear();
 	for (int i = 0; i < map.numSprites; ++i) {
 		int info = map.mapSpriteInfo[i];
 		int tileNum = info & 0xFF;
-		int frame = (info >> 8) & 0xFF;
+		if (info & 0x400000) tileNum += 257;
 		const auto& m = media.mappings();
 		if (tileNum >= (int)m.mappings.size()) continue;
 		int lo = m.mappings[tileNum];
 		int hi = (tileNum + 1 < (int)m.mappings.size()) ? m.mappings[tileNum + 1] : lo + 1;
 		if (lo < 0) continue;
-		int mediaId = lo + frame;
-		if (mediaId >= hi) mediaId = lo; // clamp frame
-		if (mediaId < 0 || mediaId >= MediaMappings::kMaxMedia) continue;
-		if (spriteTexByMedia_.count(mediaId)) continue;
+		// Upload the WHOLE mapping range for each encountered sprite tileNum:
+		// doors switch to media frame 1 while open/animating and AUTO_ANIMATE
+		// frames cycle over time; the draw path resolves
+		// mediaId = mappings[tileNum] + frame from the sprite info bits.
+		for (int mediaId = lo; mediaId < hi && mediaId < MediaMappings::kMaxMedia; ++mediaId) {
+			if (spriteTexByMedia_.count(mediaId)) continue;
 
-		int texIdx = media.texelIndexFor(mediaId);
-		int palIdx = media.paletteIndexFor(mediaId);
-		if (texIdx < 0 || palIdx < 0) continue;
-		const MediaTexel& tex = media.texel(texIdx);
-		const MediaPalette& pal = media.palette(palIdx);
+			int texIdx = media.texelIndexFor(mediaId);
+			int palIdx = media.paletteIndexFor(mediaId);
+			if (texIdx < 0 || palIdx < 0) continue;
+			const MediaTexel& tex = media.texel(texIdx);
+			const MediaPalette& pal = media.palette(palIdx);
 
-		std::vector<uint8_t> indices;
-		bool isRle = tex.data.size() != (size_t)(tex.width * tex.height);
-		if (!isRle) {
-			indices = tex.data;
-		} else {
-			int16_t bounds[4] = {
-				(int16_t)(m.bounds[mediaId * 4 + 0]),
-				(int16_t)(m.bounds[mediaId * 4 + 1]),
-				(int16_t)(m.bounds[mediaId * 4 + 2]),
-				(int16_t)(m.bounds[mediaId * 4 + 3]),
-			};
-			indices = decodeSpriteRLE(tex.data, tex.width, tex.height, bounds);
-		}
-		Texture t;
-		if (t.uploadIndexed(indices, tex.width, tex.height, pal.colors, true, true)) {
-			spriteTexByMedia_[mediaId] = std::move(t);
-			spriteIsRle_[mediaId] = isRle;
+			std::vector<uint8_t> indices;
+			bool isRle = tex.data.size() != (size_t)(tex.width * tex.height);
+			if (!isRle) {
+				indices = tex.data;
+			} else {
+				int16_t bounds[4] = {
+					(int16_t)(m.bounds[mediaId * 4 + 0]),
+					(int16_t)(m.bounds[mediaId * 4 + 1]),
+					(int16_t)(m.bounds[mediaId * 4 + 2]),
+					(int16_t)(m.bounds[mediaId * 4 + 3]),
+				};
+				indices = decodeSpriteRLE(tex.data, tex.width, tex.height, bounds);
+			}
+			Texture t;
+			if (t.uploadIndexed(indices, tex.width, tex.height, pal.colors, true, true)) {
+				spriteTexByMedia_[mediaId] = std::move(t);
+				spriteIsRle_[mediaId] = isRle;
+			}
 		}
 	}
 }
@@ -350,6 +360,16 @@ void World3D::drawPoly(const MapData& map, int polyIdx) {
 		currentPal_ = pal;
 	}
 
+	// Animated flat textures (legacy drawNodeGeometry:968-977): lava scrolls
+	// its UVs over time. Only applies to the base frame.
+	int lavaS = 0, lavaT = 0;
+	if (p.textureId == 479 /* FLAT_LAVA */) {
+		lavaS = (timeMs_ / 16) & 0x3FF;
+		lavaT = (timeMs_ / 32) & 0x3FF;
+	} else if (p.textureId == 480 /* FLAT_LAVA2 */) {
+		lavaT = (timeMs_ / 4) & 0x3FF;
+	}
+
 	// Fan triangulation around vertex 0 (matches legacy quad_indexes).
 	for (size_t i = 1; i + 1 < p.verts.size(); ++i) {
 		const auto& v0 = p.verts[0];
@@ -357,11 +377,11 @@ void World3D::drawPoly(const MapData& map, int polyIdx) {
 		const auto& v2 = p.verts[i + 1];
 		Vertex tri[3] = {
 			{ (float)v0.x * (1.f/16384.f), (float)v0.y * (1.f/16384.f), (float)v0.z * (1.f/16384.f),
-			  (float)v0.s * (1.f/1024.f),  (float)v0.t * (1.f/1024.f) },
+			  (float)(v0.s + lavaS) * (1.f/1024.f),  (float)(v0.t + lavaT) * (1.f/1024.f) },
 			{ (float)v1.x * (1.f/16384.f), (float)v1.y * (1.f/16384.f), (float)v1.z * (1.f/16384.f),
-			  (float)v1.s * (1.f/1024.f),  (float)v1.t * (1.f/1024.f) },
+			  (float)(v1.s + lavaS) * (1.f/1024.f),  (float)(v1.t + lavaT) * (1.f/1024.f) },
 			{ (float)v2.x * (1.f/16384.f), (float)v2.y * (1.f/16384.f), (float)v2.z * (1.f/16384.f),
-			  (float)v2.s * (1.f/1024.f),  (float)v2.t * (1.f/1024.f) },
+			  (float)(v2.s + lavaS) * (1.f/1024.f),  (float)(v2.t + lavaT) * (1.f/1024.f) },
 		};
 		if (vertices_.size() + 3 > kMaxVerts) flush();
 		vertices_.insert(vertices_.end(), tri, tri + 3);
@@ -492,7 +512,16 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	int info = map.mapSpriteInfo[i];
 
 	int tileNum = info & 0xFF;
+	// SPRITE_FLAG_TILE (0x400000): the sprite is a wall/door decoration; legacy
+	// renderSpriteObject adds 257 to map tileNum into the wall range (271-278
+	// are doors). Monsters/pickups never carry this bit.
+	if (info & 0x400000) tileNum += 257;
 	int frame = (info >> 8) & 0xFF;
+	// AUTO_ANIMATE (0x80000): frame cycles over time; the stored value is the
+	// number of frames (legacy renderSpriteObject:1544-1546).
+	if ((info & 0x80000) && frame > 0) {
+		frame = (i + timeMs_ / 100) % frame;
+	}
 	if (tileNum == 240 /* WATER_STREAM */) return; // needs special handling
 
 	int x = map.mapSprites[i + 0 * n];
@@ -533,7 +562,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	bool isRle = spriteIsRle_.count(mediaId) ? spriteIsRle_[mediaId] : false;
 	bool useBounds = (info & 0x400000) != 0 || !isRle;
 	int n13, n14, n15, n16, n19, n20;
-	int cropS = 1024, cropT = 1024;
+	int sWidth = 1024, tHeight = 1024;
 	if (useBounds) {
 		int16_t b[4] = {
 			(int16_t)(m.bounds[mediaId * 4 + 0]),
@@ -543,8 +572,8 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		};
 		int wb = (media.mappings().dimensions[mediaId] >> 4) & 0xF;
 		int hb = media.mappings().dimensions[mediaId] & 0xF;
-		int sWidth = 1 << wb;
-		int tHeight = 1 << hb;
+		sWidth = 1 << wb;
+		tHeight = 1 << hb;
 		int n11 = b[1] - b[0];
 		int n12 = b[3] - b[2];
 		n13 = (b[0] << 10) / sWidth;
@@ -556,14 +585,11 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	} else {
 		int wb = (media.mappings().dimensions[mediaId] >> 4) & 0xF;
 		int hb = media.mappings().dimensions[mediaId] & 0xF;
-		int sWidth = 1 << wb;
-		int tHeight = 1 << hb;
+		sWidth = 1 << wb;
+		tHeight = 1 << hb;
 		n13 = 0; n14 = 1024; n15 = 0; n16 = 1024;
 		n19 = (518 * scaleFactor) / 0x10000;
 		n20 = (1036 * scaleFactor) / 0x10000;
-		// DrawWorldSpaceSpriteLine crops the frame to 176 rows/cols.
-		cropS = 176 * 1024 / sWidth;
-		cropT = 176 * 1024 / tHeight;
 	}
 
 	// Flush on texture change.
@@ -580,11 +606,10 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	}
 
 	const float k1 = 1.f / 16384.f;
-	// Billboards: sprites without wall/plane flags, OR z-sprites (0x400000,
-	// monsters/pickups — legacy routes these through renderSpriteAnim and
-	// the (flags & 0x400000) quad-billboard branch). Wall decals are those
-	// with wall/plane direction bits but WITHOUT the z-sprite bit.
-	const bool isWall = (info & 0x2F000000) != 0 && (info & 0x400000) == 0;
+	// Billboards: sprites WITHOUT wall/plane flags (0x2F000000 == 0). Wall
+	// decals AND TILE sprites (doors 271-278, wall decorations) use the wall
+	// branch. Monsters/pickups have no such flags -> billboards.
+	const bool isWall = (info & 0x2F000000) != 0;
 
 	if (!isWall) {
 		// ---- Billboard (flags & 0x2F000000) == 0 ----
@@ -624,11 +649,25 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		for (int ci = 0; ci < 4; ++ci) {
 			int n21 = (ci & 2) >> 1;
 			int n22 = (ci & 1) ^ n21 ^ 1;
-			float s = (float)(n13 + n22 * n14) * (1.f / 1024.f) * (cropS / 1024.f);
-			// Vertical flip for billboards: texel data is top-down (row 0 =
-			// top of image) but GL v=0 is the bottom texel row. RLE frames
-			// are cropped to 176 rows (legacy DrawWorldSpaceSpriteLine).
-			float t = (1.f - (float)(n15 + n21 * n16) * (1.f / 1024.f)) * (cropT / 1024.f);
+			float s, t;
+			if (!useBounds) {
+				// GL-path billboard UV override (src/GLES.cpp:515-542): s/t
+				// derive from the corner index; flip tests XOR 0x60000 so the
+				// default (no flags) takes the "flipped" branch, which yields
+				// the NORMAL orientation. Integer math first, then a single
+				// float conversion (as legacy: (s*176)/sWidth then /1024).
+				int sW = (((info ^ 0x60000) & 0x20000) != 0) ? n22 : (n22 ^ 1);
+				int tW = (((info ^ 0x60000) & 0x40000) != 0) ? (n21 ^ 1) : n21;
+				s = (float)(((sW * 1024) * 176) / sWidth) * (1.f / 1024.f);
+				t = (float)(((tW * 1024) * 176) / tHeight) * (1.f / 1024.f);
+			} else {
+				// Bounds-based billboards keep the legacy ClipQuad window UVs
+				// with NO flips (src/Render.cpp:479-493). Vertical flip for
+				// billboards: texel data is top-down but GL v=0 is the bottom
+				// texel row.
+				s = (float)(n13 + n22 * n14) * (1.f / 1024.f);
+				t = 1.f - (float)(n15 + n21 * n16) * (1.f / 1024.f);
+			}
 			quad[ci] = { wx[ci] * k1, wy[ci] * k1, wz[ci] * k1, s, t };
 		}
 		// Fan triangles 0,1,2 and 0,2,3 (matches quad_indexes).
@@ -658,6 +697,12 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		};
 		int n11 = b[1] - b[0];
 		int n12 = b[3] - b[2];
+		// Door-lerp (legacy renderSprite 585-599): while a door opens/closes,
+		// geometry is drawn at FULL size (scale forced to 65536) and only one
+		// axis collapses by the real scale, with matching UV compensation.
+		int realScale = scaleFactor;
+		bool doorLerp = (info & 0x80000000) != 0;
+		if (doorLerp) scaleFactor = 65536;
 		int n24 = (tHeight == 256 && sWidth == 256) ? 64 : (n12 >> 1);
 		int n25 = (tHeight == 256 && sWidth == 256) ? 32 : (n11 >> 2);
 		int n26 = n24 * scaleFactor / 65536;
@@ -672,14 +717,17 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		}
 
 		int n29 = ((n23 + 2) & 0x7) << 1;
-		int n30 = n27 << 4;
-		int n31 = n26 << 4;
+		int n28 = ((n23 + 4) & 0x7) << 1; // perpendicular axis for FLAT (src/Render.cpp:560)
+		int n30 = n27 << 4;               // width extent  (<<4 render units)
+		int n31 = n26 << 4;               // height extent (<<4 render units)
 
 		// Legacy terminal/portal Z corrections (renderSprite ~517-523).
 		if (tileNum >= 179 && tileNum <= 183) z -= 256; // terminals
-		if (tileNum >= 155 && tileNum <= 157) z -= 128; // portal eye
+		if (tileNum >= 155 && tileNum <= 156) z -= 128; // portal eye (socket 157 excluded, src/Render.cpp:521-523)
 
-		// UVs (bounds-based, s/t flips for 0x20000/0x40000).
+		// UVs (bounds-based, s/t flips for 0x20000/0x40000) — computed BEFORE
+		// the doorLerp block so lerp can shrink/shift the windows
+		// (src/Render.cpp:443-448,576-583).
 		int s13 = (b[0] << 10) / sWidth;
 		int s14 = (n11 << 10) / sWidth;
 		int t15 = ((tHeight - b[3]) << 10) / tHeight;
@@ -687,22 +735,100 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		if (info & 0x20000) { s13 += s14; s14 = -s14; }
 		if (info & 0x40000) { t15 += t16; t16 = -t16; }
 
-		// Wall quad: along viewStepValues[n29] (wall surface direction).
-		Vertex quad[4];
-		for (int l = 0; l < 4; ++l) {
-			int n42 = (l & 2) >> 1;
-			int n43 = (l & 1) ^ n42 ^ 1;
-			int n44 = (n43 * 2 - 1) * n30;
-			float px = (float)(x << 4) + (kViewStepValues[n29 + 0] >> 6) * (float)n44;
-			float py = (float)(y << 4) + (kViewStepValues[n29 + 1] >> 6) * (float)n44;
-			float pz = (float)z + (float)(n42 * n31);
-			float s = (float)(s13 + n43 * s14) * (1.f / 1024.f);
-			float t = (float)(t15 + n42 * t16) * (1.f / 1024.f);
-			quad[l] = { px * k1, py * k1, pz * k1, s, t };
+		// DoorLerp two-case block (src/Render.cpp:585-599): red/blue slip
+		// doors collapse VERTICALLY with the v-window re-centered by half
+		// delta; slide doors / other walls collapse WIDTH with the u-window
+		// shifted by the FULL delta (texture stays glued to the jamb).
+		int n32 = n31; // FULL height extent saved before collapse
+		if (doorLerp) {
+			if (tileNum >= 271 && tileNum <= 274) {   // red/blue slip doors: VERTICAL collapse (R12)
+				int n33 = t16;                        // src/Render.cpp:588
+				n31 = (realScale * n31) / 65536;      // height extent *= lerp fraction   :589
+				t16 = (realScale * t16) / 65536;      // v-window shrinks                 :590
+				t15 += (n33 - t16) >> 1;              // v-window RE-CENTERED, half delta :591
+			} else {                                  // slide doors / other walls: WIDTH collapse (R13)
+				int n34 = s14;                        // src/Render.cpp:594
+				n30 = (realScale * n30) / 65536;      // width extent *= lerp fraction   :595
+				s14 = (realScale * s14) / 65536;      // u-window shrinks                :596
+				s13 += n34 - s14;                     // u-window shifted by FULL delta  :597
+			}
 		}
-		Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
-		if (vertices_.size() + 6 > kMaxVerts) flush();
-		vertices_.insert(vertices_.end(), tri, tri + 6);
+
+		if (tileNum >= 271 && tileNum <= 274) {
+			// Slip-door split (src/Render.cpp:601-623): triggers on TILE RANGE
+			// ALONE (even closed, even without DOORLERP). Two stacked
+			// half-quads with a growing gap between them; local z/t15 copies
+			// (legacy mutates them per j). Closed: gap 0 -> seamless panel.
+			// Fully open: degenerate invisible quads.
+			int n35 = t16 >> 1;    // quarter v-window            :602
+			int n36 = n31 >> 1;    // lerped half-height          :603
+			int n37 = n32 >> 1;    // ORIGINAL half-height        :604
+			int zLocal = z;
+			int t15Local = t15;
+			for (int j = 0; j < 2; ++j) {
+				Vertex quad[4];
+				for (int k = 0; k < 4; ++k) {
+					int n38 = (k & 2) >> 1;              // row
+					int n39 = (k & 1) ^ n38 ^ 1;         // col (1 = right)
+					int n40 = (n39 * 2 - 1) * n30;       // along-wall offset
+					int n41 = (n38 * 2 - 1) * n36;       // vertical offset
+					float px = (float)(x << 4) + (float)(kViewStepValues[n29 + 0] >> 6) * n40;
+					float py = (float)(y << 4) + (float)(kViewStepValues[n29 + 1] >> 6) * n40;
+					float pz = (float)zLocal + (float)(n38 * n41)
+						+ (float)(j * ((n37 - n36) << 1)); // growing gap (C2)
+					float s = (float)(s13 + n39 * s14) * (1.f / 1024.f);
+					float t = (float)(t15Local + n38 * n35) * (1.f / 1024.f);
+					quad[k] = { px * k1, py * k1, pz * k1, s, t };
+				}
+				Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
+				if (vertices_.size() + 6 > kMaxVerts) flush();
+				vertices_.insert(vertices_.end(), tri, tri + 6);
+				zLocal += n36;     // src/Render.cpp:618
+				t15Local += n35;   // src/Render.cpp:619
+			}
+		} else if (info & 0x20000000) {
+			// FLAT plane quad (src/Render.cpp:639-661): horizontal quad using
+			// BOTH viewStepValues axes; swapXY=false irrelevant here (C8).
+			// Lava scroll omitted (out of scope).
+			Vertex quad[4];
+			for (int k = 0; k < 4; ++k) {
+				int n46 = (k & 2) >> 1;
+				int n47 = (k & 1) ^ n46 ^ 1;
+				int n48 = (n47 * 2 - 1) * n30;            // along-axis ±(w<<4)
+				int n49 = ((n46 * 2 - 1) * n31) >> 1;     // perpendicular ±(h<<4 >> 1)
+				float px = (float)(x << 4)
+					+ (float)(kViewStepValues[n29 + 0] >> 6) * n48
+					+ (float)(kViewStepValues[n28 + 0] >> 6) * n49;
+				float py = (float)(y << 4)
+					+ (float)(kViewStepValues[n29 + 1] >> 6) * n48
+					+ (float)(kViewStepValues[n28 + 1] >> 6) * n49;
+				float pz = (float)z;
+				float s = (float)(s13 + n47 * s14) * (1.f / 1024.f);
+				float t = (float)(t15 + n46 * t16) * (1.f / 1024.f);
+				quad[k] = { px * k1, py * k1, pz * k1, s, t };
+			}
+			Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
+			if (vertices_.size() + 6 > kMaxVerts) flush();
+			vertices_.insert(vertices_.end(), tri, tri + 6);
+		} else {
+			// Wall single quad: along viewStepValues[n29] (wall surface
+			// direction), carrying the lerped n30/n31/s13/s14/t15/t16 values.
+			Vertex quad[4];
+			for (int l = 0; l < 4; ++l) {
+				int n42 = (l & 2) >> 1;
+				int n43 = (l & 1) ^ n42 ^ 1;
+				int n44 = (n43 * 2 - 1) * n30;
+				float px = (float)(x << 4) + (kViewStepValues[n29 + 0] >> 6) * (float)n44;
+				float py = (float)(y << 4) + (kViewStepValues[n29 + 1] >> 6) * (float)n44;
+				float pz = (float)z + (float)(n42 * n31);
+				float s = (float)(s13 + n43 * s14) * (1.f / 1024.f);
+				float t = (float)(t15 + n42 * t16) * (1.f / 1024.f);
+				quad[l] = { px * k1, py * k1, pz * k1, s, t };
+			}
+			Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
+			if (vertices_.size() + 6 > kMaxVerts) flush();
+			vertices_.insert(vertices_.end(), tri, tri + 6);
+		}
 	}
 }
 
@@ -771,7 +897,8 @@ bool World3D::walkNode(const MapData& map, int n, int viewX, int viewY, int view
 	return true;
 }
 
-void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera) {
+void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
+	const int* spriteSortBias) {
 	if (!initialized_ || map.numNodes == 0) return;
 
 	nodeIdxs_.clear();
@@ -817,15 +944,40 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 		leafDepth.clear();
 		for (int i = 0; i < map.numSprites; ++i) {
 			if (spriteLeaf[i] != leaf) continue;
-			if (map.mapSpriteInfo[i] & 0x10000) continue;
+			int info = map.mapSpriteInfo[i];
+			if (info & 0x10000) continue;
 			int x = map.mapSprites[i + 0 * map.numSprites];
 			int y = map.mapSprites[i + 1 * map.numSprites];
 			int z = map.mapSprites[i + 2 * map.numSprites];
-			int d = (x * mvp[2] + y * mvp[6] + z * mvp[10] >> 14) + mvp[14];
-			int info = map.mapSpriteInfo[i];
-			if (info & 0x400000) d += 6;
-			else if ((info & 0xFF) == 240 || (info & 0xFF) == 246 || (info & 0xFF) == 245 || (info & 0xFF) == 247) d = (int)0x80000000;
-			else if (info & 0xF000000) d += 5;
+			// Sort by HEIGHT-SNAPPED Z (post-snap, in map units — legacy sorts
+			// the stored S_Z after postProcessSprites baked terrain height in,
+			// src/Render.cpp:2459-2467,846).
+			int zsnapped = z;
+			if (!map.heightMap.empty()) {
+				int hx = x & 0x7FF, hy = y & 0x7FF;
+				zsnapped += map.heightMap[((hy >> 6) * 32 + (hx >> 6))] << 3;
+				if (i >= map.numNormalSprites) zsnapped -= 32;
+			}
+			int d = (x * mvp[2] + y * mvp[6] + zsnapped * mvp[10] >> 14) + mvp[14];
+			int tn = info & 0xFF;
+			if (info & 0x10000000) d = (int)0x7FFFFFFF;   // DECAL bias (src/Render.cpp:839-841)
+			else if (info & 0x400000) d += 6;             // TILE (src/Render.cpp:847-849)
+			else if (tn == 240 || tn == 246 || tn == 245 || tn == 247)
+				d = (int)0x80000000;                      // water (src/Render.cpp:850-852)
+			else if (info & 0xF000000) d += 5;            // oriented (src/Render.cpp:853-855)
+			else {
+				// Entity bias hook (+1 corpse/linked, -1 monsters), supplied by
+				// the caller. A biased sprite skips the tileNum biases like the
+				// original else-if chain (src/Render.cpp:856-874).
+				bool biased = false;
+				if (spriteSortBias && spriteSortBias[i] != 0) { d += spriteSortBias[i]; biased = true; }
+				if (!biased) {
+					if ((tn >= 240 && tn <= 244) || tn == 255) d -= 3; // src/Render.cpp:863-865
+					else if (tn >= 137 && tn <= 139) d += 2;           // :866-868
+					else if (tn == 152) d += 5;                        // crate, :869-871
+					else if (tn == 239) d -= 3;                        // :872-874
+				}
+			}
 			leafSprites.push_back(i);
 			leafDepth.push_back(d);
 		}

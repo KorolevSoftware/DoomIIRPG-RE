@@ -15,6 +15,8 @@
 #include "render/gl/GlCommon.h"
 #include "render/Camera3D.h"
 #include "render/World3D.h"
+#include "domain/game/Game.h"
+#include "domain/game/Player.h"
 #include "platform/Window.h"
 #include "text/Font.h"
 #include "text/Text.h"
@@ -68,10 +70,10 @@ int main(int argc, char* argv[]) {
 		std::fprintf(stderr, "tables.bin not found\n");
 	}
 
+	EntityDefs g_entityDefs;
 	if (app.readResource(Resources::kEntities, raw)) {
-		EntityDefs defs;
-		if (defs.load(raw)) {
-			std::fprintf(stdout, "entities.bin OK: %d defs\n", defs.count());
+		if (g_entityDefs.load(raw)) {
+			std::fprintf(stdout, "entities.bin OK: %d defs\n", g_entityDefs.count());
 		} else {
 			std::fprintf(stderr, "entities.bin FAILED to parse\n");
 		}
@@ -183,6 +185,7 @@ int main(int argc, char* argv[]) {
 		std::map<int, int> texHist;
 		for (const auto& p : g_map.polygons) texHist[p.textureId]++;
 		fprintf(stderr, "DEBUG textureId histogram: %zu unique\n", texHist.size());
+		fflush(stderr);
 	}
 
 	Hud hud;
@@ -224,17 +227,49 @@ int main(int argc, char* argv[]) {
 		camera.setView(camX + 8, camY + 8, camZ + 8, camYaw, 0, 0, viewFov, viewAspect);
 	}
 
+	// Phase 4: player + world game state (doors, items).
+	Player player;
+	player.reset();
+	// Discrete movement uses canvas units (tile = 64); render adds <<4+8.
+	{
+		int n = g_map.spawnIndex & 0x1F;
+		int n2 = g_map.spawnIndex >> 5;
+		player.viewX = player.destX = n * 64 + 32;
+		player.viewY = player.destY = n2 * 64 + 32;
+		// Eye height = terrain height + 36 (legacy spawnPlayer).
+		int hx = (n * 64 + 32) & 0x7FF, hy = (n2 * 64 + 32) & 0x7FF;
+		int h = (g_map.heightMap[(hy >> 6) * 32 + (hx >> 6)] << 3) + 36;
+		player.viewZ = player.destZ = h;
+		player.viewAngle = player.destAngle = (g_map.spawnDir << 7) & 0x3FF;
+		player.startRotation();
+		player.finishRotation();
+	}
+
+	Game game;
+	game.loadEntities(g_map, g_entityDefs);
+
 	// Render loop with a placeholder canvas draw (Phase 1 test).
 		{
 			using Clock = std::chrono::steady_clock;
 			auto next = Clock::now();
 			int frames = 0;
 			double elapsed = 0;
-			int camYaw = camera.viewYaw();
 		bool running = true;
-		app.input().setEventCallback([&running](const SDL_Event& e) {
+		bool wantE = false;
+		bool wantUp = false, wantDown = false, wantLeft = false, wantRight = false;
+		app.input().setEventCallback([&](const SDL_Event& e) {
 			if (e.type == SDL_QUIT) running = false;
-			if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
+			if (e.type == SDL_KEYDOWN) {
+				if (e.key.keysym.sym == SDLK_ESCAPE) running = false;
+				switch (e.key.keysym.scancode) {
+				case SDL_SCANCODE_E: wantE = true; break;
+				case SDL_SCANCODE_UP: case SDL_SCANCODE_W: wantUp = true; break;
+				case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: wantDown = true; break;
+				case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: wantLeft = true; break;
+				case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: wantRight = true; break;
+				default: break;
+				}
+			}
 		});
 		hud.showCenterMessage("Press ESC to quit", 0xAA000000, 2000);
 		hud.setDemoMonster(100, 100);
@@ -242,8 +277,11 @@ int main(int argc, char* argv[]) {
 		int weaponSelectTimer = 0;
 		int touchCycle = 0;
 		int touchTimer = 0;
+		int appTimeMs = 0;
 		while (running) {
 			app.input().poll(app.window());
+			appTimeMs += 15;
+			world.setTime(appTimeMs);
 			hud.update(15);
 			// Cycle the demo weapon-select screen every 3 seconds.
 			weaponSelectTimer += 15;
@@ -292,33 +330,64 @@ int main(int argc, char* argv[]) {
 			hud.showImportantMessage("Important: objective updated!");
 		}
 
-		// Camera controls: WASD/arrows to move and turn (temporary exploration
-		// camera; a real movement/script system comes later).
+		// Discrete movement (legacy): 90° turns, 1-tile steps, input blocked
+		// while an animation (move/turn) is in progress.
 		{
-			const uint8_t* keys = SDL_GetKeyboardState(nullptr);
-			int turn = 0;
-			if (keys[SDL_SCANCODE_LEFT]) turn += 8;
-			if (keys[SDL_SCANCODE_RIGHT]) turn -= 8;
-			int move = 0, strafe = 0;
-			if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) move += 24;
-			if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) move -= 24;
-			if (keys[SDL_SCANCODE_D]) strafe -= 20;
-			if (keys[SDL_SCANCODE_A]) strafe += 20;
-
-			int yaw = (camYaw + turn) & 0x3FF;
 			const int* st = tables.sinTable.data();
-			int viewSin = st[yaw & 0x3FF];
+			auto getHeight = [&](int x, int y) -> int {
+				int hx = x & 0x7FF, hy = y & 0x7FF;
+				return g_map.heightMap[((hy >> 6) * 32 + (hx >> 6))] << 3;
+			};
+			if (player.viewX == player.destX && player.viewY == player.destY &&
+				player.viewAngle == player.destAngle) {
+				if (wantRight) { wantRight = false; player.destAngle -= 256; player.startRotation(); }
+				else if (wantLeft) { wantLeft = false; player.destAngle += 256; player.startRotation(); }
+				else if (wantUp) {
+					wantUp = false;
+					int tx = player.viewX + player.viewStepX;
+					int ty = player.viewY + player.viewStepY;
+					// Collision: blocked by walls (lines) and closed doors.
+					if (game.canPlayerStep(g_map, player.viewX, player.viewY, tx, ty)) {
+						player.attemptMove(tx, ty);
+						player.setDestHeight(getHeight(tx, ty));
+						player.setZStep(player.destZ - player.viewZ);
+					}
+				} else if (wantDown) {
+					wantDown = false;
+					int tx = player.viewX - player.viewStepX;
+					int ty = player.viewY - player.viewStepY;
+					if (game.canPlayerStep(g_map, player.viewX, player.viewY, tx, ty)) {
+						player.attemptMove(tx, ty);
+						player.setDestHeight(getHeight(tx, ty));
+						player.setZStep(player.destZ - player.viewZ);
+					}
+				}
+			}
+			if (wantE) {
+				wantE = false;
+				game.useDoorFacing(g_map, player.viewX, player.viewY, player.viewStepX, player.viewStepY);
+				game.advanceTurnDoors(); // legacy opens then advanceTurn (src/PlayingInputHandler.cpp:451-452)
+			}
+			if (player.updateView()) {
+				// Arrived: recompute facing vectors for the next step.
+				player.finishRotation();
+				// A turn was taken: check auto-close of doors.
+				game.advanceTurnDoors();
+			}
+			// Render-view pull-back (src/Render.cpp:2279-2282). Applied to the
+			// RENDER camera only; gameplay/collision keep using
+			// player.viewX/viewY. Magnitude <= 2.5 map units (spec C1).
+			int yaw = player.viewAngle & 0x3FF;
+			int viewSin = st[yaw];
 			int viewCos = st[(yaw + 256) & 0x3FF];
-
-			// Forward = +cos*K, -sin*K (mirror of legacy backward nudge).
-			int dx = (viewCos * move - viewSin * strafe) >> 16;
-			int dy = (-viewSin * move - viewCos * strafe) >> 16;
-			camX += dx;
-			camY += dy;
-			camYaw = yaw;
-			camera.setView(camX, camY, camera.viewZ(), yaw, 0, 0, 290,
+			int rvx = (player.viewX << 4) + 8 - (160 * viewCos >> 16);
+			int rvy = (player.viewY << 4) + 8 + (160 * viewSin >> 16);
+			camera.setView(rvx, rvy, (player.viewZ << 4) + 8, player.viewAngle, 0, 0, 290,
 				(290 << 14) / ((480 << 14) / 320));
 		}
+		// Phase 4: game tick (door animations).
+		game.update(15);
+		game.setPlayerPos(player.viewX, player.viewY);
 
 			RenderBackend& renderer = app.renderer();
 			renderer.beginFrame(app.window());
@@ -326,7 +395,17 @@ int main(int argc, char* argv[]) {
 			// 3D perspective view of the decoded world (legacy GL-path port).
 			if (world.initialized() && g_map.numNodes > 0) {
 				world.drawSky(camera);
-				world.drawBSP(g_map, g_media, camera);
+				// Per-sprite sort-bias hooks (src/Render.cpp:856-862):
+				// corpse/linked entities draw nearer (+1), monsters (-1; none
+				// exist yet). Borrowed by drawBSP for the duration of the call.
+				std::vector<int> spriteSortBias(g_map.numSprites, 0);
+				for (const auto& ent : game.entities()) {
+					int si = ent.getSprite();
+					if (!ent.def || si < 0 || si >= g_map.numSprites) continue;
+					if (ent.info & 0x1010000) spriteSortBias[si] = +1;
+					else if (ent.def->eType == Enums::ET_MONSTER) spriteSortBias[si] = -1;
+				}
+				world.drawBSP(g_map, g_media, camera, spriteSortBias.data());
 			} else {
 				g.fillRect(0, 0, 480, 320, 32, 32, 64);
 			}
