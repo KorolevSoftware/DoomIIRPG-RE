@@ -2,3 +2,6 @@ UnPackGameData
 Doom 2 RPG Java
 output
 build
+/build_new
+/tmp_*
+__pycache__/
