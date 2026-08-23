@@ -10,6 +10,9 @@ GL 3.3 core + шейдеры, канвас 480x320 (letterbox), CMake.
 
 ## План
 
+_Чекбоксы сверены с фактическим кодом 2026-08-23 (аудит: docs/status.md,
+docs/architecture/README.md; журнал: docs/journal.md)._
+
 - [x] Фаза 1. Каркас приложения: AppContext, архив .ipa, окно, GL-контекст,
       RenderBackend (бэтч, шейдеры), тестовая отрисовка канваса.
 - [x] Фаза 2. HUD/2D: Font.bmp, Graphics2D, Hud (кокпит, оружие, здоровье,
@@ -32,10 +35,12 @@ GL 3.3 core + шейдеры, канвас 480x320 (letterbox), CMake.
       - [x] Загрузка media-текстур (mediaMappings[tileNum] → texel/palette)
         → uploadMapTextures. Пользователь подтвердил: текстурированные
         полигоны, пиксельная текстура (GL_NEAREST) — корректно.
-      - [x] Обход BSP (walkNode, nodeClassifyPoint, cullBoundingBox) —
-        порядок отрисовки листьев. drawBSP в World3D: walkNode(0) собирает
-        видимые листья, рисует в обратном порядке (дальние→ближние,
-        painter's). nodeClassifyPoint — знак (view·normal)+offset.
+      - [x] Обход BSP (walkNode, nodeClassifyPoint) — порядок отрисовки
+        листьев. drawBSP в World3D: walkNode(0) обходит ВСЕ узлы без
+        отсечения (legacy cullBoundingBox НЕ портирован — осознанное
+        упрощение, painter's algorithm это допускает), рисует листья в
+        обратном порядке (дальние→ближние). nodeClassifyPoint — знак
+        (view·normal)+offset.
       - [ ] drawNodeGeometry + faceCull/swapXY/expandEdgePoly (расширение
         2-вертексных граней уже в MapParser; GL-путь рисует как есть).
       - [x] fog/скрин-эффекты: World3D::setFog (fogColor ARGB, fogMin,
@@ -73,24 +78,32 @@ GL 3.3 core + шейдеры, канвас 480x320 (letterbox), CMake.
         кадр текстуры 1 пока открыта; автозакрытие — гранулярно по тайлам.
       - [x] Анимация текстур: лава (479/480) UV-сдвиг по времени; AUTO_ANIMATE
         спрайтов (0x80000) — кадры по времени. Пока статично для огня (нет бита).
-      - [x] Реальная камера вместо автовращения: WASD/стрелки (движение
-        вперёд = +cos*K,-sin*K, стрейф, поворот ←/→), ESC — выход.
-- [ ] Фаза 4. Игровые сущности: Player, Entity, инвентарь, оружие,
-      table.bin (attacks/weapons/stats), entities.bin.
+      - [x] Реальная камера вместо автовращения: дискретное управление как
+        в оригинале — ↑/↓ шаг на клетку (W/S дублируют), ←/→ поворот на 90°
+        (A/D дублируют), E — использование двери, ESC — выход. Рендер-камере
+        добавлена оттяжка назад 160*viewCos/viewSin>>16 (только рендер,
+        геймплейные координаты не трогаем).
+- [ ] Фаза 4. Игровые сущности: Player, Entity, инвентарь, оружие, combat.
+      (Парсеры данных готовы и загружаются на старте: io/Tables.cpp —
+      tables.bin, io/EntityDefs.cpp — entities.bin; геймплей их пока не
+      использует, кроме def'ов дверей.)
       - [x] Каркас: Enums.h (константы), CombatEntity, Entity (def/info/
         sprite-связь), Player (ce, inventory[26], ammo, weapons, give/
         requireItem/addHealth), Game (entityDb 32x32, link/unlink,
-        loadEntities из TILE-спрайтов, двери через Lerp-масштаб S_SCALEFACTOR).
+        loadEntities из TILE-спрайтов — фактически пока только дверные
+        сущности, двери через Lerp-масштаб S_SCALEFACTOR).
       - [x] Двери открытие/закрытие: клавиша E открывает ближайшую
         незапертую дверь (анимация scale 64->0 за 750 мс, рендер через
         S_SCALEFACTOR). Запертые (red/blue) требуют ключей (ещё не даны).
         E через SDL_SCANCODE (не зависит от раскладки). Поиск ближайшей
         двери в радиусе 3 тайлов.
-      - [ ] Коллизии игрока (trace по entityDb/миру).
-      - [ ] Дискретное движение игрока по клеткам (как в оригинале:
-        шаг 1 клетка, advanceTurn, двери открываются при использовании
-        в направлении взгляда).
-      - [ ] Коллизии игрока (trace по entityDb/миру).
+      - [x] Коллизии игрока (упрощённо): CapsuleToLineTrace по линиям стен
+        карты + canPlayerStep с проверкой закрытой двери на целевом тайле;
+        CONTENTS-маскированный trace по entityDb (как legacy
+        MovementController) не портирован.
+      - [x] Дискретное движение по клеткам: шаг 1 клетка, повороты 90°,
+        advanceTurnDoors после действия; ввод обрабатывается ад-хок в
+        Main.cpp (перенос внутрь Game-driven advanceTurn — Фаза 5).
       - [ ] Монстры (EntityMonster, AI, активация).
       - [ ] Подбор предметов (touchedItem, give).
       - [ ] Оружие/combat (CombatEntity::calcHit/calcDamage).
@@ -196,6 +209,10 @@ decodedPolys=1787 (совпадает с tools/map_to_obj.py: 2300 verts/1787 po
 - Texture (new_src) уже умеет indexed (R8 + RGBA8 палитра LUT 256x1),
   transparent=0xF81F, CLAMP_TO_EDGE; добавлен параметр `repeat`
   (GL_REPEAT) для тайловых 3D-текстур.
+- Reference-записи media (бит 0x80000000; младшие биты = id источника)
+  резолвятся в MediaLoader::finalize алиасом store-индекса источника —
+  порт перезаписи слотов из legacy finalizeMapMedia (фикс 2026-08-23:
+  кадр открытой зелёной двери был ссылкой → дверь исчезала при анимации).
 
 ## Фаза 3 — сделано (3D на GL 3.3)
 
