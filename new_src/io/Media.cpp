@@ -149,6 +149,28 @@ bool MediaLoader::finalize(const std::function<std::vector<uint8_t>(const std::s
 		}
 	}
 
+	// Resolve MEDIA_FLAG_REFERENCE entries: a referencing media id carries no
+	// data of its own; it points at another entry (legacy finalizeMapMedia
+	// rewrites references to point at the loaded slot so that use-time masking
+	// yields a valid index for every id). Port: alias the source entry's store
+	// index. Sources always precede or equal their referencers in practice, but
+	// running this as a separate pass after loading makes order irrelevant for
+	// single-hop references.
+	for (int k = 0; k < MediaMappings::kMaxMedia; ++k) {
+		int32_t p = mappings_.palColors[k];
+		if ((p & kReference) != 0 && paletteIndex_[k] < 0) {
+			int src = p & kMask;
+			if (src >= 0 && src < MediaMappings::kMaxMedia && !(mappings_.palColors[src] & kReference))
+				paletteIndex_[k] = paletteIndex_[src];
+		}
+		int32_t t = mappings_.texelSizes[k];
+		if ((t & kReference) != 0 && texelIndex_[k] < 0) {
+			int src = t & kMask;
+			if (src >= 0 && src < MediaMappings::kMaxMedia && !(mappings_.texelSizes[src] & kReference))
+				texelIndex_[k] = texelIndex_[src];
+		}
+	}
+
 	return true;
 }
 

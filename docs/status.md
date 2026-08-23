@@ -4,11 +4,12 @@ _Last updated: 2026-08-23_
 
 ## Working on
 
-- 2026-08-23 door & sprite-placement fidelity pass: implemented and reviewed
-  (PASS) — awaiting user visual verification per spec §5 checklist
-  ([architecture/specs/2026-08-23-fix-doors-sprite-placement.md](architecture/specs/2026-08-23-fix-doors-sprite-placement.md)).
-- Queued: full PLAN.md ↔ code sync (audit findings below still apply where not
-  superseded by the fidelity pass); then Phase 4 monsters / Phase 5 skeleton.
+- 2026-08-23 door & sprite-placement fidelity pass: implemented, reviewed
+  (PASS) and **verified by the user** (round 2), including a follow-up fix for
+  media REFERENCE records that made green doors vanish while animating
+  (see journal). 
+- Queued: Phase 4 monsters / Phase 5 game-state skeleton; stderr debug-print
+  sweep before wider playtesting; optional temp dev-unlock for red/blue doors.
 
 ## Fidelity pass 2026-08-23 (doors + sprites)
 
@@ -18,6 +19,9 @@ slip-door vertical split, slide-door UV pinning, DOORLERP lifetime, solidity
 timeline, faced-door trigger (Chebyshev ≤ 1 tile), open-frame texture,
 tile-granular auto-close occupancy, camera pull-back nudge, portal-eye z range,
 billboard UV flips, FLAT plane branch, height-snapped sort keys with bias chain.
+Follow-up fix: `MediaLoader::finalize` now resolves MEDIA_FLAG_REFERENCE
+entries (alias to source store index) — fixes vanishing door frames and any
+other reference-backed media. User-verified.
 Still missing (unchanged): keycard unlock path (Phase 5 scripts), monster-blocks-close,
 door sounds, water streams.
 

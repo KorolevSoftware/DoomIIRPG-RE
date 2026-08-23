@@ -38,3 +38,24 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
 - Pending: user visual verification per spec §5 checklist; PLAN.md full sync
   still queued.
 
+## 2026-08-23 — Fix: media reference records (vanishing green doors)
+
+- Round-1 verification of the fidelity pass: solidity / faced-door trigger /
+  sprite placement all confirmed by the user; regression found — plain green
+  doors (tile 276) vanish the moment they open and pop back at close end;
+  level doors (278) unaffected.
+- Root cause: the open-frame texture of tile 276 is mediaId 871 — a REFERENCE
+  record in newMappings.bin (`0x80000000 | 869`). `MediaLoader::finalize`
+  skipped reference entries, leaving `texelIndex_/paletteIndex_[871] = -1`;
+  World3D's preload then never created the texture and `drawSprite`
+  early-returned, hiding the sprite. Legacy `finalizeMapMedia`
+  (src/LoadingManager.cpp) rewrites references to point at the loaded slot,
+  so use-time masking always resolves. Evidence: media-table dumps under
+  docs/research/assets/ (frame art exists, 275/276 frame 1 share record 869).
+- Fix: single additive resolve pass at the end of `MediaLoader::finalize`
+  aliasing reference entries to their source store indices
+  (new_src/io/Media.cpp). Reviewer PASS; validated against shipped data
+  (353 palette + 494 texel references, all resolvable, no ref→ref chains).
+- User round-2 verification: green doors slide smoothly with correct
+  animation, level doors unaffected, no sprite anomalies on the level.
+
