@@ -59,3 +59,29 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
 - User round-2 verification: green doors slide smoothly with correct
   animation, level doors unaffected, no sprite anomalies on the level.
 
+## 2026-08-23 — Faithful player collision (walls solid)
+
+- Audit of the user report "player walks through walls" found the wall test
+  effectively dead: `CapsuleToLineTrace` had sign-flipped closest-point
+  parameters plus int32 overflow in the same expressions; only the
+  tile-granular door check ever blocked. Explore verification: the old math
+  detected 0 of 117 head-on wall crossings.
+- Researcher documented the complete legacy collision path
+  (`docs/original-code/player-collision.md`): swept capsule radius 16,
+  mask CONTENTS_PLAYERSOLID = 13501, oriented entities as ±32 segments
+  through their current animated sprite position, other entities circles
+  r=25 combined d² < r²+R² (=881 walking), world-line flag rules
+  (0–3 block / 4,6 never / 5 mask-gated / 7 one-sided), strictly-2D with
+  unconditional destZ = 36 + getHeight.
+- Architect spec + ADR-0002; notable catch: the legacy parallel-case
+  "projection" branch is dead code (denom ≥ 0 always) — live behavior is
+  s=t=0 via vanishing numerators and zero-guarded quotients.
+- Coder implemented `Game::traceMove` replacing `canPlayerStep`: bit-faithful
+  port of the src/Render.cpp:1128-1210 solve, exact world-line flag rules,
+  generic masked entityDb trace (doors now block as their animated ±32 panel
+  segments). Reviewer PASS (line-by-line against legacy).
+- User verified: walls solid from both sides, corners refuse without sliding,
+  long-wall hugging smooth, closed doors block / open pass, animated door
+  panels block correctly. Flag-4 lines are now intentionally walkable
+  (behavior change documented in PLAN.md and the spec).
+

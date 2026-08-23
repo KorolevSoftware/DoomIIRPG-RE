@@ -4,12 +4,13 @@ _Last updated: 2026-08-23_
 
 ## Working on
 
-- 2026-08-23 door & sprite-placement fidelity pass: implemented, reviewed
-  (PASS) and **verified by the user** (round 2), including a follow-up fix for
-  media REFERENCE records that made green doors vanish while animating
-  (see journal). 
-- Queued: Phase 4 monsters / Phase 5 game-state skeleton; stderr debug-print
-  sweep before wider playtesting; optional temp dev-unlock for red/blue doors.
+- Faithful player collision (2026-08-23): implemented, reviewer PASS,
+  user-verified — walls solid, door panels block as animated segments,
+  legacy world-line flag semantics ported (flag 4/6 never block).
+- Queued: Phase 5 game-state skeleton (replace ad-hoc Main.cpp loop);
+  later within it — loadEntities widening to solid sprite types
+  (ET_SPRITEWALL / ET_PLAYERCLIP / ET_DECOR — trace is already generic),
+  stderr debug-print sweep, optional dev-unlock for red/blue doors.
 
 ## Fidelity pass 2026-08-23 (doors + sprites)
 

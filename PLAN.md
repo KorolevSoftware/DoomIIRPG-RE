@@ -132,6 +132,12 @@ docs/architecture/README.md; журнал: docs/journal.md)._
   nodeChildOffset1/2 (numNodes×s16), nodeBounds (numNodes×4×u8),
   nodePolys (dataSizePolys×u8), lineFlags ((numLines+1)/2),
   lineXs/lineYs (numLines×2), heightMap (1024×u8).
+- lineFlags (упакованные полубайты; используются младшие 3 бита) — семантика
+  legacy (src/Render.cpp:1238-1247): 0–3 — всегда блокируют движение;
+  **4 и 6 — НИКОГДА не блокируют** (флаг 4 = явное «без коллизии», это
+  осознанное поведение оригинала, а не недоработка); 5 — блокирует только
+  если в маске trace есть биты 0x10/0x800; 7 — блокирует только с одной
+  стороны (cross-тест против точки старта trace). Порт: Game::traceWorldFrac.
 - Спрайты: mapSprites 10 полей (X,Y,Z,NODE,RENDMODE...), mapSpriteInfo.
 - staticFuncs 12×u16 → tileEvents (numTileEvents×2×i32) → mapByteCode →
   mayaCameras (numKeys u8, sampleRate i16, keys 7×s16, tweenIdx 6×s16,

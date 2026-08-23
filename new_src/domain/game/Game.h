@@ -2,6 +2,7 @@
 #define NEW_DOMAIN_GAME_GAME_H
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "domain/game/Entity.h"
@@ -51,9 +52,21 @@ public:
 	// performDoorEvent. Returns the attempted entity or nullptr.
 	Entity* useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY);
 
-	// Returns true if the player can move from (x1,y1) to (x2,y2) (canvas
-	// units, tile=64). Blocks on walls and closed/locked doors.
-	bool canPlayerStep(const MapData& map, int x1, int y1, int x2, int y2);
+	// Swept-capsule move trace: legacy Game::trace (7-arg wrapper
+	// src/Game.cpp:195-197, body :199-327) + Render::traceWorld
+	// (src/Render.cpp:1212-1283, flattened — see spec 2026-08-23
+	// faithful-player-collision §3.3). Sweeps segment (x0,y0)->(x1,y1) as a
+	// capsule of the given radius (canvas units, tile=64) against world lines
+	// (if mask & 1) and all entityDb entities matching mask & (1<<eType),
+	// skipping skipEnt. Returns TRUE when nothing blocks (commit allowed) —
+	// legacy commits iff traceEntity == nullptr (src/MovementController.cpp:332-333).
+	// Out-params (optional): closest hit = lowest frac (legacy traceEntity /
+	// traceFracs[0], src/Game.cpp:312-326); frac is 14.14 fixed point,
+	// 16384 == 1.0, hit <= 16382, start-inside == -1, miss sentinel 16384
+	// (src/Render.cpp:1119-1125,1195-1209).
+	bool traceMove(const MapData& map, int x0, int y0, int x1, int y1,
+	               Entity* skipEnt, int mask, int radius,
+	               Entity** outEntity = nullptr, int* outFrac = nullptr);
 
 	// Door auto-close on turn advance (legacy CanCloseDoor + advanceTurn).
 	void advanceTurnDoors();
@@ -68,6 +81,14 @@ private:
 	std::vector<Entity> entities_;
 	Entity* entityDb_[1024] = { nullptr }; // 32x32 tile lists
 	MapData* map_ = nullptr;
+
+	// Trace scratch (reused buffers; single-threaded GL loop).
+	int tracePoints_[4] = { 0, 0, 0, 0 };              // x0,y0,x1,y1 (src/Game.cpp:208-211)
+	int traceBBox_[4]   = { 0, 0, 0, 0 };              // clamped bbox (src/Game.cpp:212-215)
+	std::vector<std::pair<int, Entity*>> traceHits_;   // (frac 14.14, entity)
+
+	void traceEntityHits(const MapData& map, Entity* skipEnt, int mask, int radius); // src/Game.cpp:216-296
+	int  traceWorldFrac(const MapData& map, int mask, int radius2);                  // src/Render.cpp:1212-1283 (flat)
 
 	struct DoorAnim {
 		Entity* door = nullptr;

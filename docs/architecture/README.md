@@ -20,7 +20,7 @@ Namespace for everything: `newcore`._
 | `Enums.h` | Legacy constants: entity types (:10-25), trace masks (:28-37), stat slots (:40-48), doors (:51-56), sprite flags (:63-72), monster anim/flags (:75-106). |
 | `CombatEntity.h/.cpp` | Battle-stat block (8 slots + weapon); clamped set/add, XP calc (:52-54). No calcHit/calcDamage yet. |
 | `Player.h/.cpp` | Player state: stats, inventory[26]/ammo[9]/weapon bitmask, XP; discrete grid movement via `kViewStepValues` 8-dir table (:8-11). |
-| `Game.h/.cpp` | Simulation subset: 32x32 entityDb lists (Game.h:69), door anims (6 slots), faced-door use `useDoorFacing` (ADR 0001), wall collision `CapsuleToLineTrace` (:263-296), turn-advance auto-close with tile-granular occupancy, linked-state door solidity. Doors only so far. |
+| `Game.h/.cpp` | Simulation subset: 32x32 entityDb lists (Game.h:69), door anims (6 slots), faced-door use `useDoorFacing` (ADR 0001), faithful swept-capsule move trace `traceMove` — world lines (nibble flag rules, flat walk) + masked entityDb pass (oriented ±32 segments, circles r²=625/256, sum-of-squares 881) per ADR 0002 / spec `specs/2026-08-23-faithful-player-collision.md`, turn-advance auto-close with tile-granular occupancy, linked-state door solidity. Doors only so far. |
 
 ### domain/world/
 | File | Responsibility |
@@ -90,7 +90,7 @@ Player reset+spawn (:231-246), Game.loadEntities (:248-249).
 
 **Per frame** (inline Main.cpp:252-465): input poll (:260-273) → fixed 15 ms step
 (`appTimeMs += 15`, :283-285) + scripted HUD demos (:287-331) → discrete movement gating
-via `game.canPlayerStep` (:333-364) → E opens nearest door + `advanceTurnDoors` (:366-373)
+via `game.traceMove` (swept capsule 13501/r16; :333-364) → E opens nearest door + `advanceTurnDoors` (:366-373)
 → camera follows player view (:380-382) → `world.drawSky` + `world.drawBSP` (:393-395)
 → HUD block compiled out via `kShowHud=false` (:400-401) → swap (:447);
 auto-exit after 6000 frames (:463).
@@ -122,7 +122,9 @@ _Note:_ intended path `AppContext::run()` → `GameLoop::run()` exists
 _See [adr/](adr/):_
 
 - [0001 — Faced-door use without a trace system](adr/0001-faced-door-use-without-trace.md) (2026-08-23)
+- [0002 — Faithful swept-capsule collision trace](adr/0002-faithful-player-collision-trace.md) (2026-08-23; amends 0001)
 
 ## Specs
 
 - [2026-08-23 — Fix "doors work incorrectly" + "sprites slightly shifted"](specs/2026-08-23-fix-doors-sprite-placement.md)
+- [2026-08-23 — Faithful player collision (swept-capsule trace)](specs/2026-08-23-faithful-player-collision.md)

@@ -346,8 +346,9 @@ int main(int argc, char* argv[]) {
 					wantUp = false;
 					int tx = player.viewX + player.viewStepX;
 					int ty = player.viewY + player.viewStepY;
-					// Collision: blocked by walls (lines) and closed doors.
-					if (game.canPlayerStep(g_map, player.viewX, player.viewY, tx, ty)) {
+					// Collision: swept capsule vs walls and solid entities.
+					if (game.traceMove(g_map, player.viewX, player.viewY, tx, ty,
+						game.playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16)) {
 						player.attemptMove(tx, ty);
 						player.setDestHeight(getHeight(tx, ty));
 						player.setZStep(player.destZ - player.viewZ);
@@ -356,7 +357,8 @@ int main(int argc, char* argv[]) {
 					wantDown = false;
 					int tx = player.viewX - player.viewStepX;
 					int ty = player.viewY - player.viewStepY;
-					if (game.canPlayerStep(g_map, player.viewX, player.viewY, tx, ty)) {
+					if (game.traceMove(g_map, player.viewX, player.viewY, tx, ty,
+						game.playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16)) {
 						player.attemptMove(tx, ty);
 						player.setDestHeight(getHeight(tx, ty));
 						player.setZStep(player.destZ - player.viewZ);
