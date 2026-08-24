@@ -136,10 +136,12 @@ void Text::substring(Text& t, int i, int i2) const {
 }
 
 void Text::dehyphenate(int i, int i2) {
-	int first = findFirstOf('-', i);
-	while (first != -1 && first < i + i2) {
+	// Re-search each iteration like the legacy loop (src/Text.cpp:718-725);
+	// keeping the first hit across deletions eats following characters.
+	int first;
+	while ((first = findFirstOf('-', i)) != -1 && first < i + i2) {
 		deleteAt(first, 1);
-		i2 -= (first - i) + 2;
+		i2 -= first - i + 2;
 		i = ++first;
 	}
 }

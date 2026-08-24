@@ -54,10 +54,21 @@ public:
 	void showImportantMessage(const std::string& text) {
 		importantText_ = text;
 		hasImportant_ = true;
+		importantTime_ = 0;
 	}
 	void clearImportantMessage() { hasImportant_ = false; importantText_.clear(); }
+	// Dialog-lite passthrough (task FIX B): gray bottom panel like the legacy
+	// script dialogs, NOT ticked by update() — persists until explicitly
+	// dismissed (legacy dialogs close on ACTION_FIRE,
+	// src/DialogSystem.cpp:34-48).
+	void showDialogMessage(const std::string& text) { dialogText_ = text; hasDialog_ = true; }
+	void clearDialogMessage() { hasDialog_ = false; dialogText_.clear(); }
 	void update(int timeMs);
 	void clearMessages() { hasCenterMessage_ = false; importantText_.clear(); }
+
+	// Draws only the center-message + important-banner; works while the
+	// cockpit/HUD stay hidden (spec 2026-08-23-phase5-skeleton §2).
+	void drawMessages(Graphics2D& g, const Font& font);
 
 	// Demo monster for the health bar.
 	void setDemoMonster(int hp, int maxHp) {
@@ -78,6 +89,7 @@ private:
 	void drawArrowControls(Graphics2D& g);
 	void drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
 	void drawCenterMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
+	void drawDialogMessage(Graphics2D& g, const Font& font);
 
 	Texture imgPanelTop_;
 	Texture imgWeaponNormal_;
@@ -125,6 +137,10 @@ private:
 	int centerDuration_ = 700;
 	std::string importantText_;
 	bool hasImportant_ = false;
+	int importantTime_ = 0;          // style-3 messages auto-expire like the legacy queue
+	static constexpr int kImportantDurationMs = 3500;
+	bool hasDialog_ = false;         // dialog-lite: no timer, dismiss-driven
+	std::string dialogText_;
 
 	// Demo monster for the health bar.
 	bool monsterValid_ = false;

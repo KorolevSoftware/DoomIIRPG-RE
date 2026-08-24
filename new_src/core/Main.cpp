@@ -1,38 +1,30 @@
 #include "core/AppContext.h"
-#include "io/ZipArchive.h"
-#include "platform/FileSystem.h"
-#include "io/Tables.h"
-#include "io/EntityDefs.h"
-#include "io/Localization.h"
-#include "io/Resources.h"
-#include "io/Media.h"
-#include "io/BmpImageLoader.h"
-#include "domain/world/MapParser.h"
-#include "platform/InputSystem.h"
-#include "render/RenderBackend.h"
-#include "render/gl/Texture.h"
-#include "render/Graphics2D.h"
-#include "render/gl/GlCommon.h"
-#include "render/Camera3D.h"
-#include "render/World3D.h"
+#include "core/GameContext.h"
+
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
-#include "platform/Window.h"
+#include "domain/game/ScriptVM.h"
+#include "domain/world/MapParser.h"
+#include "io/BmpImageLoader.h"
+#include "io/EntityDefs.h"
+#include "io/Localization.h"
+#include "io/Media.h"
+#include "io/Resources.h"
+#include "io/Tables.h"
+#include "io/ZipArchive.h"
+#include "render/World3D.h"
 #include "text/Font.h"
-#include "text/Text.h"
 #include "ui/Hud.h"
-#include <SDL.h>
-#include <fstream>
 
 #include <cstdio>
-#include <cstdlib>
-#include <climits>
-#include <vector>
 #include <map>
-#include <string>
-#include <chrono>
-#include <thread>
+#include <vector>
 
+// Composition root (spec 2026-08-23-phase5-skeleton §2): eager data/media
+// init with loader smoke logs, subsystem construction, then everything is
+// handed to the GameContext state machine driven by AppContext::run().
+// Spawn/camera placement live inside the machine (Loading tick / render),
+// input arrives as queued actions via GameLoop.
 int main(int argc, char* argv[]) {
 	using namespace newcore;
 
@@ -47,7 +39,6 @@ int main(int argc, char* argv[]) {
 
 	std::fprintf(stdout, "Data archive opened: %d entries\n", app.archive().entryCount());
 
-	// --- Verify data loaders (Phase 0) ---
 	std::vector<uint8_t> raw;
 
 	Tables tables;
@@ -81,8 +72,9 @@ int main(int argc, char* argv[]) {
 		std::fprintf(stderr, "entities.bin not found\n");
 	}
 
+	// Function scope: the VM and GameContext read strings after boot.
+	Localization loc;
 	if (app.readResource(Resources::kStringsIndex, raw)) {
-		Localization loc;
 		if (loc.loadIndex(raw)) {
 			for (int i = 0; i < 3; ++i) {
 				std::vector<uint8_t> chunk;
@@ -92,8 +84,14 @@ int main(int argc, char* argv[]) {
 			}
 			loc.loadTextType(0, kTextMain);
 			loc.loadTextType(0, kTextIngame);
-			std::fprintf(stdout, "strings.idx OK: '%s' | '%s'\n",
-				loc.get(kTextMain, 0).c_str(), loc.get(kTextIngame, 0).c_str());
+			// Script EV_MESSAGE strings live in the per-map text type:
+			// loadMapStringID = kTextMap + (mapNameID - 1), loaded at map load
+			// (src/LoadingManager.cpp:310-311); boot is always map00 -> kTextMap.
+			const int currentMapId = 0;
+			loc.loadTextType(0, kTextMap + currentMapId);
+			std::fprintf(stdout, "strings.idx OK: '%s' | '%s' | '%s'\n",
+				loc.get(kTextMain, 0).c_str(), loc.get(kTextIngame, 0).c_str(),
+				loc.get(kTextMap, 0).c_str());
 		} else {
 			std::fprintf(stderr, "strings.idx FAILED\n");
 		}
@@ -208,276 +206,30 @@ int main(int argc, char* argv[]) {
 	// map/save). Opaque dark green fog.
 	world.setFog(0xFF1A2A1A, 500, 900);
 
-	// Camera placed at the map spawn (matches legacy Game::setSpawnPosition).
-	// viewX = n*64+32 world units (tile grid), then render shifts by <<4+8.
-	int spawnTile = g_map.spawnIndex & 0x1F;
-	int spawnRow = g_map.spawnIndex >> 5;
-	int camX = (spawnTile * 64 + 32) << 4;
-	int camY = (spawnRow * 64 + 32) << 4;
-	Camera3D camera;
-	camera.setSinTable(tables.sinTable.data());
-	{
-		int hx = (spawnTile * 64 + 32) & 0x7FF;
-		int hy = (spawnRow * 64 + 32) & 0x7FF;
-		int h = (g_map.heightMap[(hy >> 6) * 32 + (hx >> 6)] << 3) + 36;
-		int camZ = h << 4;
-		int viewFov = 290;
-		int viewAspect = (viewFov << 14) / ((480 << 14) / 320);
-		int camYaw = (g_map.spawnDir << 7) & 0x3FF;
-		camera.setView(camX + 8, camY + 8, camZ + 8, camYaw, 0, 0, viewFov, viewAspect);
-	}
-
-	// Phase 4: player + world game state (doors, items).
+	// Phase 4: player + world game state (doors, items). Spawn placement
+	// happens in the Loading tick (legacy Game::spawnPlayer port).
 	Player player;
 	player.reset();
-	// Discrete movement uses canvas units (tile = 64); render adds <<4+8.
-	{
-		int n = g_map.spawnIndex & 0x1F;
-		int n2 = g_map.spawnIndex >> 5;
-		player.viewX = player.destX = n * 64 + 32;
-		player.viewY = player.destY = n2 * 64 + 32;
-		// Eye height = terrain height + 36 (legacy spawnPlayer).
-		int hx = (n * 64 + 32) & 0x7FF, hy = (n2 * 64 + 32) & 0x7FF;
-		int h = (g_map.heightMap[(hy >> 6) * 32 + (hx >> 6)] << 3) + 36;
-		player.viewZ = player.destZ = h;
-		player.viewAngle = player.destAngle = (g_map.spawnDir << 7) & 0x3FF;
-		player.startRotation();
-		player.finishRotation();
-	}
 
 	Game game;
-	game.loadEntities(g_map, g_entityDefs);
+	// Entity load happens in Loading phase 1 (GameContext::tickLoading,
+	// src/LoadingManager.cpp:658) — do not duplicate it here.
 
-	// Render loop with a placeholder canvas draw (Phase 1 test).
-		{
-			using Clock = std::chrono::steady_clock;
-			auto next = Clock::now();
-			int frames = 0;
-			double elapsed = 0;
-		bool running = true;
-		bool wantE = false;
-		bool wantUp = false, wantDown = false, wantLeft = false, wantRight = false;
-		app.input().setEventCallback([&](const SDL_Event& e) {
-			if (e.type == SDL_QUIT) running = false;
-			if (e.type == SDL_KEYDOWN) {
-				if (e.key.keysym.sym == SDLK_ESCAPE) running = false;
-				switch (e.key.keysym.scancode) {
-				case SDL_SCANCODE_E: wantE = true; break;
-				case SDL_SCANCODE_UP: case SDL_SCANCODE_W: wantUp = true; break;
-				case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: wantDown = true; break;
-				case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: wantLeft = true; break;
-				case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: wantRight = true; break;
-				default: break;
-				}
-			}
-		});
-		hud.showCenterMessage("Press ESC to quit", 0xAA000000, 2000);
-		hud.setDemoMonster(100, 100);
-		hud.setBubbleText("Hello Marine!", 0xFF002864, 3000);
-		int weaponSelectTimer = 0;
-		int touchCycle = 0;
-		int touchTimer = 0;
-		int appTimeMs = 0;
-		while (running) {
-			app.input().poll(app.window());
-			appTimeMs += 15;
-			world.setTime(appTimeMs);
-			hud.update(15);
-			// Cycle the demo weapon-select screen every 3 seconds.
-			weaponSelectTimer += 15;
-			if (weaponSelectTimer >= 3000) {
-				weaponSelectTimer = 0;
-				hud.setWeaponSelect(!hud.weaponSelect());
-				touchCycle = 0;
-				touchTimer = 0;
-			}
-			// Simulate a finger hovering over a weapon button in the select screen.
-			if (hud.weaponSelect()) {
-				touchTimer += 15;
-				if (touchTimer >= 500) {
-					touchTimer = 0;
-					touchCycle = (touchCycle + 1) % 5;
-				}
-				hud.setTouchedWeapon(touchCycle);
-			} else {
-				hud.setTouchedWeapon(-1);
-			}
+	// Game-state machine + tileEvents VM: non-owning wiring; the context is
+	// declared after every system it references so it dies first (spec §2).
+	ScriptVM vm;
+	GameContext ctx;
+	vm.init({                  // Env: map, defs, game, player, loc, hud, ctx, gameTime
+		&g_map, &g_entityDefs, &game, &player, &loc, &hud, &ctx, &ctx.gameTime });
+	game.setVM(&vm);
+	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world
+		&g_map, &g_entityDefs, &tables, &loc, &font, &g_media,
+		&game, &player, &vm, &hud, &world });
 
-// Simulate arrow-press highlighting (up/down/left/right in a loop).
-		static int arrowTimer = 0;
-		static int arrowCycle = 0;
-		arrowTimer += 15;
-		if (arrowTimer >= 500) {
-			arrowTimer = 0;
-			arrowCycle = (arrowCycle + 1) % 4;
-		}
-		hud.setArrowPressed(arrowCycle + 1);
-
-		// Simulate taking damage periodically (red vignette + attack arrow).
-		static int damageTimer = 0;
-		static int damageDirCycle = 0;
-		damageTimer += 15;
-		if (damageTimer >= 4000) {
-			damageTimer = 0;
-			hud.setDamageDemo(damageDirCycle);
-			damageDirCycle = (damageDirCycle + 1) % 8;
-		}
-
-		// Show an important message (red banner) once.
-		static bool importantShown = false;
-		if (!importantShown) {
-			importantShown = true;
-			hud.showImportantMessage("Important: objective updated!");
-		}
-
-		// Discrete movement (legacy): 90° turns, 1-tile steps, input blocked
-		// while an animation (move/turn) is in progress.
-		{
-			const int* st = tables.sinTable.data();
-			auto getHeight = [&](int x, int y) -> int {
-				int hx = x & 0x7FF, hy = y & 0x7FF;
-				return g_map.heightMap[((hy >> 6) * 32 + (hx >> 6))] << 3;
-			};
-			if (player.viewX == player.destX && player.viewY == player.destY &&
-				player.viewAngle == player.destAngle) {
-				if (wantRight) { wantRight = false; player.destAngle -= 256; player.startRotation(); }
-				else if (wantLeft) { wantLeft = false; player.destAngle += 256; player.startRotation(); }
-				else if (wantUp) {
-					wantUp = false;
-					int tx = player.viewX + player.viewStepX;
-					int ty = player.viewY + player.viewStepY;
-					// Collision: swept capsule vs walls and solid entities.
-					if (game.traceMove(g_map, player.viewX, player.viewY, tx, ty,
-						game.playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16)) {
-						player.attemptMove(tx, ty);
-						player.setDestHeight(getHeight(tx, ty));
-						player.setZStep(player.destZ - player.viewZ);
-					}
-				} else if (wantDown) {
-					wantDown = false;
-					int tx = player.viewX - player.viewStepX;
-					int ty = player.viewY - player.viewStepY;
-					if (game.traceMove(g_map, player.viewX, player.viewY, tx, ty,
-						game.playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16)) {
-						player.attemptMove(tx, ty);
-						player.setDestHeight(getHeight(tx, ty));
-						player.setZStep(player.destZ - player.viewZ);
-					}
-				}
-			}
-			if (wantE) {
-				wantE = false;
-				game.useDoorFacing(g_map, player.viewX, player.viewY, player.viewStepX, player.viewStepY);
-				game.advanceTurnDoors(); // legacy opens then advanceTurn (src/PlayingInputHandler.cpp:451-452)
-			}
-			if (player.updateView()) {
-				// Arrived: recompute facing vectors for the next step.
-				player.finishRotation();
-				// A turn was taken: check auto-close of doors.
-				game.advanceTurnDoors();
-			}
-			// Render-view pull-back (src/Render.cpp:2279-2282). Applied to the
-			// RENDER camera only; gameplay/collision keep using
-			// player.viewX/viewY. Magnitude <= 2.5 map units (spec C1).
-			int yaw = player.viewAngle & 0x3FF;
-			int viewSin = st[yaw];
-			int viewCos = st[(yaw + 256) & 0x3FF];
-			int rvx = (player.viewX << 4) + 8 - (160 * viewCos >> 16);
-			int rvy = (player.viewY << 4) + 8 + (160 * viewSin >> 16);
-			camera.setView(rvx, rvy, (player.viewZ << 4) + 8, player.viewAngle, 0, 0, 290,
-				(290 << 14) / ((480 << 14) / 320));
-		}
-		// Phase 4: game tick (door animations).
-		game.update(15);
-		game.setPlayerPos(player.viewX, player.viewY);
-
-			RenderBackend& renderer = app.renderer();
-			renderer.beginFrame(app.window());
-			Graphics2D& g = renderer.g2d();
-			// 3D perspective view of the decoded world (legacy GL-path port).
-			if (world.initialized() && g_map.numNodes > 0) {
-				world.drawSky(camera);
-				// Per-sprite sort-bias hooks (src/Render.cpp:856-862):
-				// corpse/linked entities draw nearer (+1), monsters (-1; none
-				// exist yet). Borrowed by drawBSP for the duration of the call.
-				std::vector<int> spriteSortBias(g_map.numSprites, 0);
-				for (const auto& ent : game.entities()) {
-					int si = ent.getSprite();
-					if (!ent.def || si < 0 || si >= g_map.numSprites) continue;
-					if (ent.info & 0x1010000) spriteSortBias[si] = +1;
-					else if (ent.def->eType == Enums::ET_MONSTER) spriteSortBias[si] = -1;
-				}
-				world.drawBSP(g_map, g_media, camera, spriteSortBias.data());
-			} else {
-				g.fillRect(0, 0, 480, 320, 32, 32, 64);
-			}
-			// Cockpit, minimap and HUD are hidden for now so the raw 3D scene
-			// can be inspected (re-enable when the world renderer is verified).
-			constexpr bool kShowHud = false;
-			if (kShowHud) {
-				if (hud.imgCockpitOverlay().valid()) {
-					hud.drawOverlay(g, 0, 42, 480);
-				}
-				if (!g_map.polygons.empty()) {
-					// Compute world bounds (x,y) over all polygon verts.
-					int minX = INT_MAX, maxX = INT_MIN, minY = INT_MAX, maxY = INT_MIN;
-					for (const auto& p : g_map.polygons) {
-						for (const auto& v : p.verts) {
-							if (v.x < minX) minX = v.x;
-							if (v.x > maxX) maxX = v.x;
-							if (v.y < minY) minY = v.y;
-							if (v.y > maxY) maxY = v.y;
-						}
-					}
-					int spanX = maxX - minX, spanY = maxY - minY;
-					if (spanX > 0 && spanY > 0) {
-						const int mapW = 400, mapH = 260;
-						float sx = (float)mapW / spanX;
-						float sy = (float)mapH / spanY;
-						float scale = sx < sy ? sx : sy;
-						int drawW = (int)(spanX * scale);
-						int drawH = (int)(spanY * scale);
-						const int mapX = (480 - drawW) / 2;
-						const int mapY = (320 - drawH) / 2;
-						g.fillRect(mapX - 4, mapY - 4, (int)(spanX * scale) + 8, (int)(spanY * scale) + 8, 0, 0, 0, 180);
-						for (const auto& p : g_map.polygons) {
-							uint8_t cr = 80, cg = 160, cb = 255;
-							for (size_t i = 0; i < p.verts.size(); ++i) {
-								const auto& v0 = p.verts[i];
-								const auto& v1 = p.verts[(i + 1) % p.verts.size()];
-								int x0 = mapX + (int)((v0.x - minX) * scale);
-								int y0 = mapY + (int)((v0.y - minY) * scale);
-								int x1 = mapX + (int)((v1.x - minX) * scale);
-								int y1 = mapY + (int)((v1.y - minY) * scale);
-								g.drawLine(x0, y0, x1, y1, cr, cg, cb, 200);
-							}
-						}
-					}
-				}
-				if (font.valid()) {
-					hud.draw(g, font, 480, 320);
-				}
-			}
-
-			renderer.endFrame(app.window());
-
-			// Throttle to ~66 fps.
-			next += std::chrono::milliseconds(15);
-			auto now = Clock::now();
-			if (now < next) std::this_thread::sleep_until(next);
-			else next = now;
-
-			++frames;
-			elapsed += std::chrono::duration<double>(Clock::now() - now).count();
-			if (elapsed >= 1.0) {
-				std::fprintf(stdout, "FPS: %d\n", frames);
-				std::fflush(stdout);
-				frames = 0;
-				elapsed = 0;
-			}
-			if (frames > 6000) running = false;
-		}
-	}
+	// Revived frame path: AppContext::run -> GameLoop::run drives the
+	// fixed-step ticks, queued-input actions and per-frame rendering.
+	app.setGameContext(&ctx);
+	app.run();
 
 	app.shutdown();
 	return 0;

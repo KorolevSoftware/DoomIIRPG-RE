@@ -38,7 +38,10 @@ public:
 	// (current) position, dest* is where the player is heading.
 	int viewX = 0, viewY = 0, viewZ = 0;
 	int destX = 0, destY = 0, destZ = 0;
-	int viewAngle = 0, destAngle = 0; // 0..1023 (1024 = 360 deg)
+	// Angles are RAW ACCUMULATED ints (legacy never masks them after spawn;
+	// src/MovementController.cpp:455-466 marches linearly and every consumer
+	// masks with & 0x3FF at use). 1024 units = 360 degrees.
+	int viewAngle = 0, destAngle = 0;
 	int animFrames = 10;
 	int animPos = 0;   // step per frame in X/Y
 	int animAngle = 0; // step per frame in angle

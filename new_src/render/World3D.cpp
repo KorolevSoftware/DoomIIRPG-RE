@@ -255,34 +255,47 @@ void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	
 		// frames cycle over time; the draw path resolves
 		// mediaId = mappings[tileNum] + frame from the sprite info bits.
 		for (int mediaId = lo; mediaId < hi && mediaId < MediaMappings::kMaxMedia; ++mediaId) {
-			if (spriteTexByMedia_.count(mediaId)) continue;
-
-			int texIdx = media.texelIndexFor(mediaId);
-			int palIdx = media.paletteIndexFor(mediaId);
-			if (texIdx < 0 || palIdx < 0) continue;
-			const MediaTexel& tex = media.texel(texIdx);
-			const MediaPalette& pal = media.palette(palIdx);
-
-			std::vector<uint8_t> indices;
-			bool isRle = tex.data.size() != (size_t)(tex.width * tex.height);
-			if (!isRle) {
-				indices = tex.data;
-			} else {
-				int16_t bounds[4] = {
-					(int16_t)(m.bounds[mediaId * 4 + 0]),
-					(int16_t)(m.bounds[mediaId * 4 + 1]),
-					(int16_t)(m.bounds[mediaId * 4 + 2]),
-					(int16_t)(m.bounds[mediaId * 4 + 3]),
-				};
-				indices = decodeSpriteRLE(tex.data, tex.width, tex.height, bounds);
-			}
-			Texture t;
-			if (t.uploadIndexed(indices, tex.width, tex.height, pal.colors, true, true)) {
-				spriteTexByMedia_[mediaId] = std::move(t);
-				spriteIsRle_[mediaId] = isRle;
-			}
+			ensureSpriteTexture(media, tileNum, mediaId);
 		}
 	}
+}
+
+// Decodes/uploads one sprite mediaId and caches it (dedup inside via count()).
+// Mirrors legacy Render::setupTexture: textures are created lazily on first
+// use, so a scripted setLineLocked flipping a sprite's tileNum after load
+// still resolves its (new) mediaId at draw time instead of vanishing.
+bool World3D::ensureSpriteTexture(const MediaLoader& media, int tileNum, int mediaId) {
+	if (mediaId < 0 || mediaId >= MediaMappings::kMaxMedia) return false;
+	if (spriteTexByMedia_.count(mediaId)) return true;
+
+	int texIdx = media.texelIndexFor(mediaId);
+	int palIdx = media.paletteIndexFor(mediaId);
+	if (texIdx < 0 || palIdx < 0) {
+		return false;
+	}
+	const MediaTexel& tex = media.texel(texIdx);
+	const MediaPalette& pal = media.palette(palIdx);
+
+	std::vector<uint8_t> indices;
+	bool isRle = tex.data.size() != (size_t)(tex.width * tex.height);
+	if (!isRle) {
+		indices = tex.data;
+	} else {
+		int16_t bounds[4] = {
+			(int16_t)(media.mappings().bounds[mediaId * 4 + 0]),
+			(int16_t)(media.mappings().bounds[mediaId * 4 + 1]),
+			(int16_t)(media.mappings().bounds[mediaId * 4 + 2]),
+			(int16_t)(media.mappings().bounds[mediaId * 4 + 3]),
+		};
+		indices = decodeSpriteRLE(tex.data, tex.width, tex.height, bounds);
+	}
+	Texture t;
+	bool upOk = t.uploadIndexed(indices, tex.width, tex.height, pal.colors, true, true);
+	if (upOk) {
+		spriteTexByMedia_[mediaId] = std::move(t);
+		spriteIsRle_[mediaId] = isRle;
+	}
+	return upOk;
 }
 
 void World3D::begin(const Camera3D& camera) {
@@ -551,6 +564,12 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	if (lo < 0) return;
 	int mediaId = lo + frame;
 	if (mediaId >= hi) mediaId = lo;
+	// Lazy-create-and-cache (legacy Render::setupTexture): a scripted
+	// setLineLocked can flip tileNum (e.g. blue locked 273 -> unlocked 274)
+	// after uploadMapTextures preloaded only the load-time range, so draw may
+	// resolve a mediaId that was never uploaded.
+	if (!spriteTexByMedia_.count(mediaId))
+		ensureSpriteTexture(media, tileNum, mediaId);
 	auto it = spriteTexByMedia_.find(mediaId);
 	if (it == spriteTexByMedia_.end()) return;
 

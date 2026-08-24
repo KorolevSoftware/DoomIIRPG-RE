@@ -87,6 +87,11 @@ private:
 	void end();
 	void drawPoly(const MapData& map, int polyIdx);
 	void drawSprite(const MapData& map, const MediaLoader& media, const Camera3D& camera, int i);
+	// Decodes/uploads the sprite texture for one mediaId on first use and
+	// caches it (lazy like legacy Render::setupTexture). Returns false if the
+	// media has no texel/palette or the upload failed; dedups against
+	// spriteTexByMedia_ internally.
+	bool ensureSpriteTexture(const MediaLoader& media, int tileNum, int mediaId);
 	void flush();
 	bool walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ);
 	int nodeClassifyPoint(const MapData& map, int n, int x, int y, int z);

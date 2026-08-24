@@ -12,6 +12,7 @@ class ZipArchive;
 class RenderBackend;
 class Graphics2D;
 class InputSystem;
+class GameContext;
 
 // Composition root. Owns every subsystem and wires them together.
 class AppContext {
@@ -31,6 +32,11 @@ public:
 	RenderBackend& renderer();
 	InputSystem& input();
 
+	// Non-owning pointer to the game-state machine constructed in main()
+	// (consumed by GameLoop::run).
+	void setGameContext(GameContext* ctx) { gameContext_ = ctx; }
+	GameContext& gameContext() const { return *gameContext_; }
+
 	// Reads a resource from the archive using the standard prefix.
 	bool readResource(const std::string& fileName, std::vector<uint8_t>& out) const;
 
@@ -42,6 +48,7 @@ private:
 	std::unique_ptr<ZipArchive> archive_;
 	std::unique_ptr<RenderBackend> renderer_;
 	std::unique_ptr<InputSystem> input_;
+	GameContext* gameContext_ = nullptr;
 };
 
 } // namespace newcore

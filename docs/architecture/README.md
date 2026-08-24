@@ -9,18 +9,20 @@ Namespace for everything: `newcore`._
 ### core/
 | File | Responsibility |
 |---|---|
-| `Main.cpp` | Entry point (`main()` :36). Phase-0 data verification, then an **ad-hoc inline render loop** with discrete movement, door use, HUD demo cycling (:252-465). |
-| `AppContext.h/.cpp` | Composition root: Window, RenderBackend, InputSystem, ZipArchive (:41-44); `readResource()` applies archive prefix `Payload/Doom2rpg.app/Packages/` (AppContext.h:22, AppContext.cpp:57-59). |
-| `GameLoop.h/.cpp` | Fixed-step (~15 ms tick, :14) loop skeleton — currently **dead code**, never invoked. |
+| `Main.cpp` | Entry point (`main()` :36): data-archive init + loader smoke logs, constructs subsystems and `GameContext`, then `AppContext::run()`. (Ad-hoc inline loop removed by phase 5 — spec `specs/2026-08-23-phase5-skeleton.md`.) |
+| `AppContext.h/.cpp` | Composition root: Window, RenderBackend, InputSystem, ZipArchive (:41-44); `readResource()` applies archive prefix `Payload/Doom2rpg.app/Packages/` (AppContext.h:22, AppContext.cpp:57-59); `run()` delegates to `GameLoop::run`. |
+| `GameLoop.h/.cpp` | Fixed-step driver: accumulates clamped dt (≤125 ms), consumes 15 ms quanta calling `GameContext::tick()`, renders once per frame (revived in phase 5, ADR 0003). |
+| `GameContext.h/.cpp` | Legacy-*Canvas* analog (phase 5, ADR 0003): state machine (`StateId{Playing=3,Loading=7,Dying=13}`, setState semantics with stateVars[9] reset + old/new hooks), clocks (`upTimeMs`, `gameTime`, `blockInputTime`), pending input actions, per-state ticks (two-phase Loading ordered per game-flow §3.3; Playing tick per GameStateRunner order incl. finishMovement FACE+ENTER+advanceTurn), render orchestration. |
 
 ### domain/game/
 | File | Responsibility |
 |---|---|
 | `Entity.h` | World entity record: `EntityDef*`, monster ptr, tile linked-list ptrs, packed sprite index in `info` low bits (:39-40), flag bits (:22-26). |
-| `Enums.h` | Legacy constants: entity types (:10-25), trace masks (:28-37), stat slots (:40-48), doors (:51-56), sprite flags (:63-72), monster anim/flags (:75-106). |
+| `Enums.h` | Legacy constants: entity types (:10-25), trace masks (:28-37), stat slots (:40-48), doors (:51-56), sprite flags (:63-72), monster anim/flags (:75-106); phase-5 additions: EV_* opcode ids, EVAL_* terms, EVFL_* trigger masks, SCR_* static-func indices. |
 | `CombatEntity.h/.cpp` | Battle-stat block (8 slots + weapon); clamped set/add, XP calc (:52-54). No calcHit/calcDamage yet. |
 | `Player.h/.cpp` | Player state: stats, inventory[26]/ammo[9]/weapon bitmask, XP; discrete grid movement via `kViewStepValues` 8-dir table (:8-11). |
-| `Game.h/.cpp` | Simulation subset: 32x32 entityDb lists (Game.h:69), door anims (6 slots), faced-door use `useDoorFacing` (ADR 0001), faithful swept-capsule move trace `traceMove` — world lines (nibble flag rules, flat walk) + masked entityDb pass (oriented ±32 segments, circles r²=625/256, sum-of-squares 881) per ADR 0002 / spec `specs/2026-08-23-faithful-player-collision.md`, turn-advance auto-close with tile-granular occupancy, linked-state door solidity. Doors only so far. |
+| `Game.h/.cpp` | Simulation subset: 32x32 entityDb lists (Game.h:69), door anims (6 slots), faced-door use `useDoorFacing` (ADR 0001), faithful swept-capsule move trace `traceMove` per ADR 0002 / spec `specs/2026-08-23-faithful-player-collision.md`, turn-advance auto-close with tile-granular occupancy, linked-state door solidity. Phase-5 additions: `setLineLocked` (tileNum bit0 flip + def re-lookup by tileNum+257), `advanceTurn` subset, eventFlags movement masks, `findEntityBySprite`, blocking-door-open thread resume via `DoorAnim::ownerThread`. |
+| `ScriptVM.h/.cpp` | Faithful tileEvents interpreter (phase 5, ADR 0003 / spec `specs/2026-08-23-phase5-skeleton.md` §7): 20-thread pool (`ScriptThread`: IP/FP/stackPtr/unpauseTime/type/flags/state), big-endian dispatch with the legacy post-opcode `++IP` contract, trigger filter, `executeTile`/`executeStaticFunc`/`runScriptThreads`, `scriptStateVars[128]`; TIER-A opcodes functional (EVAL/JUMP/CALL/RETURN/ITEM_COUNT/DOOROP/EVENTOP/GIVEITEM/WAIT/ABORT_MOVE/MESSAGE/TILE_EMPTY…), TIER-B logged no-ops (incl. parse-only EV_CHANGE_MAP, non-pausing EV_DIALOG). |
 
 ### domain/world/
 | File | Responsibility |
@@ -83,20 +85,18 @@ Namespace for everything: `newcore`._
 ## Wiring (startup → frame)
 
 **Startup** (`main()`, Main.cpp:36): `AppContext::initialize(archive)` (window/backend/input/zip)
-→ stack-local Phase-0 objects: Tables (:53-55), EntityDefs (:73-76), Localization (:84-99),
-MediaLoader mappings+finalize (:105-143), MapParser→MapData (:146-164), Font (:167-181),
-Hud (:191-192), World3D + textures + sky + test fog (:196-209), Camera at spawn (:213-228),
-Player reset+spawn (:231-246), Game.loadEntities (:248-249).
+→ data loaders (Tables, EntityDefs, Localization, MediaLoader, MapParser→MapData,
+Font, Hud, World3D + textures + sky) → construct `GameContext` with pointers to all
+subsystems → `app.run()`.
 
-**Per frame** (inline Main.cpp:252-465): input poll (:260-273) → fixed 15 ms step
-(`appTimeMs += 15`, :283-285) + scripted HUD demos (:287-331) → discrete movement gating
-via `game.traceMove` (swept capsule 13501/r16; :333-364) → E opens nearest door + `advanceTurnDoors` (:366-373)
-→ camera follows player view (:380-382) → `world.drawSky` + `world.drawBSP` (:393-395)
-→ HUD block compiled out via `kShowHud=false` (:400-401) → swap (:447);
-auto-exit after 6000 frames (:463).
-
-_Note:_ intended path `AppContext::run()` → `GameLoop::run()` exists
-(AppContext.cpp:61-63, GameLoop.cpp:17-55) but nothing calls it.
+**Per frame** (GameLoop): input poll → accumulate clamped dt → per 15 ms quantum:
+clock advance (gameTime only in Playing) → input gate (blockInputTime /
+script-block) → action dispatch → globals (`setPlayerPos`, `runScriptThreads`)
+→ state tick (Loading two-phase / Playing order / Dying stub) → render once:
+camera from player view (+160-unit pull-back), `drawSky`+`drawBSP`, HUD messages, swap.
+Movement decisions live in the Playing tick (`traceMove` before commit; leave-events
+before the trace; FACE+ENTER+advanceTurn on arrival); E = faced-tile TRIGGER event
+first, then door use.
 
 ## External dependencies & build
 
@@ -108,7 +108,7 @@ _Note:_ intended path `AppContext::run()` → `GameLoop::run()` exists
 
 ## Known incomplete spots
 
-1. Dead code path: `GameLoop` never called; Main.cpp carries its own ~210-line ad-hoc loop (structural debt to resolve when the real game state machine lands).
+1. ~~Dead code path: `GameLoop` never called~~ — resolved 2026-08-23 (phase 5: GameLoop revived as the fixed-step driver; see spec `specs/2026-08-23-phase5-skeleton.md`, ADR 0003).
 2. `AppContext::startup()` empty stub (AppContext.cpp:53-55).
 3. ~~`Game::useDoorNear` declared but never defined~~ — resolved 2026-08-23 (replaced by `useDoorFacing`, see spec `specs/2026-08-23-fix-doors-sprite-placement.md`, ADR 0001).
 4. Debug helper `saveIndexedBmp` unreferenced (World3D.cpp:16-55).
@@ -123,8 +123,10 @@ _See [adr/](adr/):_
 
 - [0001 — Faced-door use without a trace system](adr/0001-faced-door-use-without-trace.md) (2026-08-23)
 - [0002 — Faithful swept-capsule collision trace](adr/0002-faithful-player-collision-trace.md) (2026-08-23; amends 0001)
+- [0003 — GameContext state machine + standalone ScriptVM](adr/0003-game-context-state-machine-and-script-vm.md) (2026-08-23)
 
 ## Specs
 
 - [2026-08-23 — Fix "doors work incorrectly" + "sprites slightly shifted"](specs/2026-08-23-fix-doors-sprite-placement.md)
 - [2026-08-23 — Faithful player collision (swept-capsule trace)](specs/2026-08-23-faithful-player-collision.md)
+- [2026-08-23 — Phase 5 skeleton: game-state machine + tileEvents ScriptVM](specs/2026-08-23-phase5-skeleton.md)

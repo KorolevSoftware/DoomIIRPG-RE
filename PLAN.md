@@ -109,6 +109,29 @@ docs/architecture/README.md; журнал: docs/journal.md)._
       - [ ] Оружие/combat (CombatEntity::calcHit/calcDamage).
 - [ ] Фаза 5. Игровой цикл: миры, локации, tileEvents, скрипты, диалоги,
       combat.
+      - [x] Каркас (2026-08-23): машина состояний {Loading=7, Playing=3,
+        Dying=13} в core/GameContext + оживлённый GameLoop (fixed-step
+        15 мс, clamp dt ≤125 мс) через AppContext::run(); порядок тика и
+        двухфазная загрузка по game-flow.md; Main.cpp слимлен до init→run.
+        Спека: docs/architecture/specs/2026-08-23-phase5-skeleton.md,
+        ADR-0003.
+      - [x] ScriptVM (domain/game/ScriptVM): пул 20 потоков, big-endian
+        операнды, контракт IP/-1-resume как в легаси; подмножество опкодов:
+        EV_EVAL/JUMP/CALL_FUNC/RETURN/ITEM_COUNT/DOOROP/EVENTOP/GIVEITEM/
+        WAIT/ABORT/DIALOG-lite/ENTITY_FRAME/MESSAGE и др.; триггеры:
+        leave-before-move (2|dir), FACE+enter на прибытии, спавн-тайл 4081,
+        staticFunc(0/6).
+      - [x] Скриптовые двери: setLineLocked (флип бита тайла + re-lookup
+        def), EV_DOOROP с точной n2-семантикой (quiet-bit → snap), владение
+        потоком DoorAnim::ownerThread с resume по завершении открытия.
+      - [x] Диалоги-lite: серая панель через HUD, шаг закрытия по E,
+        цепочки; текст: загрузка kTextMap, clamp глифов (пробел был
+        мусорным подчёркиванием — src/Graphics.cpp:648-652), переносы и
+        dehyphenate по легаси Text.
+      - [ ] Полная система диалогов (стили/говорящие), катсцены
+        (ST_CAMERA/ST_INTER_CAMERA), инвентарь-UI и лут (EV_MAKE_CORPSE
+        пропущен), монстры/AI, combat, сохранения, automap, переход между
+        картами (EV_CHANGE_MAP пока parse-only).
 
 ## Статус (заметки для разработки)
 
@@ -219,6 +242,10 @@ decodedPolys=1787 (совпадает с tools/map_to_obj.py: 2300 verts/1787 po
   резолвятся в MediaLoader::finalize алиасом store-индекса источника —
   порт перезаписи слотов из legacy finalizeMapMedia (фикс 2026-08-23:
   кадр открытой зелёной двери был ссылкой → дверь исчезала при анимации).
+- Текстуры спрайтов создаются ЛЕНИВО при первом использовании и кэшуются
+  (World3D::ensureSpriteTexture ≡ legacy Render::setupTexture caching):
+  script-unlock меняет тайл спрайта (273↔274), и предзагрузленные на
+  старте диапазоны могут не покрывать новые mediaId.
 
 ## Фаза 3 — сделано (3D на GL 3.3)
 

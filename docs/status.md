@@ -4,13 +4,15 @@ _Last updated: 2026-08-23_
 
 ## Working on
 
-- Faithful player collision (2026-08-23): implemented, reviewer PASS,
-  user-verified — walls solid, door panels block as animated segments,
-  legacy world-line flag semantics ported (flag 4/6 never block).
-- Queued: Phase 5 game-state skeleton (replace ad-hoc Main.cpp loop);
-  later within it — loadEntities widening to solid sprite types
-  (ET_SPRITEWALL / ET_PLAYERCLIP / ET_DECOR — trace is already generic),
-  stderr debug-print sweep, optional dev-unlock for red/blue doors.
+- **Phase 5 skeleton done & user-verified** (2026-08-23): GameContext state
+  machine (Loading→Playing→Dying) + revived GameLoop fixed-step loop via
+  `AppContext::run()`; ScriptVM (20-thread pool, ~40-opcode subset) with tile
+  triggers and dialog-lite; scripted door unlock (`setLineLocked`) with lazy
+  sprite-texture creation fixing the post-unlock vanish; angle-wrap freeze
+  fix (raw accumulated angles per legacy). Debug instrumentation stripped.
+- Queued candidates for the next unit: (a) intro sequence — NPC gun-give
+  dialog → scripted move into spawn room → tutorial (needs mini-cutscene
+  infra + inventory display); (b) monsters/AI/combat.
 
 ## Fidelity pass 2026-08-23 (doors + sprites)
 
@@ -20,11 +22,11 @@ slip-door vertical split, slide-door UV pinning, DOORLERP lifetime, solidity
 timeline, faced-door trigger (Chebyshev ≤ 1 tile), open-frame texture,
 tile-granular auto-close occupancy, camera pull-back nudge, portal-eye z range,
 billboard UV flips, FLAT plane branch, height-snapped sort keys with bias chain.
-Follow-up fix: `MediaLoader::finalize` now resolves MEDIA_FLAG_REFERENCE
-entries (alias to source store index) — fixes vanishing door frames and any
-other reference-backed media. User-verified.
-Still missing (unchanged): keycard unlock path (Phase 5 scripts), monster-blocks-close,
-door sounds, water streams.
+Follow-up fixes same day: media REFERENCE record resolution (vanishing green
+doors) and faithful player collision trace (walls solid; flag semantics 0–7).
+All user-verified.
+Still missing (unchanged): keycard unlock path was delivered by Phase 5 scripts;
+monster-blocks-close, door sounds, water streams remain open.
 
 ## Feature audit vs PLAN.md (2026-08-22)
 

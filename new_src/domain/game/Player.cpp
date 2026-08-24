@@ -13,13 +13,13 @@ const int Player::kViewStepValues[16] = {
 void Player::startRotation() {
 	animPos = (64 + animFrames - 1) / animFrames;     // 7
 	animAngle = (256 + animFrames - 1) / animFrames; // 26
-	destAngle &= 0x3FF;
-	viewAngle &= 0x3FF;
+	// No angle normalization here: legacy startRotation never writes
+	// viewAngle/destAngle (src/MovementController.cpp:226-282); both stay RAW
+	// accumulated ints so plain <,>,== comparisons work across the 0/1023 wrap.
 }
 
 void Player::finishRotation() {
-	destAngle &= 0x3FF;
-	viewAngle = destAngle;
+	viewAngle = destAngle; // snap (legacy relies on arrival equality, src/MovementController.cpp:514)
 	int idx = ((destAngle & 0x3FF) >> 7) << 1;
 	viewStepX = kViewStepValues[idx + 0];
 	viewStepY = kViewStepValues[idx + 1];
@@ -46,18 +46,22 @@ bool Player::updateView() {
 	} else {
 		viewZ = destZ;
 	}
-	// Angle: shortest arc, masked 0-1023.
-	{
-		int a = destAngle & 0x3FF;
-		int cur = viewAngle & 0x3FF;
-		int delta = ((a - cur + 512) & 0x3FF) - 512; // -512..511
-		if (delta > 0) {
-			viewAngle += (delta < animAngle) ? delta : animAngle;
-			moved = true;
-		} else if (delta < 0) {
-			viewAngle += (delta > -animAngle) ? delta : -animAngle;
-			moved = true;
-		}
+	// Angle: linear march toward destAngle with overshoot clamp, exactly like
+	// legacy (src/MovementController.cpp:455-466). REGRESSION GUARD: never
+	// mask or shortest-arc here. viewAngle/destAngle are RAW accumulated ints
+	// (turns do destAngle += ±256 unmasked, src/PlayingInputHandler.cpp:118),
+	// so raw equality gates work across the 0/1023 wrap: turning right from
+	// 0 gives dest=-256 and must step down to -256. Masking to [0,1023] here
+	// produced view=-256 vs dest=768 — masked code saw "arrived" while the
+	// raw gate (GameContext::handlePlayingAction) blocked input forever.
+	if (viewAngle < destAngle) {
+		viewAngle += animAngle;
+		if (viewAngle > destAngle) viewAngle = destAngle;
+		moved = true;
+	} else if (viewAngle > destAngle) {
+		viewAngle -= animAngle;
+		if (viewAngle < destAngle) viewAngle = destAngle;
+		moved = true;
 	}
 	return !moved; // arrived when nothing moved
 }

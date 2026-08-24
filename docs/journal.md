@@ -85,3 +85,53 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
   panels block correctly. Flag-4 lines are now intentionally walkable
   (behavior change documented in PLAN.md and the spec).
 
+## 2026-08-23 — Phase 5 skeleton: state machine + script VM + dialogs-lite
+
+- Research (parallel): `docs/original-code/game-flow.md` — Canvas state
+  machine, boot chain, two-phase loading, exact ST_PLAYING tick order,
+  advanceTurn contract; `docs/original-code/tile-events-vm.md` — strings.idx/
+  chunk format, staticFuncs, 20-thread ScriptThread pool with -1 external
+  resume, full opcode table, map00 traces (blue/red door unlock scripts,
+  story-unlock event).
+- Architect spec `docs/architecture/specs/2026-08-23-phase5-skeleton.md` +
+  ADR-0003 (GameContext owns states {3,7,13}; GameLoop stays a dumb fixed-step
+  driver; lenient bring-up policy). Coder implemented in groups; reviewer
+  PASS after fixes (kTextMap loading, unsigned EV_EVAL operand reads,
+  duplicate loadEntities removed).
+- User-reported freeze diagnosed with targeted [dbg] instrumentation:
+  angle-wrap turn lockup — rewrite masked angles in startRotation while
+  accumulating raw; legacy keeps both RAW forever and masks at use
+  (src/MovementController.cpp:455-466). Ported verbatim → fixed.
+- Second user-reported bug: blue door vanished instantly on scripted open.
+  Chain of causes fixed: (1) media REFERENCE records skipped by finalize
+  (commit 61ee1d8); (2) preload only covered load-time tileNum — scripted
+  setLineLocked flips 273→274 so draw resolved never-uploaded mediaIds;
+  fixed with lazy create-and-cache `World3D::ensureSpriteTexture`
+  (≡ legacy setupTexture caching); (3) font space glyph garbage (missing
+  legacy clamp src/Graphics.cpp:648-652) and no word wrap + broken
+  dehyphenate eating chars after hyphens ("Need_Blue_Keycr") — all ported
+  faithfully; dialog-lite gray panel replaces red banner.
+- EV_ENTITY_FRAME (17) added (INIT_MAP thread was dying at it); remaining
+  known skip: EV_MAKE_CORPSE (72) until loot lands.
+- All debug instrumentation stripped; build green; user verified: smooth
+  split animation on scripted blue-door open, auto-close, turns clean.
+
+
+## 2026-08-24 — Font clamp + dialog word wrap (FIX A/FIX B)
+
+- FIX A: `Font::drawChar` now ports the legacy out-of-range guard exactly
+  (`new_src/text/Font.cpp:85`, src/Graphics.cpp:641-652): `index1` compares
+  unsigned so `getCharIndices` negatives (space 0x20 -> -1) fall back to the
+  '?' cell 30 instead of sampling outside the 192x144 sheet.
+- FIX B: `Hud::drawDialogMessage` word-wraps before the '|' split with
+  budget `(480 - 8) / 9 = 52` chars (`kDialogWrapChars`), mirroring legacy
+  prepareDialog order (src/DialogSystem.cpp:679-681, src/Canvas.cpp:89).
+- Required fix outside the task's file list (flagged to orchestrator):
+  `Text::dehyphenate` kept its first hit across deletions and ate following
+  characters — reproduced the user-reported corruption "Need Blue Keycr"
+  verbatim. Now re-searches each iteration like legacy (src/Text.cpp:718-725).
+  Verified 14/14 wrap/dehyphenate cases byte-identical against a verbatim
+  legacy transcription (incl. soft-hyphen breaks "Need Blue Key-"/"card").
+- Note: game data stores soft hyphens ("Ac-cess", "Key-card"); legacy
+  displays them only at line breaks, otherwise consumes them
+  ("Need Blue Keycard"). Build green; boot reaches ST_PLAYING (~60+ FPS).

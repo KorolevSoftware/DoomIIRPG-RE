@@ -15,6 +15,10 @@ namespace {
 
 constexpr int kPanelTopW = 480;
 constexpr int kPanelTopH = 20;
+// Dialog word-wrap budget in chars. Legacy dialogMaxChars is
+// (displayRect[2] - 2) / 9 (src/Canvas.cpp:89); the dialog-lite text is
+// inset 4px per side inside the 480px panel.
+constexpr int kDialogWrapChars = (480 - 8) / 9;
 constexpr int kWeaponH = 44;
 constexpr int kNumH = 20;
 constexpr int kKeyH = 44;
@@ -352,12 +356,68 @@ void Hud::drawBubbleText(Graphics2D& g, const Font& font, int scrCx, int viewTop
 	}
 }
 
+// Dialog-lite placeholder (task FIX B): legacy script dialogs are drawn by
+// DialogSystem::dialogState as a bottom panel spanning the hud width with
+// height = lines*16+8 and y = 320-h-1, an opaque fill plus a white 1px
+// border (src/DialogSystem.cpp:130-134,137-139,276-280; border color
+// 0xFFFFFFFF at :138). The tutorial boxes read as gray panels over the 3D
+// view; the fill here uses the dark gray of the legacy UI palette
+// (0xFF3F3F3F, src/Graphics.h:28) in place of the default black fill.
+// Persistence-until-cleared and '|' line splitting match the original texts.
+void Hud::drawDialogMessage(Graphics2D& g, const Font& font) {
+	Text t;
+	t.append(dialogText_);
+	// Word-wrap before the '|' split (legacy order, src/DialogSystem.cpp:679-
+	// 681): wrapText inserts '|' soft breaks on spaces/hyphens (src/Text.cpp:
+	// 744) and drops soft hyphens that did not become break points.
+	t.wrapText(kDialogWrapChars);
+	int numLines = std::max(1, t.getNumLines());
+	int w = 480;
+	int h = numLines * 16 + 8;
+	int x = 0;
+	int y = 320 - h - 1;
+	g.fillRect(x, y, w, h, 0x3F, 0x3F, 0x3F);
+	g.drawRect(x, y, w - 1, h, 255, 255, 255);
+	int ty = y + 4;
+	int i = 0;
+	while (true) {
+		int first = t.findFirstOf('|', i);
+		int end = (first >= 0) ? first : t.length();
+		Text line;
+		t.substring(line, i, end - i);
+		g.drawString(font, line, x + 4, ty, Graphics2D::kAnchorLeft);
+		ty += 16;
+		if (first < 0) break;
+		i = first + 1;
+	}
+}
+
+void Hud::drawMessages(Graphics2D& g, const Font& font) {
+	if (hasDialog_) {
+		// Dialog-lite (task FIX B): gray panel, distinct from the transient
+		// messages below.
+		drawDialogMessage(g, font);
+	} else if (hasImportant_) {
+		Text t;
+		t.append(importantText_);
+		drawImportantMessage(g, font, t, 0xFF7F0000);
+	} else if (hasCenterMessage_ && centerTime_ >= 0) {
+		Text t;
+		t.append(centerText_);
+		drawCenterMessage(g, font, t, centerColor_);
+	}
+}
+
 void Hud::update(int timeMs) {
 	if (hasCenterMessage_) {
 		centerTime_ += timeMs;
 		if (centerTime_ >= centerDuration_ + 100) {
 			hasCenterMessage_ = false;
 		}
+	}
+	if (hasImportant_) {
+		importantTime_ += timeMs;
+		if (importantTime_ >= kImportantDurationMs) hasImportant_ = false;
 	}
 	if (!bubbleText_.empty()) bubbleTextTime_ += timeMs;
 	if (damageCount_ > 0) {

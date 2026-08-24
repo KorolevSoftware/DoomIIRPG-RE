@@ -1,8 +1,10 @@
 #include "domain/game/Game.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "domain/game/Enums.h"
+#include "domain/game/ScriptVM.h"
 
 namespace newcore {
 
@@ -42,9 +44,12 @@ void Game::unlinkEntity(Entity* e) {
 
 void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	map_ = &map;
+	defs_ = &defs;
 	entities_.clear();
 	entities_.resize(kEntities);
-	for (auto& a : doorAnims_) { a.active = false; a.door = nullptr; }
+	monstersTurn = 0;
+	queueAdvanceTurn = false;
+	for (auto& a : doorAnims_) { a.active = false; a.door = nullptr; a.ownerThread = nullptr; }
 	for (auto& d : openDoors_) d = nullptr;
 
 	// Create door entities from TILE-flagged sprites whose tileNum+257 is a
@@ -76,8 +81,9 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 // Legacy interact (see Game.h): LINKED doors on the player's tile and on the
 // adjacent tile in the facing direction; own tile wins (ray fraction ~0).
 // Unlinked (open) doors are not traceable — legacy traces walk entityDb,
-// which holds only linked entities.
-Entity* Game::useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY) {
+// which holds only linked entities. Locked doors are refused without
+// animating (src/PlayingInputHandler.cpp:447-449).
+Game::DoorUseResult Game::useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY) {
 	(void)map;
 	const int tiles[2][2] = {
 		{ px >> 6, py >> 6 },
@@ -87,20 +93,23 @@ Entity* Game::useDoorFacing(const MapData& map, int px, int py, int stepX, int s
 		for (Entity* e = findMapEntity(t[0], t[1]); e; e = e->nextOnTile) {
 			if (!e->isDoor()) continue;
 			if (!(e->info & Entity::kInfoLinked)) continue;
-			performDoorEvent(0, e);
-			return e;
+			if (e->def->eSubType == Enums::DOOR_LOCKED) return DoorUseResult::Locked;
+			performDoorEvent(0, e, 1);             // player use never snaps (src/PlayingInputHandler.cpp:451)
+			return DoorUseResult::Opened;
 		}
 	}
-	return nullptr;
+	return DoorUseResult::None;
 }
 
 // Legacy b3: effective tileNum in [271,281) (src/Game.cpp:1058). Excludes
 // 281 although TILENUM_LAST_DOOR == 281 (spec C6).
 static bool doorFamilyTile(int tileNum) { return tileNum >= 271 && tileNum < 281; }
 
-bool Game::performDoorEvent(int n, Entity* door) {
+bool Game::performDoorEvent(int n, Entity* door, int n2, ScriptThread* ownerThread) {
 	if (!door || !door->isDoor()) return false;
-	if (door->def->eSubType == Enums::DOOR_LOCKED) return false; // needs key
+	if (door->def->eSubType == Enums::DOOR_LOCKED) {       // needs key
+		return false;
+	}
 
 	int sprite = door->getSprite();
 	if (sprite < 0 || !map_) return false;
@@ -128,9 +137,9 @@ bool Game::performDoorEvent(int n, Entity* door) {
 		linkEntity(door, door->linkIndex % 32, door->linkIndex / 32);
 	}
 
-	// NOTE: legacy snaps the animation instantly when offscreen
-	// (n2 == 2 + cullBoundingBox, src/Game.cpp:1153-1155); cullBoundingBox is
-	// not ported, so doors here always animate.
+	// NOTE: legacy also snaps when n2 == 2 and the door midpoint is culled
+	// offscreen (src/Game.cpp:1153-1155); cullBoundingBox is not ported, so
+	// n2 == 2 animates like n2 == 1 (documented deviation).
 
 	// Find an animation slot for THIS door (reuse its own if still animating,
 	// otherwise an empty slot). Never steal a slot from another open door.
@@ -169,6 +178,7 @@ bool Game::performDoorEvent(int n, Entity* door) {
 	slot->t = 0;
 	slot->dur = 750;
 	slot->opening = (n == 0);
+	slot->ownerThread = ownerThread;
 
 	// Door-lerp flag: set at EVERY animation start (open AND close), cleared
 	// only at close completion in updateDoors (src/Game.cpp:1089,3125).
@@ -181,6 +191,18 @@ bool Game::performDoorEvent(int n, Entity* door) {
 	// Texture frame 1 while open/animating (src/Game.cpp:1150-1152).
 	if (n == 0 && family) {
 		map_->mapSpriteInfo[sprite] = (map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x100;
+	}
+
+	// Snap modes (src/Game.cpp:1153-1155): n2 == 0 finishes the animation
+	// immediately (quiet-bit EV_DOOROP / entity-state callers); the
+	// ST_AUTOMAP force-snap has no counterpart (no automap state in the
+	// subset). Finishing through updateDoors keeps every completion side
+	// effect (open-end unlink, close-end texture restore, owner resume)
+	// identical to a lerp that ran its full 750 ms, and openDoors_
+	// registration above is untouched, so auto-close still works.
+	if (n2 == 0) {
+		slot->t = slot->dur;
+		updateDoors();
 	}
 	return true;
 }
@@ -247,7 +269,7 @@ void Game::advanceTurnDoors() {
 	for (auto* door : openDoors_) {
 		if (!door) continue;
 		if (canCloseDoor(door)) {
-			performDoorEvent(1, door);
+			performDoorEvent(1, door, 2);      // snap-if-offscreen mode (src/Game.cpp:1275)
 		}
 	}
 }
@@ -442,6 +464,70 @@ bool Game::traceMove(const MapData& map, int x0, int y0, int x1, int y1,
 	return false;                          // blocked
 }
 
+// ---- Phase 5: script-facing services ----
+
+// Faithful port (src/Game.cpp:2477-2498): flip bit0 of the sprite-info
+// tileNum byte (271<->272, 273<->274, ...) and re-look-up the def by
+// tileNum+257. The renderer resolves textures from the same low byte, so
+// the locked/unlocked texture swap is automatic.
+void Game::setLineLocked(Entity* e, bool locked) {
+	if (!e || !map_ || !defs_) return;
+	int sprite = e->getSprite();
+	if (sprite < 0 || sprite >= map_->numSprites) return;
+	int info = map_->mapSpriteInfo[sprite];
+	int tn = info & 0xFF;
+	tn = locked ? (tn & 0xFFFFFFFE) : (tn | 0x1);
+	map_->mapSpriteInfo[sprite] = (info & 0xFFFFFF00) | tn;
+	e->def = defs_->lookup(tn + 257);
+	std::fprintf(stderr, "[script] setLineLocked sprite=%d -> %s\n", sprite, locked ? "locked" : "unlocked");
+}
+
+// Turn advance (src/Game.cpp:1238-1281, subset). player->advanceTurn stats /
+// updateBombs / updateMonsterFX / startRotation pitch refresh are
+// placeholders until those systems exist.
+void Game::advanceTurn() {
+	queueAdvanceTurn = false;                  // (:1240)
+	// pushedWall = false — field not ported (no consumer).
+	monstersTurn = 1;                          // arm the monster phase (:1257-1264); Playing tick step disarms
+	advanceTurnDoors();                        // auto-close sweep (:1271-1278)
+	if (vm_) vm_->executeStaticFunc(Enums::SCR_PER_TURN); // PER_TURN hook (:1279)
+}
+
+Entity* Game::findEntityBySprite(int sprite) {
+	for (Entity& e : entities_) {
+		if (e.def != nullptr && e.getSprite() == sprite) return &e;
+	}
+	return nullptr;
+}
+
+void Game::touchTile(int x, int y, bool b) {
+	// Legacy touchTile drives automap uncover + pickups (absent this phase).
+	(void)x; (void)y; (void)b;
+}
+
+// src/Game.cpp:974-981.
+void Game::eventFlagsForMovement(int x0, int y0, int x1, int y1) {
+	int dx = x1 - x0;
+	int dy = y1 - y0;
+	eventFlags_[0] = 2 | eventFlagForDirection(dx, dy);   // LEAVE mask for source tile
+	eventFlags_[1] = 1 | eventFlagForDirection(-dx, -dy); // ENTER mask for destination tile
+}
+
+// src/Game.cpp:983-1014 (8-way table; screen Y grows downward).
+int Game::eventFlagForDirection(int dx, int dy) {
+	if (dx > 0) {
+		if (dy < 0) return Enums::EVFL_MOD_NORTHEAST;
+		if (dy > 0) return Enums::EVFL_MOD_SOUTHEAST;
+		return Enums::EVFL_MOD_EAST;
+	}
+	if (dx < 0) {
+		if (dy < 0) return Enums::EVFL_MOD_NORTHWEST;
+		if (dy > 0) return Enums::EVFL_MOD_SOUTHWEST;
+		return Enums::EVFL_MOD_WEST;
+	}
+	return (dy > 0) ? Enums::EVFL_MOD_SOUTH : Enums::EVFL_MOD_NORTH;
+}
+
 void Game::updateDoors() {
 	for (auto& a : doorAnims_) {
 		if (!a.active) continue;
@@ -473,6 +559,15 @@ void Game::updateDoors() {
 					map_->mapSpriteInfo[a.sprite] &= 0xFFFF00FF;
 					map_->mapSpriteInfo[a.sprite] &= 0x7FFFFFFF;
 				}
+			}
+			// Resume the owning script once an OPEN completes (external
+			// -1 resume protocol; mirrors updateLerpSprites collecting
+			// callThreads[] then running them, src/Game.cpp:2985-3013).
+			bool opening = a.opening;
+			ScriptThread* owner = a.ownerThread;
+			a.ownerThread = nullptr;
+			if (opening && owner && vm_) {
+				vm_->resumeThread(owner);
 			}
 		}
 	}

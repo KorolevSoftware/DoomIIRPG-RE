@@ -82,7 +82,10 @@ void Font::drawChar(SpriteBatch& batch, char c, int x, int y, int rotateMode,
 
 	int index1, index2;
 	getCharIndices(c, &index1, &index2);
-	if (index1 > 143 || index2 < 0 || index2 > 143) {
+	// Out-of-range guard from src/Graphics.cpp:641-652. index1 must compare
+	// unsigned so negative results (space 0x20 -> -1) also take the '?' cell
+	// instead of sampling outside the sheet.
+	if ((uint32_t)index1 > 143u || index2 < 0 || index2 > 143) {
 		index1 = 30; // '?' fallback
 		index2 = 0;
 	}
