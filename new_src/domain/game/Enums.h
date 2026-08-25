@@ -59,6 +59,13 @@ static constexpr int TILENUM_LAST_DOOR = 281;
 static constexpr int FIRSTBOSS = 12;
 static constexpr int LASTBOSS = 16;
 
+// Character art tiles (src/Enums.h:708-719): stacked leg/torso/head sheets.
+static constexpr int TILENUM_FIRST_NPC = 65;
+static constexpr int TILENUM_LAST_NPC = 80;
+static constexpr int TILENUM_NPC_RILEY_OCONNOR = 66;
+static constexpr int TILENUM_NPC_SARGE = 72;
+static constexpr int TILENUM_SHADOW = 232;             // src/Enums.h:830
+
 // Sprite flags.
 static constexpr int SPRITE_FLAG_HIDDEN = 0x10000;
 static constexpr int SPRITE_FLAG_FLIP_HORIZONTAL = 0x20000;

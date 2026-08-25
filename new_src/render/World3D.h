@@ -62,8 +62,10 @@ public:
 	// (no depth buffer). Ports walkNode/nodeClassifyPoint/getNodeForPoint.
 	// spriteSortBias: optional per-sprite extra depth bias (+1/-1 hook,
 	// src/Render.cpp:856-862), indexed by sprite index; may be null.
+	// charClass: optional per-sprite stacked-character classification bytes
+	// (ADR 0005; 1 = draw via the leg/torso/head stack path); may be null.
 	void drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
-		const int* spriteSortBias = nullptr);
+		const int* spriteSortBias = nullptr, const uint8_t* charClass = nullptr);
 
 	// Renders map sprite billboards (legacy renderSpriteObject/renderSprite).
 	// Static sprites only for now; entity-driven monsters/NPCs come later.
@@ -86,12 +88,31 @@ private:
 	void begin(const Camera3D& camera);
 	void end();
 	void drawPoly(const MapData& map, int polyIdx);
-	void drawSprite(const MapData& map, const MediaLoader& media, const Camera3D& camera, int i);
+	void drawSprite(const MapData& map, const MediaLoader& media, const Camera3D& camera, int i,
+		const uint8_t* charClass);
+	// Emits one camera-facing billboard quad (legacy Render::renderSprite
+	// billboard branch, src/Render.cpp:455-513 GL sub-path). All offsets in
+	// the units of the drawSprite preamble. Must be called between begin()/end().
+	void drawBillboardPart(const MapData& map, const MediaLoader& media,
+	                       int x, int y, int zRenderUnits,   // canvas x/y; z already <<4
+	                       int tileNum, int mediaId,         // texture resolved by caller
+	                       int flags,                        // info low bits (0x20000 etc.)
+	                       int scaleFactor);                 // byte<<10
+	// Stacked leg/torso/head character renderer (legacy renderSpriteAnim,
+	// src/Render.cpp:3144-3488; NPC subset per ADR 0005). Must be called
+	// between begin()/end().
+	void drawCharacter(const MapData& map, const MediaLoader& media, int i);
 	// Decodes/uploads the sprite texture for one mediaId on first use and
 	// caches it (lazy like legacy Render::setupTexture). Returns false if the
 	// media has no texel/palette or the upload failed; dedups against
 	// spriteTexByMedia_ internally.
 	bool ensureSpriteTexture(const MediaLoader& media, int tileNum, int mediaId);
+	// Applies the per-batch blend/fog state for a legacy renderMode
+	// (gles::SetupTexture switch, src/GLES.cpp:623-715): flushes the pending
+	// batch on change, switches glBlendFunc and toggles fog. 3 = ADD
+	// (GL_SRC_ALPHA/GL_ONE), 7 = SUB (GL_ZERO/GL_ONE_MINUS_SRC_COLOR); both
+	// disable fog (fogMode = 0). Must be called between begin()/end().
+	void applyBatchState(int renderMode);
 	void flush();
 	bool walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ);
 	int nodeClassifyPoint(const MapData& map, int n, int x, int y, int z);
@@ -116,6 +137,9 @@ private:
 
 	const MediaLoader* media_ = nullptr;
 	const MapData* map_ = nullptr;
+	// Camera of the active begin()/end() batch (billboard corner build +
+	// character sway/bob math read it; borrowed, not owned).
+	const Camera3D* cam_ = nullptr;
 
 	// BSP traversal state (mirrors legacy Render fields).
 	std::vector<int> nodeIdxs_; // visible leaf node indices
@@ -134,6 +158,12 @@ private:
 	// Current bound texture (index + palette) so drawPoly can flush on change.
 	GLuint currentTex_ = 0;
 	GLuint currentPal_ = 0;
+
+	// Active legacy renderMode of the batch (gles renderMode tracker,
+	// src/GLES.cpp:615-622) and whether fog uniforms are currently on; both
+	// are re-initialized in begin() and switched via applyBatchState().
+	int currentRenderMode_ = -1;
+	bool currentFogOn_ = false;
 
 	// Sprite textures keyed by mediaId (RLE-decoded where needed).
 	std::map<int, Texture> spriteTexByMedia_;

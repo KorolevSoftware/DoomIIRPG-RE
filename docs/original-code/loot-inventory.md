@@ -136,6 +136,15 @@ too — the loot lands in their future corpse.
 - Per-frame `lootingState()` drives crouch camera lerp, plays sound 1055 once settled
   (`src/LootingSystem.cpp:35-83`, sound at `:62-65`); stand-up ends with
   `setState(ST_PLAYING); app->game->advanceTurn()` (`:79-81`).
+- **Loot-crouch camera** (details: `docs/research/2026-08-25-camera-pitch-loot.md`): not a
+  cutscene — `lootingState()` rewrites `viewX/Y/Z/viewPitch` every frame and calls
+  `updateView()` (`src/LootingSystem.cpp:47-59,:67-78`). Two 500 ms phases; crouch slides
+  the eye 48 u forward, drops it +36→+26 above blended floor, and pitches
+  `cachedPitch → cachedPitch−64` (22.5° down @ 1024/circle, clamped ≥ −64); stand-up is
+  the mirror. `cachedPitch = canvas->destPitch` captured at `setState(ST_LOOTING)`
+  (`src/Canvas.cpp:1142-1143`). FOV widens by |pitch| in projection
+  (`src/TinyGL.cpp:199`). Pitch positive = up (slope target from
+  `src/MovementController.cpp:273`, clamp ±64 at :275-280).
 - Input: `InputEventController` routes to `handleLootingEvents` while ST_LOOTING
   (`src/InputEventController.cpp:432-434`; touch → `handleEvent(6)` `src/TouchController.cpp:29-31`).
   FIRE pages 3 lines at a time; on last page (or BACK/PASSTURN) closes and **then** grants

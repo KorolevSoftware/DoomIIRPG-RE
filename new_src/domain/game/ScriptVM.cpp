@@ -634,6 +634,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->startTime = env_.game->clockMs();
 			ls->travelTime = time;
 			ls->flags = lsFlags & Enums::SCRIPT_LS_FLAG_ASYNC_BLOCK;   // scriptBits&3 (:377)
+			ls->calcDist();                        // walk-phase distance (src/ScriptThread.cpp:378)
 			// TEMP [dbg] lerp audit (remove after bugs #1/#2 verified)
 			std::fprintf(stderr, "[dbg] LERPSPRITE spr=%d src=%d,%d,%d dst=%d,%d,%d t=%dms flags=%d\n",
 				sprite, ls->srcX, ls->srcY, ls->srcZ, ls->dstX, ls->dstY, ls->dstZ, time, lsFlags);
@@ -675,6 +676,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->startTime = env_.game->clockMs();
 			ls->travelTime = time;
 			ls->flags = lsFlags & 0x3;
+			ls->calcDist();                        // walk-phase distance (src/ScriptThread.cpp:1417)
 			// TEMP [dbg] lerp audit (remove after bugs #1/#2 verified)
 			std::fprintf(stderr, "[dbg] LERPOFFSET spr=%d src=%d,%d,%d dst=%d,%d,%d t=%dms flags=%d\n",
 				sprite, ls->srcX, ls->srcY, ls->srcZ, ls->dstX, ls->dstY, ls->dstZ, time, lsFlags);
@@ -1101,6 +1103,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->startTime = env_.game->clockMs();
 			ls->travelTime = timeMs;
 			ls->flags = lsFlags & 0x3;
+			ls->calcDist();                        // position held => dist 0 (src/ScriptThread.cpp:1683)
 			std::fprintf(stderr, "[script] LERPSCALE sprite=%d dstScale=%d t=%dms flags=%d\n",
 				sprite, ls->dstScale, timeMs, lsFlags);
 			if (timeMs == 0) {
@@ -1154,6 +1157,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->startTime = env_.game->clockMs();
 			ls->travelTime = timeMs;
 			ls->flags = (lsFlags & 0x3) | Game::SpriteLerp::kFlagParabola;   // (:1684-1685)
+			ls->calcDist();                        // walk-phase distance (src/ScriptThread.cpp:1994)
 			std::fprintf(stderr, "[script] %s sprite=%d tile=%d,%d h=%d t=%dms flags=%d\n",
 				op == Enums::EV_LERPSPRITEPARABOLA ? "LERPSPRITEPARABOLA"
 				                                   : "LERPSPRITEPARABOLA_SCALE",

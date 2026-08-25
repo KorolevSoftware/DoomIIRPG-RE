@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "domain/game/Enums.h"
@@ -90,12 +91,45 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	for (auto& d : openDoors_) d = nullptr;
 	for (auto& ls : spriteLerps_) ls.hSprite = 0;
 
+	// Load-time AUTO_ANIMATE injection (src/Game.cpp:374-397): raw maps carry
+	// no animation bits — OBJ_FIRE 130 / TORCHIERE 136 / ANIM_FIRE 234 get
+	// 0x80000 plus the frame count in bits 8-15. Counts are the mediaMappings
+	// ranges, verified against tmp_newMappings.bin: 130 -> 726..730 = 4,
+	// 136 -> 736..737 = 1; ANIM_FIRE 234 is forced to 4 (src/Game.cpp:380-382).
+	for (int i = 0; i < map.numSprites; ++i) {
+		const int info = map.mapSpriteInfo[i];
+		int tileNum = info & 0xFF;
+		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
+		int frameCount;
+		if (tileNum == 130 || tileNum == 234) frameCount = 4;
+		else if (tileNum == 136)              frameCount = 1;
+		else continue;
+		map.mapSpriteInfo[i] = (info & 0xFFFF00FF) | (frameCount << 8) | 0x80000;
+	}
+
+	// Per-sprite render mode (src/Render.cpp:2459-2495 postProcessSprites):
+	// effective tileNum (+257 for wall-tile sprites) selects the blend mode,
+	// written to S_RENDERMODE; everything else stays RENDER_NORMAL.
+	for (int i = 0; i < map.numSprites; ++i) {
+		const int info = map.mapSpriteInfo[i];
+		int tileNum = info & 0xFF;
+		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
+		int mode = 0;
+		if (tileNum == 208 || tileNum == 234 || tileNum == 130 ||
+		    tileNum == 242 || tileNum == 178 || tileNum == 236) mode = 3; // RENDER_ADD
+		else if (tileNum == 212) mode = 7;                                // RENDER_SUB
+		else if (tileNum == 161) mode = 2;                                // BLEND50
+		else if (tileNum == 244) mode = 4;                                // ADD75
+		map.mapSprites[i + 3 * map.numSprites] = (int16_t)mode;
+	}
+
 	// Create entities from TILE-flagged sprites whose tileNum+257 resolves to
-	// a door (271-278), plus monster/corpse sprites so script loot opcodes
-	// and the pickup path have targets (legacy loadMapEntities gives every
-	// sprite an entity, src/Game.cpp:374-452; the rewrite limits itself to
-	// the families that participate in gameplay this phase — items/decor
-	// would change traceMove blocking).
+	// a door (271-278), plus monster/NPC/corpse sprites so script loot
+	// opcodes, the pickup path and the stacked-character renderer have
+	// targets (legacy loadMapEntities gives every sprite an entity,
+	// src/Game.cpp:374-452; the rewrite limits itself to the families that
+	// participate in gameplay this phase — items/decor would change
+	// traceMove blocking).
 	int nextSlot = 2; // entities[0]=world, entities[1]=player (reserved)
 	for (int i = 0; i < map.numSprites; ++i) {
 		if (nextSlot >= kEntities) break;
@@ -107,7 +141,8 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		if (!def) continue;
 		if (def->eType == Enums::ET_DOOR) {
 			if (tileNum < Enums::TILENUM_FIRST_DOOR || tileNum > Enums::TILENUM_LAST_DOOR) continue;
-		} else if (def->eType != Enums::ET_MONSTER && def->eType != Enums::ET_CORPSE) {
+		} else if (def->eType != Enums::ET_MONSTER && def->eType != Enums::ET_CORPSE &&
+		           def->eType != Enums::ET_NPC) {
 			continue;
 		}
 
@@ -120,13 +155,20 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 			// Placed corpse props spawn with info |= 0x420000
 			// (src/Entity.cpp:96-98); generalized to every monster/corpse.
 			e.info |= Entity::kInfoActive | Entity::kInfoActivated;
-			populateDefaultLootSet(e);
+			// ET_NPC construction sets param = 1 -> chat-icon overhead in
+			// legacy (src/Entity.cpp:99-101); the icon itself is not rendered
+			// this cycle (spec 2026-08-25-character-animation §1 elision).
+			// Loot sets exist only for monsters/corpses
+			// (src/Entity.cpp:103-111).
+			if (def->eType == Enums::ET_NPC) e.param = 1;
+			else populateDefaultLootSet(e);
 		}
 		int x = map.mapSprites[i + 0 * map.numSprites];
 		int y = map.mapSprites[i + 1 * map.numSprites];
 		linkEntity(&e, x >> 6, y >> 6);
 		fprintf(stderr, "%s entity sprite=%d tile=%d (%d,%d) sub=%d loot=[%X %X %X]\n",
-			def->eType == Enums::ET_DOOR ? "DOOR" : "BODY",
+			def->eType == Enums::ET_DOOR ? "DOOR" :
+			def->eType == Enums::ET_NPC ? "NPC" : "BODY",
 			i, tileNum, x >> 6, y >> 6, def->eSubType,
 			e.lootSet[0], e.lootSet[1], e.lootSet[2]);
 	}
@@ -174,6 +216,11 @@ bool Game::performDoorEvent(int n, Entity* door, int n2, ScriptThread* ownerThre
 	bool family = doorFamilyTile(tileNum); // b3
 
 	bool linked = (door->info & Entity::kInfoLinked) != 0;
+	std::fprintf(stderr,
+		"[dbg] doorEvent spr=%d n=%d n2=%d owner=%d isDoor=%d type=%d sub=%d linked=%d family=%d\n",
+		sprite, n, n2, ownerThread != nullptr, door->isDoor(),
+		door->def ? door->def->eType : -1, door->def ? door->def->eSubType : -1,
+		linked ? 1 : 0, family ? 1 : 0); // TEMP [dbg]
 	if (n == 0 && !linked && family) {
 		// Already fully open: just keep it registered for auto-close, no new
 		// animation (src/Game.cpp:1062-1065).
@@ -206,7 +253,11 @@ bool Game::performDoorEvent(int n, Entity* door, int n2, ScriptThread* ownerThre
 			if (!a.active && !doorRegistered(a.door)) { slot = &a; break; }
 		}
 	}
-	if (!slot) return false;
+	if (!slot) {
+		std::fprintf(stderr, "[dbg] doorEvent spr=%d NO SLOT -> abort\n", sprite); // TEMP [dbg]
+		return false;
+	}
+	int slotIdx = (int)(slot - doorAnims_); // TEMP [dbg]
 
 	int sx = map_->mapSprites[sprite + 0 * map_->numSprites]; // S_X (canvas units)
 	int sy = map_->mapSprites[sprite + 1 * map_->numSprites]; // S_Y
@@ -258,6 +309,8 @@ bool Game::performDoorEvent(int n, Entity* door, int n2, ScriptThread* ownerThre
 		slot->t = slot->dur;
 		updateDoors();
 	}
+	std::fprintf(stderr, "[dbg] doorEvent spr=%d started slot=%d linked=%d\n",
+		sprite, slotIdx, (door->info & Entity::kInfoLinked) != 0 ? 1 : 0); // TEMP [dbg]
 	return true;
 }
 
@@ -564,6 +617,19 @@ void Game::corpsifyMonster(Entity* e, int x, int y) {
 	if (s < 0 || s >= map_->numSprites) return;
 	int n = map_->numSprites;
 
+	// snapLerpSprites(sprite) analog (src/ScriptThread.cpp:2250 -> src/
+	// Game.cpp:1149-1166): force-complete any active lerp of this sprite so
+	// its per-tick position writes + relink and its completion snap can no
+	// longer fight the corpse placement below. Owner-thread resume omitted:
+	// MAKE_CORPSE runs mid-dispatch of some thread and re-entrant run() is
+	// unsafe in the rewrite VM.
+	for (SpriteLerp& ls : spriteLerps_) {
+		if (ls.hSprite != s + 1) continue;
+		ls.startTime = 0;                          // (:1159-1160)
+		ls.travelTime = 0;
+		updateLerpSprite(&ls);                     // zero travel -> completion snap + free
+	}
+
 	// Visual death state: anim/frame overlay bits 8-14 = 0x7000, low byte
 	// keeps the original art tileNum (src/ScriptThread.cpp:2253-2255).
 	map_->mapSpriteInfo[s] = (map_->mapSpriteInfo[s] & 0xFFFE00FF) | 0x7000;
@@ -590,6 +656,13 @@ void Game::corpsifyMonster(Entity* e, int x, int y) {
 
 	// Relink at the new tile (:2264-2265). checkMonsterDeath sound omitted.
 	linkEntity(e, x >> 6, y >> 6);
+	// TEMP [dbg] corpsify audit (remove after user confirms): exactly ONE
+	// solid blocker (this linked corpse) must remain on the tile.
+	std::fprintf(stderr,
+		"[dbg] corpsify spr=%d tile=%d,%d linked=%d corpse=%d anim=0x%X\n",
+		s, x >> 6, y >> 6, (e->info & Entity::kInfoLinked) != 0 ? 1 : 0,
+		(e->info & Entity::kInfoCorpse) != 0 ? 1 : 0,
+		map_->mapSpriteInfo[s] & 0xFF00);
 }
 
 // See Game.h. Adjacent-tile stand-in for the legacy one-tile trace distance
@@ -764,6 +837,50 @@ int Game::eventFlagForDirection(int dx, int dy) {
 
 // ---- Script sprite lerps (docs/original-code/lerp-opcodes.md) ----
 
+// Exact integer square root (bit-pair method); the legacy FixedSqrt
+// approximation is irrelevant here — the phase quantizes at >>12.
+static int64_t isqrt64(int64_t v) {
+	if (v <= 0) return 0;
+	int64_t res = 0;
+	int64_t bit = 1LL << 62;
+	while (bit > v) bit >>= 2;
+	while (bit != 0) {
+		if (v >= res + bit) {
+			v -= res + bit;
+			res = (res >> 1) + bit;
+		} else {
+			res >>= 1;
+		}
+		bit >>= 2;
+	}
+	return res;
+}
+
+void Game::SpriteLerp::calcDist() {
+	int64_t dx = dstX - srcX;
+	int64_t dy = dstY - srcY;
+	// Legacy dist = sqrt(S) exactly: FixedSqrt shifts v<<=8 internally
+	// (src/Game.cpp:3636-3641), so <<16 here cancels its >>8 result shift.
+	dist = (int)(isqrt64(((int64_t)dx * dx + (int64_t)dy * dy) << 16) >> 8);
+}
+
+// src/Game.cpp:3596-3628 with b=true: thresholds ±32, result <<7.
+int Game::vecToDir(int dx, int dy) {
+	int dir = -1;
+	if (dx <= -32) dir = 4;
+	else if (dx >= 32) dir = 0;
+	if (dy >= 32) {
+		if (dir == 4) dir = 5;
+		else if (dir == 0) dir = 7;
+		else dir = 6;
+	} else if (dy <= -32) {
+		if (dir == 4) dir = 3;
+		else if (dir == 0) dir = 1;
+		else dir = 2;
+	}
+	return dir << 7;
+}
+
 // Pool lookup (src/Game.cpp:3028-3066): a still-active lerp for the same
 // sprite reuses its slot, otherwise the first free slot is taken. Legacy
 // also resets monster anim state on reuse — no EntityMonster here.
@@ -785,6 +902,21 @@ Game::SpriteLerp* Game::allocLerpSprite(ScriptThread* thread, int sprite, bool b
 	if (reuse == nullptr) {
 		*ls = SpriteLerp{};
 		ls->hSprite = sprite + 1;
+	} else {
+		// Alloc-side idle reset of a stale pose (src/Game.cpp:3049-3063).
+		// ls->flags still holds the OLD slot flags here — the async/block
+		// bits are OR'd in below, matching legacy read order.
+		Entity* ent = findEntityBySprite(sprite);
+		if (ent != nullptr && ent->def != nullptr &&
+		    (ent->def->eType == Enums::ET_NPC || ent->def->eType == Enums::ET_MONSTER)) {
+			int n3 = (map_->mapSpriteInfo[sprite] >> 8) & 0xF0;
+			n3 = (n3 == Enums::MANIM_WALK_FRONT || (ls->flags & SpriteLerp::kFlagAutoFace))
+			         ? Enums::MANIM_IDLE
+			     : (n3 == Enums::MANIM_WALK_BACK) ? Enums::MANIM_IDLE_BACK
+			                                      : n3;
+			map_->mapSpriteInfo[sprite] =
+				(map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | (n3 << 8);
+		}
 	}
 	if (thread == nullptr) ls->flags |= SpriteLerp::kFlagAsync; // (:3068-3070)
 	if (block) flags |= SpriteLerp::kFlagAnimatingEffect;       // (:3071-3074);
@@ -855,8 +987,44 @@ int Game::updateLerpSprite(SpriteLerp* ls) {
 		}
 	}
 
-	// Per-tick relinkSprite analog: keep a LINKED entity on its tile.
+	// Walk-state writer (src/Game.cpp:2903-2944): distance-driven anim byte
+	// for NPC/monster sprites. The monster half stays dormant until the
+	// EntityMonster unit enables stacked monster rendering (ADR 0005).
 	Entity* ent = findEntityBySprite(sprite);
+	if (ent != nullptr && ent->def != nullptr &&
+	    !(map_->mapSpriteInfo[sprite] & Enums::SPRITE_FLAG_HIDDEN) &&
+	    (ent->def->eType == Enums::ET_NPC || ent->def->eType == Enums::ET_MONSTER)) {
+		int info = map_->mapSpriteInfo[sprite];
+		int anim = ((info & 0xFF00) >> 8) & Enums::MANIM_MASK;
+		int dx = ls->dstX - ls->srcX;
+		int dy = ls->dstY - ls->srcY;
+
+		if ((anim == Enums::MANIM_IDLE || anim == Enums::MANIM_WALK_FRONT ||
+		     (anim == Enums::MANIM_WALK_BACK && (ls->flags & SpriteLerp::kFlagAutoFace) != 0)) &&
+		    (dx | dy) != 0) {
+			// NO angle-wrap normalization — verbatim legacy (:2910).
+			int delta = std::abs((lerpViewAngle_ & 0x3FF) - vecToDir(dx, dy));
+			// tileDistances[1] = (64*2)^2 = 16384: ">1 tile" Chebyshev test
+			// (src/Combat.cpp:42, src/Game.cpp:2911).
+			if (std::max(dx * dx, dy * dy) >= 16384 && delta < 256) {
+				anim = Enums::MANIM_WALK_BACK;
+				ls->flags |= SpriteLerp::kFlagAutoFace;    // :2912-2913
+			} else {
+				anim = Enums::MANIM_WALK_FRONT;            // :2916
+			}
+		} else if (anim == Enums::MANIM_IDLE_BACK) {
+			anim = Enums::MANIM_WALK_BACK;                 // :2919-2921
+		}
+
+		if (anim == Enums::MANIM_WALK_FRONT || anim == Enums::MANIM_WALK_BACK) {
+			// Boss footstep-sound tail (:2925-2941) omitted.
+			int phase = (1 + ((p * ls->dist) >> 12)) & 3;  // 1 cycle per tile
+			map_->mapSpriteInfo[sprite] =
+				((info & 0xFFFF00FF) | ((phase | anim) << 8));   // :2943
+		}
+	}
+
+	// Per-tick relinkSprite analog: keep a LINKED entity on its tile.
 	if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0) {
 		int tx = x >> 6, ty = y >> 6;
 		if ((ent->linkIndex % 32) != tx || (ent->linkIndex / 32) != ty) {
@@ -882,6 +1050,19 @@ void Game::freeLerpSprite(SpriteLerp* ls) {
 		if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0 &&
 		    ((ent->linkIndex % 32) != (ls->dstX >> 6) || (ent->linkIndex / 32) != (ls->dstY >> 6))) {
 			linkEntity(ent, ls->dstX >> 6, ls->dstY >> 6);
+		}
+		// Completion idle restore (src/Game.cpp:3101-3111): back-facing walks
+		// without AUTO_FACE park in IDLE_BACK, everything else in IDLE.
+		if (ent != nullptr && ent->def != nullptr &&
+		    !(map_->mapSpriteInfo[sprite] & Enums::SPRITE_FLAG_HIDDEN) &&
+		    (ent->def->eType == Enums::ET_NPC || ent->def->eType == Enums::ET_MONSTER)) {
+			int n5 = (map_->mapSpriteInfo[sprite] >> 8) & 0xF0;
+			int restore = (n5 == Enums::MANIM_IDLE_BACK || n5 == Enums::MANIM_WALK_BACK) &&
+			                  !(ls->flags & SpriteLerp::kFlagAutoFace)
+			              ? 0x1000
+			              : 0x0000;
+			map_->mapSpriteInfo[sprite] =
+				(map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | restore;
 		}
 	}
 	ls->hSprite = 0;
@@ -912,6 +1093,9 @@ void Game::updateDoors() {
 			if (a.door) {
 				if (a.opening) {
 					unlinkDoor(a.door); // door fully open: passable (src/Game.cpp:3131)
+					std::fprintf(stderr,
+						"[dbg] doorDone spr=%d OPEN unlinked=%d\n", a.sprite,
+						(a.door->info & Entity::kInfoLinked) != 0 ? 0 : 1); // TEMP [dbg]
 				} else if (map_ && a.sprite >= 0) {
 					// Close completed: texture frame back to 0 and clear the
 					// DOORLERP bit (src/Game.cpp:3120-3125). The door was

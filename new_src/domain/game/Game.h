@@ -42,13 +42,13 @@ public:
 	static constexpr int kMaxLerpSprites = 16;   // pool size (src/Game.cpp:3028)
 
 	// One active script lerp; subset of legacy LerpSprite (save/load,
-	// TRUNC/chicken/door/secret tails and monster anim frames are not
-	// ported).
+	// TRUNC/chicken/door/secret tails are not ported).
 	struct SpriteLerp {
 		// Runtime flag bits (src/Enums.h:293-295 subset).
 		static constexpr int kFlagAsync = 0x1;
 		static constexpr int kFlagAnimatingEffect = 0x2;
 		static constexpr int kFlagParabola = 0x4;
+		static constexpr int kFlagAutoFace = 0x800;   // LS_FLAG_AUTO_FACE (src/Enums.h:295)
 
 		int hSprite = 0;          // sprite+1; 0 = free slot (src/Game.cpp:3030)
 		ScriptThread* ownerThread = nullptr;
@@ -59,6 +59,11 @@ public:
 		int srcScale = 64, dstScale = 64;
 		int height = 0;           // parabola arc peak (canvas z units)
 		int flags = 0;            // SpriteLerp::kFlag* bits
+		int dist = 0;             // Euclidean move length, canvas units
+
+		// dist = isqrt((dx²+dy²)<<8) >> 8 (src/LerpSprite.cpp:48); feeds the
+		// distance-driven walk phase ((1+(p*dist>>12))&3, one cycle per tile).
+		void calcDist();
 	};
 
 	// Pool lookup mirroring allocLerpSprite (src/Game.cpp:3028-3066): reuse
@@ -85,6 +90,16 @@ public:
 	// 1024-entry fixed-point sine table for the parabola arc (sin << 14);
 	// wired once after construction.
 	void setSinTable(const std::vector<int32_t>* sinTable) { sinTable_ = sinTable; }
+
+	// View angle used by the walk-state writer's front/back chooser. Fed by
+	// GameContext each tick (maya pose during cinematics, else player view) —
+	// reproduces legacy reading app->render->viewAngle, i.e. the previous
+	// frame's view (src/Game.cpp:2910).
+	void setLerpViewAngle(int a) { lerpViewAngle_ = a; }
+
+	// Move vector -> 8-direction angle * 128 with ±32 thresholds
+	// (src/Game.cpp:3596-3628, b=true).
+	static int vecToDir(int dx, int dy);
 
 	// Returns the player entity (entities[1]).
 	Entity* playerEntity() { return entities_.empty() ? nullptr : &entities_[1]; }
@@ -222,6 +237,7 @@ private:
 	// Script sprite lerp pool (legacy Game::lerpSprites[16]).
 	SpriteLerp spriteLerps_[kMaxLerpSprites];
 	int lerpClock_ = 0;
+	int lerpViewAngle_ = 0;                // last render view angle (setLerpViewAngle)
 	const std::vector<int32_t>* sinTable_ = nullptr;
 
 	std::vector<Entity> entities_;

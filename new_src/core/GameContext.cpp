@@ -165,6 +165,13 @@ void GameContext::tick() {
 	// within-tick difference only).
 	if (state == StateId::Playing || state == StateId::InterCamera ||
 	    state == StateId::Camera || state == StateId::Dialog) {
+		// Walk-writer view feed (spec §4): the chooser compares move vectors
+		// against the last rendered view — maya pose during a cinematic key,
+		// else the player view angle (same two sources render() uses,
+		// GameContext.cpp:724-769; legacy read app->render->viewAngle).
+		sys_.game->setLerpViewAngle(activeCameraKey_ >= 0
+		                                ? maya_.pose().yaw
+		                                : sys_.player->viewAngle);
 		sys_.game->update(kTickMs);
 	}
 
@@ -636,11 +643,37 @@ void GameContext::handlePlayingAction(Action a) {
 		sys_.game->abortMove = false;
 		sys_.vm->executeTile(p.viewX >> 6, p.viewY >> 6, sys_.game->eventFlags_[0], true);
 		if (sys_.game->abortMove) break;
-		if (sys_.game->traceMove(*sys_.map, p.viewX, p.viewY, tx, ty,
-			sys_.game->playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16)) {
+		Entity* hitEnt = nullptr; int hitFrac = 0;
+		bool clear = sys_.game->traceMove(*sys_.map, p.viewX, p.viewY, tx, ty,
+			sys_.game->playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16,
+			&hitEnt, &hitFrac);
+		// DEVIATION (blue-door block bug): an ET_NPC whose circle contains
+		// the trace START (frac < 0) is the scripted-greeter overlap state;
+		// legacy dissolves it through the per-turn NPC AI that ADR 0005 has
+		// not ported yet, so until then a start-inside NPC hit never blocks.
+		// Re-trace past that entity so real blockers BEHIND it (a shut door)
+		// still apply.
+		for (int pass = 0; !clear && pass < 4 &&
+		     hitFrac < 0 && hitEnt != nullptr &&
+		     hitEnt->def != nullptr && hitEnt->def->eType == Enums::ET_NPC; ++pass) {
+			std::fprintf(stderr, "[dbg] start-inside NPC spr=%d stepped past\n",
+				hitEnt->getSprite()); // TEMP [dbg]
+			clear = sys_.game->traceMove(*sys_.map, p.viewX, p.viewY, tx, ty,
+				hitEnt, Enums::CONTENTS_PLAYERSOLID, 16, &hitEnt, &hitFrac);
+		}
+		if (clear) {
 			p.attemptMove(tx, ty);
 			p.setDestHeight(getHeight(tx, ty));
 			p.setZStep(p.destZ - p.viewZ);
+		} else {
+			// TEMP [dbg] move-block audit (remove after blue-door bug fixed)
+			std::fprintf(stderr,
+				"[dbg] moveBlocked to %d,%d by spr=%d type=%d linked=%d frac=%d\n",
+				tx >> 6, ty >> 6,
+				hitEnt ? (hitEnt->getSprite()) : -1,
+				(hitEnt && hitEnt->def) ? hitEnt->def->eType : -1,
+				(hitEnt && (hitEnt->info & Entity::kInfoLinked)) != 0 ? 1 : 0,
+				hitFrac);
 		}
 		break;
 	}
@@ -773,13 +806,35 @@ void GameContext::render(AppContext& app) {
 		// Per-sprite sort-bias hooks (src/Render.cpp:856-862): corpse/linked
 		// entities draw nearer (+1), monsters (-1; none exist yet).
 		std::vector<int> spriteSortBias(sys_.map->numSprites, 0);
+		// Stacked-character classification (ADR 0005, spec §1): entity-def
+		// driven — live NPCs, plus corpsified NPCs whose art tile stayed in
+		// the NPC range after the def swap (src/Game.cpp:567-569).
+		std::vector<uint8_t> spriteCharClass(sys_.map->numSprites, 0);
 		for (const Entity& ent : sys_.game->entities()) {
 			int si = ent.getSprite();
 			if (!ent.def || si < 0 || si >= sys_.map->numSprites) continue;
 			if (ent.info & 0x1010000) spriteSortBias[si] = +1;
 			else if (ent.def->eType == Enums::ET_MONSTER) spriteSortBias[si] = -1;
+			if (ent.def->eType == Enums::ET_NPC ||
+			    (ent.def->eType == Enums::ET_CORPSE &&
+			     (sys_.map->mapSpriteInfo[si] & 0xFF) >= Enums::TILENUM_FIRST_NPC &&
+			     (sys_.map->mapSpriteInfo[si] & 0xFF) <= Enums::TILENUM_LAST_NPC)) {
+				spriteCharClass[si] = 1;
+			}
+			// Corpsified monsters keep their character-sheet art tile, so the
+			// death pose must render through the stacked path's MANIM_DEAD
+			// single-corpse-quad branch (src/Render.cpp:3466-3475); the
+			// billboard fallback would clamp frame 0x70 back onto the
+			// standing base frame (bug: "standing imp remains"). Gated on
+			// the died-marker so placed corpse props stay on the billboard
+			// path.
+			else if ((ent.info & Entity::kInfoCorpse) != 0 &&
+			         ((sys_.map->mapSpriteInfo[si] >> 8) & Enums::MANIM_MASK) == Enums::MANIM_DEAD) {
+				spriteCharClass[si] = 1;
+			}
 		}
-		sys_.world->drawBSP(*sys_.map, *sys_.media, camera_, spriteSortBias.data());
+		sys_.world->drawBSP(*sys_.map, *sys_.media, camera_, spriteSortBias.data(),
+		                    spriteCharClass.data());
 	} else {
 		g.fillRect(0, 0, 480, 320, 32, 32, 64);
 	}

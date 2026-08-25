@@ -136,6 +136,30 @@ std::vector<uint8_t> decodeSpriteRLE(const std::vector<uint8_t>& raw, int width,
 
 // Legacy Canvas::viewStepValues: 8 direction vectors (x,y), 45° apart.
 constexpr int kViewStepValues[16] = { 64, 0, 64, -64, 0, -64, -64, -64, -64, 0, -64, 64, 0, 64, 64, 64 };
+
+// Character constants for the stacked-billboard path (src/Enums.h:567-580,
+// :708-719, :830). Kept as local values — render/ must not include
+// domain/game headers (spec 2026-08-25-character-animation §10).
+constexpr int kManimMask = 0xF0;
+constexpr int kMframeMask = 0x0F;
+constexpr int kManimIdle = 0;
+constexpr int kManimIdleBack = 16;
+constexpr int kManimWalkFront = 32;
+constexpr int kManimWalkBack = 48;
+constexpr int kManimAttack1 = 64;
+constexpr int kManimAttack2 = 80;
+constexpr int kManimPain = 96;
+constexpr int kManimDead = 112;
+constexpr int kManimSlap = 128;
+constexpr int kManimNpcTalk = 160;
+constexpr int kManimNpcBackAction = 176;
+constexpr int kTileNumFirstNpc = 65;
+constexpr int kTileNumLastNpc = 80;
+	constexpr int kTileNumNpcRileyOconnor = 66;
+	constexpr int kTileNumNpcScientist = 75;
+	constexpr int kTileNumNpcCivilian2 = 77;
+	constexpr int kTileNumNpcSarge = 72;
+constexpr int kTileNumShadow = 232;
 }
 
 World3D::World3D() = default;
@@ -299,6 +323,7 @@ bool World3D::ensureSpriteTexture(const MediaLoader& media, int tileNum, int med
 }
 
 void World3D::begin(const Camera3D& camera) {
+	cam_ = &camera;
 	// Original GL path (GLES::SetGLState) disables depth test and relies on
 	// painter's algorithm (BSP order + sprite depth sort). Keep depth off.
 	glDisable(GL_DEPTH_TEST);
@@ -321,13 +346,21 @@ void World3D::begin(const Camera3D& camera) {
 	vertexCount_ = 0;
 	currentTex_ = 0;
 	currentPal_ = 0;
+	// begin() set standard alpha blending + fog above; sync the trackers
+	// (applyBatchState early-outs while they match).
+	currentRenderMode_ = 0;
+	currentFogOn_ = fogEnabled_;
 	begun_ = true;
 }
 
 void World3D::end() {
 	flush();
 	glBindVertexArray(0);
+	// Restore the standard blend equation so code outside begin()/end()
+	// never sees an ADD/SUB leftover (src/GLES.cpp:626).
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glDisable(GL_BLEND);
+	currentRenderMode_ = -1;
 	begun_ = false;
 }
 
@@ -341,9 +374,38 @@ void World3D::flush() {
 	vertexCount_ = 0;
 }
 
+// Legacy gles::SetupTexture renderMode switch (src/GLES.cpp:623-715): the
+// blend equation and fog toggle change per sprite mode; a pending batch is
+// flushed first so its vertices draw under their own state.
+void World3D::applyBatchState(int renderMode) {
+	// ADD/SUB run with fog off (fogMode = 0, src/GLES.cpp:651,675); fog is
+	// only ever enabled globally when fogEnabled_ is set.
+	const bool fogOn = (renderMode != 3 && renderMode != 7) && fogEnabled_;
+	if (renderMode == currentRenderMode_ && fogOn == currentFogOn_) return;
+	flush();
+	switch (renderMode) {
+	case 3:  // RENDER_ADD: dst += src (black fire backing adds nothing)
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE);                     // src/GLES.cpp:649
+		break;
+	case 7:  // RENDER_SUB: scorch marks darken
+		glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_COLOR);          // src/GLES.cpp:673
+		break;
+	default: // RENDER_NORMAL / alpha blends
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		break;
+	}
+	shader_.setInt("uFogEnabled", fogOn ? 1 : 0);
+	currentRenderMode_ = renderMode;
+	currentFogOn_ = fogOn;
+}
+
 void World3D::drawPoly(const MapData& map, int polyIdx) {
 	const auto& p = map.polygons[polyIdx];
 	if (p.verts.size() < 3) return;
+
+	// Geometry always composites with standard alpha + global fog; a previous
+	// sprite batch may have left ADD/SUB state active (drawBSP interleaves).
+	applyBatchState(0);
 
 	auto it = textureByTile_.find(p.textureId);
 	GLuint tex = 0, pal = 0;
@@ -511,17 +573,17 @@ void World3D::drawSprites(const MapData& map, const MediaLoader& media, const Ca
 	}
 
 	for (int i : order) {
-		drawSprite(map, media, camera, i);
+		drawSprite(map, media, camera, i, nullptr);
 	}
 	end();
 }
 
-// Renders one map sprite (billboard or wall decal). Must be called between
-// begin()/end(). No depth test: correct ordering is ensured by the caller
-// (drawSprites sorts by mvp depth; drawBSP interleaves per leaf).
-void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Camera3D& camera, int i) {
+// Renders one map sprite (billboard, stacked character, or wall decal). Must
+// be called between begin()/end(). No depth test: correct ordering is ensured
+// by the caller (drawSprites sorts by mvp depth; drawBSP interleaves per leaf).
+void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Camera3D& camera, int i,
+	const uint8_t* charClass) {
 	const int n = map.numSprites;
-	const int* st = camera.viewInt(); // 14.14 view matrix (row-major)
 	int info = map.mapSpriteInfo[i];
 
 	int tileNum = info & 0xFF;
@@ -529,6 +591,20 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	// renderSpriteObject adds 257 to map tileNum into the wall range (271-278
 	// are doors). Monsters/pickups never carry this bit.
 	if (info & 0x400000) tileNum += 257;
+
+	// Blend/fog state for this sprite's legacy renderMode (S_RENDERMODE),
+	// applied BEFORE any emission so characters inherit a sane state too.
+	const int renderMode = map.mapSprites[i + 3 * n];
+	applyBatchState(renderMode);
+
+	// Stacked-character path (ADR 0005): tested BEFORE the AUTO_ANIMATE frame
+	// override so bits 8-15 can never be double-consumed (spec §1). Exclusive
+	// of doors/walls by construction: classified sprites carry no TILE flag.
+	if (charClass != nullptr && charClass[i] != 0) {
+		drawCharacter(map, media, i);
+		return;
+	}
+
 	int frame = (info >> 8) & 0xFF;
 	// AUTO_ANIMATE (0x80000): frame cycles over time; the stored value is the
 	// number of frames (legacy renderSpriteObject:1544-1546).
@@ -540,9 +616,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	int x = map.mapSprites[i + 0 * n];
 	int y = map.mapSprites[i + 1 * n];
 	int z = map.mapSprites[i + 2 * n] << 4;
-	int renderMode = map.mapSprites[i + 3 * n];
 	int scaleFactor = map.mapSprites[i + 8 * n] << 10;
-	(void)renderMode;
 
 	// Legacy postProcessSprites adds terrain height to the sprite Z so it
 	// stands on the floor (Z stored in byte*8 units, like X/Y coords).
@@ -573,45 +647,8 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	auto it = spriteTexByMedia_.find(mediaId);
 	if (it == spriteTexByMedia_.end()) return;
 
-	// Image bounds for UVs and billboard size. Legacy (Render.cpp:461/492)
-	// uses bounds-based UVs/size when the sprite has the TILE flag (0x400000)
-	// OR the texture is raw (Size == w*h). Otherwise (RLE, no TILE) it uses
-	// full-texture UVs with a fixed 518/1036 size and crops to 176 rows
-	// (DrawWorldSpaceSpriteLine:176).
-	bool isRle = spriteIsRle_.count(mediaId) ? spriteIsRle_[mediaId] : false;
-	bool useBounds = (info & 0x400000) != 0 || !isRle;
-	int n13, n14, n15, n16, n19, n20;
-	int sWidth = 1024, tHeight = 1024;
-	if (useBounds) {
-		int16_t b[4] = {
-			(int16_t)(m.bounds[mediaId * 4 + 0]),
-			(int16_t)(m.bounds[mediaId * 4 + 1]),
-			(int16_t)(m.bounds[mediaId * 4 + 2]),
-			(int16_t)(m.bounds[mediaId * 4 + 3]),
-		};
-		int wb = (media.mappings().dimensions[mediaId] >> 4) & 0xF;
-		int hb = media.mappings().dimensions[mediaId] & 0xF;
-		sWidth = 1 << wb;
-		tHeight = 1 << hb;
-		int n11 = b[1] - b[0];
-		int n12 = b[3] - b[2];
-		n13 = (b[0] << 10) / sWidth;
-		n14 = (n11 << 10) / sWidth;
-		n15 = ((tHeight - b[3]) << 10) / tHeight;
-		n16 = (n12 << 10) / tHeight;
-		n19 = ((((n11 >> 2) << 4) + 7) * scaleFactor) / 0x10000;
-		n20 = ((((n12 >> 1) << 4) + 7) * scaleFactor) / 0x10000;
-	} else {
-		int wb = (media.mappings().dimensions[mediaId] >> 4) & 0xF;
-		int hb = media.mappings().dimensions[mediaId] & 0xF;
-		sWidth = 1 << wb;
-		tHeight = 1 << hb;
-		n13 = 0; n14 = 1024; n15 = 0; n16 = 1024;
-		n19 = (518 * scaleFactor) / 0x10000;
-		n20 = (1036 * scaleFactor) / 0x10000;
-	}
-
-	// Flush on texture change.
+	// Flush on texture change (wall branch binds here; billboard quads bind
+	// inside drawBillboardPart — idempotent when unchanged).
 	GLuint tex = it->second.id();
 	GLuint pal = it->second.paletteId();
 	if (currentTex_ != tex || currentPal_ != pal) {
@@ -629,70 +666,8 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	// decals AND TILE sprites (doors 271-278, wall decorations) use the wall
 	// branch. Monsters/pickups have no such flags -> billboards.
 	const bool isWall = (info & 0x2F000000) != 0;
-
 	if (!isWall) {
-		// ---- Billboard (flags & 0x2F000000) == 0 ----
-		// Legacy: z -= 512; position nudged back by n17 (10 raw, 12 RLE).
-		z -= 512;
-		int n17 = isRle ? 12 : 10;
-		// viewSin/viewCos come from the sine table (NOT the view matrix!).
-		const int32_t* sinTbl = camera.sinTable();
-		int yaw = camera.viewYaw() & 0x3FF;
-		int viewSin = sinTbl[yaw];
-		int viewCos = sinTbl[(yaw + 256) & 0x3FF];
-		x -= n17 * viewCos >> 16;
-		y += n17 * viewSin >> 16;
-		// Crates sit lower (legacy renderSprite:476-478).
-		if (tileNum == 152 /* TILENUM_OBJ_CRATE */) z -= 224;
-
-		// Four billboard corners (viewMtxMove: right += view[i]*n2>>14,
-		// up: n3=-n3). view_ row0=(view[0],view[4],view[8]) right axis,
-		// row1=(view[1],view[5],view[9]) up axis (14.14).
-		float wx[4], wy[4], wz[4];
-		for (int ci = 0; ci < 4; ++ci) {
-			int n21 = (ci & 2) >> 1;
-			int n22 = (ci & 1) ^ n21 ^ 1;
-			float px = (float)(x << 4);
-			float py = (float)(y << 4);
-			float pz = (float)(z - 84);
-
-			int n2 = (n22 * 2 - 1) * n19;
-			int m3 = -(n21 * n20);
-			px += (st[0] * n2 + st[1] * m3) * k1;
-			py += (st[4] * n2 + st[5] * m3) * k1;
-			pz += (st[8] * n2 + st[9] * m3) * k1;
-			wx[ci] = px; wy[ci] = py; wz[ci] = pz;
-		}
-
-		Vertex quad[4];
-		for (int ci = 0; ci < 4; ++ci) {
-			int n21 = (ci & 2) >> 1;
-			int n22 = (ci & 1) ^ n21 ^ 1;
-			float s, t;
-			if (!useBounds) {
-				// GL-path billboard UV override (src/GLES.cpp:515-542): s/t
-				// derive from the corner index; flip tests XOR 0x60000 so the
-				// default (no flags) takes the "flipped" branch, which yields
-				// the NORMAL orientation. Integer math first, then a single
-				// float conversion (as legacy: (s*176)/sWidth then /1024).
-				int sW = (((info ^ 0x60000) & 0x20000) != 0) ? n22 : (n22 ^ 1);
-				int tW = (((info ^ 0x60000) & 0x40000) != 0) ? (n21 ^ 1) : n21;
-				s = (float)(((sW * 1024) * 176) / sWidth) * (1.f / 1024.f);
-				t = (float)(((tW * 1024) * 176) / tHeight) * (1.f / 1024.f);
-			} else {
-				// Bounds-based billboards keep the legacy ClipQuad window UVs
-				// with NO flips (src/Render.cpp:479-493). Vertical flip for
-				// billboards: texel data is top-down but GL v=0 is the bottom
-				// texel row.
-				s = (float)(n13 + n22 * n14) * (1.f / 1024.f);
-				t = 1.f - (float)(n15 + n21 * n16) * (1.f / 1024.f);
-			}
-			quad[ci] = { wx[ci] * k1, wy[ci] * k1, wz[ci] * k1, s, t };
-		}
-		// Fan triangles 0,1,2 and 0,2,3 (matches quad_indexes).
-		Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
-		if (vertices_.size() + 6 > kMaxVerts) flush();
-		vertices_.insert(vertices_.end(), tri, tri + 6);
+		drawBillboardPart(map, media, x, y, z, tileNum, mediaId, info, scaleFactor);
 	} else {
 		// ---- Wall decal / plane (flags & 0x2F000000) != 0 ----
 		// Legacy renderSprite "Wall" branch: quad laid in the wall plane.
@@ -851,6 +826,281 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	}
 }
 
+// One camera-facing billboard quad; extracted verbatim from drawSprite's
+// billboard body (C1a pure refactor). Legacy Render::renderSprite billboard
+// branch (src/Render.cpp:455-513 GL sub-path).
+void World3D::drawBillboardPart(const MapData& map, const MediaLoader& media,
+	int x, int y, int zRenderUnits, int tileNum, int mediaId,
+	int flags, int scaleFactor) {
+	(void)map;
+	auto it = spriteTexByMedia_.find(mediaId);
+	if (it == spriteTexByMedia_.end()) return;
+
+	// Image bounds for UVs and billboard size. Legacy (Render.cpp:461/492)
+	// uses bounds-based UVs/size when the sprite has the TILE flag (0x400000)
+	// OR the texture is raw (Size == w*h). Otherwise (RLE, no TILE) it uses
+	// full-texture UVs with a fixed 518/1036 size and crops to 176 rows
+	// (DrawWorldSpaceSpriteLine:176).
+	bool isRle = spriteIsRle_.count(mediaId) ? spriteIsRle_[mediaId] : false;
+	bool useBounds = (flags & 0x400000) != 0 || !isRle;
+	int n13, n14, n15, n16, n19, n20;
+	int sWidth = 1024, tHeight = 1024;
+	const auto& m = media.mappings();
+	if (useBounds) {
+		int16_t b[4] = {
+			(int16_t)(m.bounds[mediaId * 4 + 0]),
+			(int16_t)(m.bounds[mediaId * 4 + 1]),
+			(int16_t)(m.bounds[mediaId * 4 + 2]),
+			(int16_t)(m.bounds[mediaId * 4 + 3]),
+		};
+		int wb = (media.mappings().dimensions[mediaId] >> 4) & 0xF;
+		int hb = media.mappings().dimensions[mediaId] & 0xF;
+		sWidth = 1 << wb;
+		tHeight = 1 << hb;
+		int n11 = b[1] - b[0];
+		int n12 = b[3] - b[2];
+		n13 = (b[0] << 10) / sWidth;
+		n14 = (n11 << 10) / sWidth;
+		n15 = ((tHeight - b[3]) << 10) / tHeight;
+		n16 = (n12 << 10) / tHeight;
+		n19 = ((((n11 >> 2) << 4) + 7) * scaleFactor) / 0x10000;
+		n20 = ((((n12 >> 1) << 4) + 7) * scaleFactor) / 0x10000;
+	} else {
+		int wb = (media.mappings().dimensions[mediaId] >> 4) & 0xF;
+		int hb = media.mappings().dimensions[mediaId] & 0xF;
+		sWidth = 1 << wb;
+		tHeight = 1 << hb;
+		n13 = 0; n14 = 1024; n15 = 0; n16 = 1024;
+		n19 = (518 * scaleFactor) / 0x10000;
+		n20 = (1036 * scaleFactor) / 0x10000;
+	}
+
+	// Flush on texture change (no-op when the caller pre-bound this texture).
+	GLuint tex = it->second.id();
+	GLuint pal = it->second.paletteId();
+	if (currentTex_ != tex || currentPal_ != pal) {
+		flush();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, tex);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, pal);
+		currentTex_ = tex;
+		currentPal_ = pal;
+	}
+
+	const float k1 = 1.f / 16384.f;
+	const int* st = cam_ ? cam_->viewInt() : nullptr;
+	if (!st) return;
+	int z = zRenderUnits;
+	// Legacy: z -= 512; position nudged back by n17 (10 raw, 12 RLE).
+	z -= 512;
+	int n17 = isRle ? 12 : 10;
+	// viewSin/viewCos come from the sine table (NOT the view matrix!).
+	const int32_t* sinTbl = cam_->sinTable();
+	int yaw = cam_->viewYaw() & 0x3FF;
+	int viewSin = sinTbl[yaw];
+	int viewCos = sinTbl[(yaw + 256) & 0x3FF];
+	x -= n17 * viewCos >> 16;
+	y += n17 * viewSin >> 16;
+	// Crates sit lower (legacy renderSprite:476-478).
+	if (tileNum == 152 /* TILENUM_OBJ_CRATE */) z -= 224;
+
+	// Four billboard corners (viewMtxMove: right += view[i]*n2>>14,
+	// up: n3=-n3). view_ row0=(view[0],view[4],view[8]) right axis,
+	// row1=(view[1],view[5],view[9]) up axis (14.14).
+	float wx[4], wy[4], wz[4];
+	for (int ci = 0; ci < 4; ++ci) {
+		int n21 = (ci & 2) >> 1;
+		int n22 = (ci & 1) ^ n21 ^ 1;
+		float px = (float)(x << 4);
+		float py = (float)(y << 4);
+		float pz = (float)(z - 84);
+
+		int n2 = (n22 * 2 - 1) * n19;
+		int m3 = -(n21 * n20);
+		px += (st[0] * n2 + st[1] * m3) * k1;
+		py += (st[4] * n2 + st[5] * m3) * k1;
+		pz += (st[8] * n2 + st[9] * m3) * k1;
+		wx[ci] = px; wy[ci] = py; wz[ci] = pz;
+	}
+
+	Vertex quad[4];
+	for (int ci = 0; ci < 4; ++ci) {
+		int n21 = (ci & 2) >> 1;
+		int n22 = (ci & 1) ^ n21 ^ 1;
+		float s, t;
+		if (!useBounds) {
+			// GL-path billboard UV override (src/GLES.cpp:515-542): s/t
+			// derive from the corner index; flip tests XOR 0x60000 so the
+			// default (no flags) takes the "flipped" branch, which yields
+			// the NORMAL orientation. Integer math first, then a single
+			// float conversion (as legacy: (s*176)/sWidth then /1024). This
+			// override is also what applies the 0x20000 H-flip used by the
+			// walk-cycle leg mirroring.
+			int sW = (((flags ^ 0x60000) & 0x20000) != 0) ? n22 : (n22 ^ 1);
+			int tW = (((flags ^ 0x60000) & 0x40000) != 0) ? (n21 ^ 1) : n21;
+			s = (float)(((sW * 1024) * 176) / sWidth) * (1.f / 1024.f);
+			t = (float)(((tW * 1024) * 176) / tHeight) * (1.f / 1024.f);
+		} else {
+			// Bounds-based billboards keep the legacy ClipQuad window UVs
+			// with NO flips (src/Render.cpp:479-493). Vertical flip for
+			// billboards: texel data is top-down but GL v=0 is the bottom
+			// texel row.
+			s = (float)(n13 + n22 * n14) * (1.f / 1024.f);
+			t = 1.f - (float)(n15 + n21 * n16) * (1.f / 1024.f);
+		}
+		quad[ci] = { wx[ci] * k1, wy[ci] * k1, wz[ci] * k1, s, t };
+	}
+	// Fan triangles 0,1,2 and 0,2,3 (matches quad_indexes).
+	Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
+	if (vertices_.size() + 6 > kMaxVerts) flush();
+	vertices_.insert(vertices_.end(), tri, tri + 6);
+}
+
+// Stacked leg/torso/head character renderer. NPC-subset port of legacy
+// Render::renderSpriteAnim (src/Render.cpp:3144-3488); monster-only family
+// routing is deferred to EntityMonster (ADR 0005). Emission order gives the
+// painter stacking: shadow first, then legs -> torso -> head.
+void World3D::drawCharacter(const MapData& map, const MediaLoader& media, int i) {
+	const int n = map.numSprites;
+	const int info = map.mapSpriteInfo[i];
+	const int tileNum = info & 0xFF;              // characters never carry 0x400000
+	const int animByte = (info >> 8) & 0xFF;      // ONE packed state byte
+	const int anim = animByte & kManimMask;
+	const int frame = animByte & kMframeMask;
+	int x = map.mapSprites[i + 0 * n];
+	int y = map.mapSprites[i + 1 * n];
+	int zR = map.mapSprites[i + 2 * n] << 4;
+	const int scaleFactor = map.mapSprites[i + 8 * n] << 10;
+
+	// Terrain add of the drawSprite preamble (World3D.cpp postProcessSprites
+	// port); groundZ below uses raw terrain only (src/Render.cpp:3177).
+	if (!map.heightMap.empty()) {
+		int hx = x & 0x7FF, hy = y & 0x7FF;
+		zR += (map.heightMap[((hy >> 6) * 32 + (hx >> 6))] << 3) << 4;
+		if (i >= map.numNormalSprites) zR -= 32 << 4;
+	}
+
+	// Shadow + ground (src/Render.cpp:3172-3180): NPC art glues the shadow to
+	// the feet (full scale at own z), everything else shrinks with altitude.
+	bool npc = tileNum >= kTileNumFirstNpc && tileNum <= kTileNumLastNpc;
+	int groundZ = zR;
+	int min = 0;
+	if (!npc) {
+		int hCanvas = 0;
+		if (!map.heightMap.empty()) {
+			int hx = x & 0x7FF, hy = y & 0x7FF;
+			hCanvas = map.heightMap[((hy >> 6) * 32 + (hx >> 6))] << 3;
+		}
+		groundZ = (hCanvas + 32) << 4;
+		min = zR - groundZ;
+		if (min < 0) min = 0;
+		if (min > 256) min = 256;
+	}
+	int shadowScale = scaleFactor * (256 - min) / 256;
+
+	// Idle bob, phase-staggered per sprite (src/Render.cpp:3195-3199). The
+	// entity->info & 0x20000000 suppression has no carrier in the rewrite.
+	int bob = (((timeMs_ + i * 1337) / 1024) & 1) * 26;
+
+	// Camera-right step for lateral sway (canvas units; src/Render.cpp:2276-2278).
+	const int32_t* sinTbl = cam_ ? cam_->sinTable() : nullptr;
+	if (!sinTbl || !cam_) return;
+	int yaw = cam_->viewYaw();
+	int viewRightStepX = sinTbl[yaw & 0x3FF] >> 10;
+	int viewRightStepY = -sinTbl[(yaw - 256) & 0x3FF] >> 10;
+
+	// Emits one part quad: resolves mediaId = mappings[tile] + fIdx with
+	// the same clamp/lazy-upload as drawSprite (:559-582), then billboards it.
+	const auto& mappings = media.mappings();
+	auto emitTile = [&](int tile, int fIdx, int px, int py, int pz, int pFlags, int pScale) {
+		if (tile >= (int)mappings.mappings.size()) return;
+		int lo = mappings.mappings[tile];
+		int hi = (tile + 1 < (int)mappings.mappings.size()) ? mappings.mappings[tile + 1] : lo + 1;
+		if (lo < 0) return;
+		int mediaId = lo + fIdx;
+		if (mediaId >= hi) mediaId = lo;
+		if (!spriteTexByMedia_.count(mediaId))
+			ensureSpriteTexture(media, tile, mediaId);
+		drawBillboardPart(map, media, px, py, pz, tile, mediaId, pFlags, pScale);
+	};
+	auto emitPart = [&](int fIdx, int px, int py, int pz, int pFlags, int pScale) {
+		emitTile(tileNum, fIdx, px, py, pz, pFlags, pScale);
+	};
+	auto emitShadow = [&]() {
+		emitTile(kTileNumShadow, 0, x, y, groundZ, info, shadowScale); // :3202
+	};
+
+	switch (anim) {
+	case kManimIdleBack:
+	case kManimIdle: {
+		int base = (anim == kManimIdleBack) ? 4 : 0;
+		// Riley/Civilian2/Scientist idle offsets (src/Render.cpp:3210-3216, :3246-3248).
+		int rileyTorso = (anim == kManimIdle &&
+			(tileNum == kTileNumNpcRileyOconnor || tileNum == kTileNumNpcCivilian2 ||
+			 tileNum == kTileNumNpcScientist)) ? -18 : 0;
+		int rileyHead = (tileNum == kTileNumNpcRileyOconnor && anim == kManimIdle) ? -32 : 0;
+		emitShadow();                                          // :3202
+		emitPart(base + 0, x, y, zR, info, scaleFactor);       // legs :3204
+		emitPart(base + 2, x, y, zR + bob + rileyTorso, info, scaleFactor); // torso :3231
+		emitPart(base + 3, x, y, zR + bob + rileyHead, info, scaleFactor);  // head :3252
+		break;
+	}
+	case kManimWalkBack:
+	case kManimWalkFront: {
+		int base = (anim == kManimWalkBack) ? 4 : 0;
+		// Two art frames x mirror bit = 4 visual phases (src/Render.cpp:3261).
+		int mirror = (((frame >> 1) ^ 1)) << 17;
+		int legFlags = info ^ mirror;
+		emitShadow();                                                          // :3263
+		emitPart(base + (frame & 1), x, y, zR, legFlags, scaleFactor);         // legs :3265
+		int sway = frame & 1;
+		if ((frame & 2) == 0) sway = -sway;                                    // :3266-3269
+		int sx = x + (sway * viewRightStepX >> 6);                             // :3270
+		int sy = y + (sway * viewRightStepY >> 6);                             // :3271
+		int vBobZ = zR + ((frame & 1) << 4);                                   // +16 on odd phases
+		// NPC torsos (except Sarge) mirror with the legs (:3277).
+		int torsoFlags = (npc && tileNum != kTileNumNpcSarge) ? legFlags : info;
+		emitPart(base + 2, sx, sy, vBobZ, torsoFlags, scaleFactor);            // torso
+		emitPart(base + 3, sx, sy, vBobZ, info, scaleFactor);                  // head :3290
+		break;
+	}
+	case kManimAttack1:
+	case kManimAttack2: {
+		// Pose frames only (muzzle flash omitted this cycle, spec §2.4).
+		int pose = (anim == kManimAttack1) ? 8 : 10;
+		if (frame == 1) ++pose;                                // :3355-3357
+		emitShadow();                                          // :3310
+		emitPart(0, x, y, zR, info ^ 0x20000, scaleFactor);    // legs :3333
+		emitPart(pose, x, y, zR, info, scaleFactor);           // torso :3359
+		emitPart(3, x, y, zR, info, scaleFactor);              // head :3409
+		break;
+	}
+	case kManimPain:
+	case kManimSlap: {
+		emitShadow();                                          // :3466
+		emitPart(12, x, y, zR, info, scaleFactor);             // :3467
+		break;
+	}
+	case kManimDead: {
+		// Single corpse quad, NO shadow; lootable pulsate halo deferred (§8).
+		emitPart(13, x, y, zR, info, scaleFactor);             // :3470-3475
+		break;
+	}
+	case kManimNpcTalk: {
+		emitPart(frame, x, y, zR, info, scaleFactor);          // :3482-3484
+		break;
+	}
+	case kManimNpcBackAction: {
+		emitShadow();                                          // :3478
+		emitPart(8 + frame, x, y, zR, info, scaleFactor);      // :3479
+		break;
+	}
+	default:
+		break; // DODGE etc.: faithful empty fall-through (switch :3190-3486)
+	}
+}
+
 void World3D::drawPolys(const MapData& map, const std::vector<int>& polyIdx, const Camera3D& camera) {
 	if (!initialized_) return;
 	begin(camera);
@@ -917,7 +1167,7 @@ bool World3D::walkNode(const MapData& map, int n, int viewX, int viewY, int view
 }
 
 void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
-	const int* spriteSortBias) {
+	const int* spriteSortBias, const uint8_t* charClass) {
 	if (!initialized_ || map.numNodes == 0) return;
 
 	nodeIdxs_.clear();
@@ -1009,7 +1259,7 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 				}
 			}
 		}
-		for (int i : leafSprites) drawSprite(map, media, camera, i);
+		for (int i : leafSprites) drawSprite(map, media, camera, i, charClass);
 	}
 	end();
 }
