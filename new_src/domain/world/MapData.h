@@ -82,6 +82,7 @@ public:
 		std::vector<int16_t> keys;   // 7 fields * numKeys
 		std::vector<int16_t> tweenIndices; // 6 * numKeys
 		std::vector<uint8_t> tweens; // per-axis tween bytes
+		int tweenCounts[6] = {}; // per-channel tween byte counts (channel layout of `tweens`)
 	};
 	std::vector<MayaCamera> mayaCameras;
 

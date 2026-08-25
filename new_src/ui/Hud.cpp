@@ -15,10 +15,6 @@ namespace {
 
 constexpr int kPanelTopW = 480;
 constexpr int kPanelTopH = 20;
-// Dialog word-wrap budget in chars. Legacy dialogMaxChars is
-// (displayRect[2] - 2) / 9 (src/Canvas.cpp:89); the dialog-lite text is
-// inset 4px per side inside the 480px panel.
-constexpr int kDialogWrapChars = (480 - 8) / 9;
 constexpr int kWeaponH = 44;
 constexpr int kNumH = 20;
 constexpr int kKeyH = 44;
@@ -88,6 +84,10 @@ bool Hud::startup() {
 	ok &= loadTexture(app, "arrow-left_pressed.bmp", imgArrowLeftPressed_);
 	ok &= loadTexture(app, "arrow-right_pressed.bmp", imgArrowRightPressed_);
 	ok &= loadTexture(app, "ui_images.bmp", imgUIImages_);
+	ok &= loadTexture(app, "Hud_Portrait_Small.bmp", imgPortraitsSmall_);
+	ok &= loadTexture(app, "pageUP_Icon.bmp", imgPageUp_);
+	ok &= loadTexture(app, "pageDOWN_Icon.bmp", imgPageDown_);
+	ok &= loadTexture(app, "pageOK_Icon.bmp", imgPageOk_);
 	ok &= loadTexture(app, "damage.bmp", imgDamageVignette_);
 	ok &= loadTexture(app, "Hud_Attack_Arrows.bmp", imgAttArrow_);
 	ok &= loadTexture(app, "Hud_Test.bmp", imgHudTest_);
@@ -135,6 +135,42 @@ void Hud::drawOverlay(Graphics2D& g, int cinX, int cinY, int cinW) {
 	g.drawImage(imgCockpitOverlay_, 0, 0, 240, 234, cinX, cinY, 240, 234, 0);
 	g.drawImage(imgCockpitOverlay_, cinX + cinW, cinY,
 		Graphics2D::kAnchorTop | Graphics2D::kAnchorRight, 4);
+}
+
+// Legacy feeds app->nextByte() (an LCG over the save buffer) into the shake
+// offsets (src/MovementController.cpp:381-383); a local LCG stands in here.
+static uint8_t shakeNextByte(uint32_t& s) {
+	s = s * 1664525u + 1013904223u;
+	return static_cast<uint8_t>(s >> 24);
+}
+
+void Hud::startShake(int64_t nowMs, int durationMs, int intensity) {
+	if (intensity == 0) return;                 // src/Canvas.cpp:1008
+	shakeStartMs_ = nowMs;
+	shakeEndMs_ = nowMs + durationMs;           // shakeTime = time + i (:1009)
+	shakeIntensity_ = intensity;                // 2 * packed dur field (:1010)
+	tickShake(nowMs);
+}
+
+void Hud::tickShake(int64_t nowMs) {
+	if (shakeIntensity_ == 0) return;
+	if (nowMs >= shakeEndMs_) {                 // expiry snaps to zero (:386-388)
+		shakeIntensity_ = 0;
+		shakeX_ = 0;
+		shakeY_ = 0;
+		return;
+	}
+	// Amplitude decays linearly to zero across the duration (task spec;
+	// legacy holds full amplitude until the deadline instead).
+	int amp = static_cast<int>(static_cast<int64_t>(shakeIntensity_) *
+		(shakeEndMs_ - nowMs) / (shakeEndMs_ - shakeStartMs_));
+	if (amp <= 0) {
+		shakeX_ = 0;
+		shakeY_ = 0;
+		return;
+	}
+	shakeX_ = static_cast<int>(shakeNextByte(shakeRng_) % (amp * 2)) - amp;
+	shakeY_ = static_cast<int>(shakeNextByte(shakeRng_) % (amp * 2)) - amp;
 }
 
 void Hud::drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int viewH) {
@@ -316,6 +352,28 @@ void Hud::showCenterMessage(const std::string& text, uint32_t color, int duratio
 	hasCenterMessage_ = true;
 }
 
+void Hud::setSubtitle(const std::string& text, int durationMs) {
+	subText_ = text;
+	subTitleDuration_ = durationMs;
+	subTitleTime_ = 0;
+	hasSubtitle_ = true;
+}
+
+void Hud::setCinTitle(const std::string& text, int durationMs) {
+	cinTitleText_ = text;
+	cinTitleDuration_ = durationMs;
+	cinTitleTime_ = 0;
+	hasCinTitle_ = true;
+}
+
+void Hud::clearCinematicText() {
+	// ST_CAMERA entry (src/Canvas.cpp:1207-1210).
+	hasSubtitle_ = false;
+	subText_.clear();
+	hasCinTitle_ = false;
+	cinTitleText_.clear();
+}
+
 void Hud::setBubbleText(const std::string& text, uint32_t color, int durationMs) {
 	bubbleText_ = text;
 	bubbleColor_ = color;
@@ -356,48 +414,10 @@ void Hud::drawBubbleText(Graphics2D& g, const Font& font, int scrCx, int viewTop
 	}
 }
 
-// Dialog-lite placeholder (task FIX B): legacy script dialogs are drawn by
-// DialogSystem::dialogState as a bottom panel spanning the hud width with
-// height = lines*16+8 and y = 320-h-1, an opaque fill plus a white 1px
-// border (src/DialogSystem.cpp:130-134,137-139,276-280; border color
-// 0xFFFFFFFF at :138). The tutorial boxes read as gray panels over the 3D
-// view; the fill here uses the dark gray of the legacy UI palette
-// (0xFF3F3F3F, src/Graphics.h:28) in place of the default black fill.
-// Persistence-until-cleared and '|' line splitting match the original texts.
-void Hud::drawDialogMessage(Graphics2D& g, const Font& font) {
-	Text t;
-	t.append(dialogText_);
-	// Word-wrap before the '|' split (legacy order, src/DialogSystem.cpp:679-
-	// 681): wrapText inserts '|' soft breaks on spaces/hyphens (src/Text.cpp:
-	// 744) and drops soft hyphens that did not become break points.
-	t.wrapText(kDialogWrapChars);
-	int numLines = std::max(1, t.getNumLines());
-	int w = 480;
-	int h = numLines * 16 + 8;
-	int x = 0;
-	int y = 320 - h - 1;
-	g.fillRect(x, y, w, h, 0x3F, 0x3F, 0x3F);
-	g.drawRect(x, y, w - 1, h, 255, 255, 255);
-	int ty = y + 4;
-	int i = 0;
-	while (true) {
-		int first = t.findFirstOf('|', i);
-		int end = (first >= 0) ? first : t.length();
-		Text line;
-		t.substring(line, i, end - i);
-		g.drawString(font, line, x + 4, ty, Graphics2D::kAnchorLeft);
-		ty += 16;
-		if (first < 0) break;
-		i = first + 1;
-	}
-}
-
+// Dialog boxes are drawn by DialogSystem::draw (spec GROUP 1); Hud only
+// carries the messages below.
 void Hud::drawMessages(Graphics2D& g, const Font& font) {
-	if (hasDialog_) {
-		// Dialog-lite (task FIX B): gray panel, distinct from the transient
-		// messages below.
-		drawDialogMessage(g, font);
-	} else if (hasImportant_) {
+	if (hasImportant_) {
 		Text t;
 		t.append(importantText_);
 		drawImportantMessage(g, font, t, 0xFF7F0000);
@@ -405,6 +425,21 @@ void Hud::drawMessages(Graphics2D& g, const Font& font) {
 		Text t;
 		t.append(centerText_);
 		drawCenterMessage(g, font, t, centerColor_);
+	}
+	// Cinematic text (drawCinematicText analog, src/Hud.cpp:461-487):
+	// title top-center at y=1 (drawString flags=1), subtitle bottom-center
+	// at y=280 — n4 = (cinRect[1]+cinRect[3] + ((320 - n3 - 32) >> 1)) - 10
+	// with cinRect={0,42,480,250} — both HCENTER|TOP. The legacy wrapped a
+	// second line at +16 px; the fixed-width rewrite font renders one line.
+	if (hasCinTitle_) {
+		Text t;
+		t.append(cinTitleText_);
+		g.drawString(font, t, 240, 1, Graphics2D::kAnchorHCenter | Graphics2D::kAnchorTop);
+	}
+	if (hasSubtitle_) {
+		Text t;
+		t.append(subText_);
+		g.drawString(font, t, 240, 280, Graphics2D::kAnchorHCenter | Graphics2D::kAnchorTop);
 	}
 }
 
@@ -423,6 +458,22 @@ void Hud::update(int timeMs) {
 	if (damageCount_ > 0) {
 		damageTime_ -= timeMs;
 		if (damageTime_ <= 0) damageCount_ = 0;
+	}
+	// Cinematic-text expiry: legacy clears when subTitleTime/cinTitleTime
+	// pass gameTime during the HUD pass (src/Hud.cpp:787-798).
+	if (hasCinTitle_) {
+		cinTitleTime_ += timeMs;
+		if (cinTitleTime_ >= cinTitleDuration_) {
+			hasCinTitle_ = false;
+			cinTitleText_.clear();
+		}
+	}
+	if (hasSubtitle_) {
+		subTitleTime_ += timeMs;
+		if (subTitleTime_ >= subTitleDuration_) {
+			hasSubtitle_ = false;
+			subText_.clear();
+		}
 	}
 }
 

@@ -13,8 +13,11 @@
 namespace newcore {
 
 class EntityDefs;
+class Hud;
+class Localization;
 class ScriptVM;
 struct ScriptThread;
+class Tables;
 
 // World simulation: entity database (32x32 tiles), door open/close, item
 // pickup. Minimal modern port of the legacy Game focused on the interactive
@@ -30,8 +33,58 @@ public:
 	// once per level load, after MapData is parsed.
 	void loadEntities(MapData& map, const EntityDefs& defs);
 
-	// Tick called every frame (dtMs). Advances door animations.
+	// Tick called every frame (dtMs). Advances door animations and the
+	// script sprite lerps (LERP* opcodes).
 	void update(int dtMs);
+
+	// ---- Script sprite lerps (docs/original-code/lerp-opcodes.md) ----
+
+	static constexpr int kMaxLerpSprites = 16;   // pool size (src/Game.cpp:3028)
+
+	// One active script lerp; subset of legacy LerpSprite (save/load,
+	// TRUNC/chicken/door/secret tails and monster anim frames are not
+	// ported).
+	struct SpriteLerp {
+		// Runtime flag bits (src/Enums.h:293-295 subset).
+		static constexpr int kFlagAsync = 0x1;
+		static constexpr int kFlagAnimatingEffect = 0x2;
+		static constexpr int kFlagParabola = 0x4;
+
+		int hSprite = 0;          // sprite+1; 0 = free slot (src/Game.cpp:3030)
+		ScriptThread* ownerThread = nullptr;
+		int startTime = 0;        // ms on the Game::update clock (clockMs)
+		int travelTime = 0;       // ms
+		int srcX = 0, srcY = 0, srcZ = 0;
+		int dstX = 0, dstY = 0, dstZ = 0;
+		int srcScale = 64, dstScale = 64;
+		int height = 0;           // parabola arc peak (canvas z units)
+		int flags = 0;            // SpriteLerp::kFlag* bits
+	};
+
+	// Pool lookup mirroring allocLerpSprite (src/Game.cpp:3028-3066): reuse
+	// the slot of a still-active lerp for the same sprite, else take a free
+	// one. Exhaustion logs instead of the legacy Error(36) fatal.
+	SpriteLerp* allocLerpSprite(ScriptThread* thread, int sprite, bool block);
+
+	// Single tick (src/Game.cpp:2855-2956): writes S_X/S_Y/S_Z/S_SCALEFACTOR
+	// with p=(elapsed<<16)/(travelTime<<8), snaps + frees on completion.
+	// Returns 3 when completed, 4 when not started yet, else 0.
+	int updateLerpSprite(SpriteLerp* ls);
+
+	// Stored-vs-baked S_Z bias: legacy postProcessSprites bakes terrain
+	// height (-32 for z-sprites) into stored S_Z at load and the legacy
+	// renderer consumes it directly (src/Render.cpp:2459-2467,1424); our
+	// renderer keeps stored Z raw-relative and re-adds terrain per frame
+	// (World3D.cpp:547-556). Lerps interpolate in legacy baked space:
+	// baked = stored + spriteZBias, stored = baked - spriteZBias.
+	int spriteZBias(int sprite, int x, int y) const;
+
+	// Internal ms clock for lerp start/elapsed math; advanced by update(dtMs).
+	int clockMs() const { return lerpClock_; }
+
+	// 1024-entry fixed-point sine table for the parabola arc (sin << 14);
+	// wired once after construction.
+	void setSinTable(const std::vector<int32_t>* sinTable) { sinTable_ = sinTable; }
 
 	// Returns the player entity (entities[1]).
 	Entity* playerEntity() { return entities_.empty() ? nullptr : &entities_[1]; }
@@ -107,6 +160,37 @@ public:
 	// Entity bound to a map sprite (legacy S_ENT lookup analog).
 	Entity* findEntityBySprite(int sprite);
 
+	// ---- Corpse looting (docs/original-code/loot-inventory.md) ----
+
+	// Port of ScriptThread::corpsifyMonster (src/ScriptThread.cpp:2249-2266),
+	// visual/flag subset: death-frame overlay (spriteInfo bits 8-14 = 0x7000),
+	// reposition to the tile center at ground+32, corpse info bits
+	// (0x1000000|0x20000|0x400000), def swap to find(ET_CORPSE, subtype,
+	// parm), relink at the new tile. The inactiveMonsters ring, death sound
+	// and name refresh are not ported yet.
+	void corpsifyMonster(Entity* e, int x, int y);
+
+	// Faced lootable corpse: legacy ACTION_FIRE traces forward and selects an
+	// ET_CORPSE candidate exactly one tile away (dist == tileDistances[0])
+	// that is not yet looted and owns a lootSet (src/PlayingInputHandler.cpp:
+	// 279-335). Trace-free simplification mirroring useDoorFacing: candidates
+	// are LINKED corpses on the adjacent tile in the facing direction (own
+	// tile is dist 0, never selected by legacy).
+	Entity* findLootableCorpseFacing(int px, int py, int stepX, int stepY);
+
+	// Direct-grant corpse loot — the ST_LOOTING UI is not ported. Marks the
+	// source looted (++param; info |= kInfoActivated, src/LootingSystem.cpp:
+	// 163-179), pools + merges its lootSet (class-6 lines skipped, class-0
+	// idx 24/25 become credits, dupes merge saturated to 63, src/
+	// LootingSystem.cpp:180-221), grants via Player::give with weapon starter
+	// ammo from tables.weaponData (src/LootingSystem.cpp:281-307), then
+	// reports through the HUD center-message path: str84 keycard / str85 got-
+	// item / str86 N x item / str228 empty (src/Entity.cpp:171-190).
+	// tables may be null (disables weapon starter ammo).
+	void lootCorpse(Entity* corpse, const Localization& loc, Hud& hud,
+	                Player& player, const Tables* tables);
+
+
 	// Arrival tile hook (legacy touchTile -> automap uncover/pickups);
 	// stub this phase.
 	void touchTile(int x, int y, bool b);
@@ -125,13 +209,20 @@ public:
 	int monstersTurn = 0;
 	bool queueAdvanceTurn = false;
 	bool skipAdvanceTurn = false;
+	bool skipDialog = false;        // set by DialogSystem::closeDialog(skip) around the thread resume
 	bool abortMove = false;
 	int spawnParam = -1;            // -1 = use the map header spawn
 	int eventFlags_[2] = { 0, 0 };
 
 private:
 	void updateDoors();
+	void freeLerpSprite(SpriteLerp* ls);       // completion snap + slot free (src/Game.cpp:3078-3243, subset)
 	int playerX_ = -1, playerY_ = -1;
+
+	// Script sprite lerp pool (legacy Game::lerpSprites[16]).
+	SpriteLerp spriteLerps_[kMaxLerpSprites];
+	int lerpClock_ = 0;
+	const std::vector<int32_t>* sinTable_ = nullptr;
 
 	std::vector<Entity> entities_;
 	Entity* entityDb_[1024] = { nullptr }; // 32x32 tile lists

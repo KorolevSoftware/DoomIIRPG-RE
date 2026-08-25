@@ -7,6 +7,7 @@ namespace newcore {
 
 class EntityDef;
 class Entity;
+class DialogSystem;
 class Game;
 class GameContext;
 class Hud;
@@ -47,6 +48,7 @@ public:
 		Localization* loc = nullptr;
 		Hud* hud = nullptr;
 		GameContext* ctx = nullptr;      // blockInputTime latch (abortMove/message routing live on game/hud)
+		DialogSystem* dialogs = nullptr; // EV_DIALOG target (startDialog / help enqueue)
 		const int64_t* gameTime = nullptr;
 	};
 
@@ -89,6 +91,12 @@ public:
 	// src/ScriptThread.cpp:164-166) or the dormant EVFL_FLAG_BLOCKINPUT
 	// trigger bit (src/Game.cpp:3447-3459). No-op while blockInputTime == 0.
 	void releaseBlockIfUnheld(const char* why);
+
+	// Pool index of a pooled thread (legacy scans scriptThreads comparing
+	// pointers, src/ScriptThread.cpp:564-569) and back-mapping for the help
+	// FIFO's resume binding.
+	int indexOf(const ScriptThread* t) const { return (int)(t - threads_); }
+	ScriptThread* threadAt(int i) { return &threads_[i]; }
 
 private:
 	ScriptThread* allocThread();                       // first free slot (src/Game.cpp:3270-3284)

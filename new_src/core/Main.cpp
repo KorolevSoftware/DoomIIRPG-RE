@@ -1,6 +1,7 @@
 #include "core/AppContext.h"
 #include "core/GameContext.h"
 
+#include "domain/game/DialogSystem.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
@@ -202,9 +203,10 @@ int main(int argc, char* argv[]) {
 	} else if (!tables.skyTexelB.empty() && !tables.skyPaletteB.empty()) {
 		world.uploadSky(tables.skyTexelB, tables.skyPaletteB);
 	}
-	// Temporary fog so the effect can be verified (real values come from the
-	// map/save). Opaque dark green fog.
-	world.setFog(0xFF1A2A1A, 500, 900);
+	// Fog: disabled for now. Legacy takes fog values from the map/save
+	// (world.setFog(ARGB, fogMin, fogRange); alpha==0 disables). Re-enable
+	// with map-provided values when the loading pipeline supplies them.
+	// world.setFog(0xFF1A2A1A, 500, 900);
 
 	// Phase 4: player + world game state (doors, items). Spawn placement
 	// happens in the Loading tick (legacy Game::spawnPlayer port).
@@ -215,16 +217,20 @@ int main(int argc, char* argv[]) {
 	// Entity load happens in Loading phase 1 (GameContext::tickLoading,
 	// src/LoadingManager.cpp:658) — do not duplicate it here.
 
-	// Game-state machine + tileEvents VM: non-owning wiring; the context is
-	// declared after every system it references so it dies first (spec §2).
+	// Game-state machine + tileEvents VM + dialogs: non-owning wiring; the
+	// context is declared after every system it references so it dies first
+	// (spec §2).
 	ScriptVM vm;
 	GameContext ctx;
-	vm.init({                  // Env: map, defs, game, player, loc, hud, ctx, gameTime
-		&g_map, &g_entityDefs, &game, &player, &loc, &hud, &ctx, &ctx.gameTime });
+	DialogSystem dialogs;
+	vm.init({                  // Env: map, defs, game, player, loc, hud, ctx, dialogs, gameTime
+		&g_map, &g_entityDefs, &game, &player, &loc, &hud, &ctx, &dialogs, &ctx.gameTime });
 	game.setVM(&vm);
-	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world
+	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world, dialogs
 		&g_map, &g_entityDefs, &tables, &loc, &font, &g_media,
-		&game, &player, &vm, &hud, &world });
+		&game, &player, &vm, &hud, &world, &dialogs });
+	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
+		&ctx, &vm, &game, &loc, &hud, &font, &tables });
 
 	// Revived frame path: AppContext::run -> GameLoop::run drives the
 	// fixed-step ticks, queued-input actions and per-frame rendering.

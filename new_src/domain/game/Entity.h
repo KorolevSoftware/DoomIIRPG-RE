@@ -27,6 +27,8 @@ public:
 
 	Entity() = default;
 
+	static constexpr int kMaxCorpseLoot = 3;         // MAX_CORPSE_LOOT (src/Enums.h:1388)
+
 	const EntityDef* def = nullptr;
 	EntityMonster* monster = nullptr;
 	Entity* nextOnTile = nullptr;
@@ -36,11 +38,21 @@ public:
 	int param = 0;
 	int pos[2] = { 0, 0 };
 
+	// Loot table: legacy Entity::lootSet is an allocated int[3] (src/Entity.h:24),
+	// entries are u16 (class<<12 | idx<<6 | count). hasLootSet mirrors the
+	// non-null pointer (allocated only for ET_MONSTER/ET_CORPSE at spawn,
+	// src/Entity.cpp:103-111).
+	int lootSet[kMaxCorpseLoot] = { 0, 0, 0 };
+	bool hasLootSet = false;
+
 	int getSprite() const { return (info & 0xFFFF) - 1; }
 	void setSprite(int sprite) { info = (info & ~0xFFFF) | ((sprite + 1) & 0xFFFF); }
 	bool isMonster() const { return def && def->eType == Enums::ET_MONSTER; }
 	bool isDoor() const { return def && def->eType == Enums::ET_DOOR; }
 	bool isItem() const { return def && def->eType == Enums::ET_ITEM; }
+	bool isCorpse() const { return def && def->eType == Enums::ET_CORPSE; }
+	// src/Entity.cpp:2309-2311.
+	bool hasEmptyLootSet() const { return !hasLootSet || lootSet[0] == 0; }
 };
 
 } // namespace newcore

@@ -36,11 +36,15 @@ bool GameLoop::run(AppContext& context) {
 		}
 		Action a = Action::None;
 		switch (ev.key.keysym.scancode) {
-		case SDL_SCANCODE_E: a = Action::Use; break;
-		case SDL_SCANCODE_UP: case SDL_SCANCODE_W: a = Action::Forward; break;
-		case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: a = Action::Back; break;
-		case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: a = Action::TurnLeft; break;
-		case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: a = Action::TurnRight; break;
+		case SDL_SCANCODE_E: a = Action::Use; break;          // ACTION_FIRE
+		case SDL_SCANCODE_UP: case SDL_SCANCODE_W: a = Action::Forward; break;   // dialog: ACTION_UP
+		case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: a = Action::Back; break;    // dialog: ACTION_DOWN
+		case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: a = Action::TurnLeft; break; // dialog: ACTION_LEFT
+		case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: a = Action::TurnRight; break; // dialog: ACTION_RIGHT
+		case SDL_SCANCODE_TAB: a = Action::Passturn; break;   // ACTION_PASSTURN (skip-close)
+		case SDL_SCANCODE_M: a = Action::Automap; break;      // ACTION_AUTOMAP (skip-close)
+		case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: a = Action::Menu; break; // ACTION_MENU
+		case SDL_SCANCODE_BACKSPACE: a = Action::BackKey; break; // KEY_CLR/BACK — swallowed in dialogs
 		case SDL_SCANCODE_K: ctx.debugGiveKeycards(); break; // PHASE5 DEBUG (removable)
 		default: break;
 		}
@@ -55,14 +59,19 @@ bool GameLoop::run(AppContext& context) {
 	uint32_t fpsTimer = last;
 
 	while (running) {
-		uint32_t now = SDL_GetTicks();
+		uint32_t frameStart = SDL_GetTicks();
 		context.input().poll(context.window());
 
-		acc += now - last;
+		acc += frameStart - last;
 		if (acc > kMaxFrameMs) acc = kMaxFrameMs;
-		last = now;
-		while (acc >= GameContext::kTickMs) {
-			acc -= GameContext::kTickMs;
+		last = frameStart;
+		// Render-locked cadence (ADR-0004 addendum): exactly ONE quantum per
+		// rendered frame, like the legacy DoLoop pass (src/Main.cpp:83-88).
+		// Leftover accumulation is shed: chasing it produced periodic
+		// double-step frames (30 ms sim jumps every ~8th frame) whenever the
+		// paced period rounded above kTickMs, reading as sharp camera judder.
+		if (acc >= GameContext::kTickMs) {
+			acc = 0;
 			ctx.tick();
 		}
 
@@ -71,14 +80,19 @@ bool GameLoop::run(AppContext& context) {
 		ctx.render(context);
 		++fpsFrames;
 
-		if (now - fpsTimer >= 1000) {
+		if (frameStart - fpsTimer >= 1000) {
 			std::fprintf(stdout, "FPS: %d\n", fpsFrames);
 			std::fflush(stdout);
 			fpsFrames = 0;
 			fpsTimer += 1000;
 		}
 
-		SDL_Delay(1);
+		// FPS lock (ADR-0004 addendum): pace to ~66 fps so simulation and
+		// render advance together at the legacy cadence — one DoLoop pass per
+		// ~15 ms measured from the real frame start (src/Main.cpp:83-88),
+		// with the same 125 ms catch-up clamp above (src/Main.cpp:133-135).
+		uint32_t spent = SDL_GetTicks() - frameStart;
+		if (spent < GameContext::kTickMs) SDL_Delay(GameContext::kTickMs - spent);
 	}
 
 	return true;

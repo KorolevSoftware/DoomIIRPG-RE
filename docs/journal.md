@@ -135,3 +135,79 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
 - Note: game data stores soft hyphens ("Ac-cess", "Key-card"); legacy
   displays them only at line breaks, otherwise consumes them
   ("Need Blue Keycard"). Build green; boot reaches ST_PLAYING (~60+ FPS).
+
+## 2026-08-24 — DialogSystem full RE (research only, src/ untouched)
+
+- Curated: docs/original-code/dialog-system.md (styles 1-16 w/ exact fills,
+  geometry 480x320, text pipeline incl. strings.idx format + composeText
+  escapes + wrap budgets 53/52 chars, typewriter 25ms/char, full dialog
+  keymap, EV_DIALOG park/unpauseTime=-1/run() resume + skipDialog gate, help
+  FIFO 16, queueAdvanceTurn rules, port checklist).
+- Raw: docs/research/2026-08-24-dialog-system.md.
+- map00 intro replayed from tmp_map00.bin + ipa strings04: INIT_MAP@0 →
+  func@1913 → cameras 0/1/5/7 (subtitles str9-19) → evt[54] tile(9,19) TRIGGER
+  ip=2993: str21 s1 → str22 s1/str23 s8 → str24 s8 → str25 s1 + GIVEITEM pistol
+  def1 (+difficulty ammo) → str26 s8/s1 + bubble "Let's go!" + blue-door
+  UNLOCK/OPEN. Speaker names = first '|'-line of buffer for styles 2/16/9;
+  style 8 = green hero + portrait; style 2 = gray-header tutorial box;
+  style 9 = green-on-black terminal. Quirk documented: characterChoice==3
+  skips the str25/pistol branch verbatim in data.
+
+2026-08-24 — G1 DialogSystem v2 (spec 2026-08-24-intro-sequence GROUP 1)
+- new_src/domain/game/DialogSystem.{h,cpp}: full dialog port (style table with
+  verbatim fills, title-bar layouts 2/16/9, style 8 gradient + Hud_Portrait_
+  Small.bmp row 0, tails for 1/5/10/14, composeText %NN 50-slot pool, wrap
+  53->52 retry (style8 -3 inset), viewLines {3:4,2/8:3}, typewriter 25ms/char,
+  §4 keymap, help FIFO 16, closeDialog restore+resume, queueAdvanceTurn rule,
+  scrollbar + page icons).
+- GameContext: real ST_DIALOG(8) state replaces the modal flag; per-event
+  routing to DialogSystem::handleInput; door lerps keep ticking under the box;
+  dialog-lite (enterScriptDialog/dismissDialogStep/Hud gray panel) deleted.
+- ScriptVM EV_DIALOG: B,B -> style=lo/flags=hi nibbles, style 2 = help enqueue
+  by pool index, park unpauseTime=-1, skipDialog gate (Game::skipDialog added).
+- InputSystem/GameLoop keymap: TAB=Passturn, M=Automap, Enter=Menu,
+  Backspace=BackKey(swallowed); E=FIRE unchanged.
+- Build green; smoke boot reaches [load] -> ST_PLAYING. Deviations: choice
+  widget RENDERING deferred (spec §8), ESC quits app, typewriter enabled
+  despite src/DialogSystem.cpp:135 reveal-all artifact (doc §2.4 normative).
+
+## 2026-08-24 — map00 boot fly-over invisible (fixed)
+- Symptom: boot cinematic ran by log (cam=0, ADV_CAMERAKEY chain) but view
+  stayed on the player.
+- Bytecode decode (tmp_map00.bin, read-only): boot intro is STARTCINEMATIC
+  cam=0 at IP=1946 inside one-time-init func@1942 (staticFunc[0] var17 guard
+  @221 -> CALL 1913 -> CALL 1942; CALL 1260 = SETSTATE var5=1). The doc §6
+  cam=4 @1889 branch is the var15!=1 reload-path alternative, NOT boot.
+  cam0 keys: no -2 sentinels, real 12-key ~15s descent (1124,98,948) ->
+  (209,448,682), sampleRate 125.
+- Root cause: STARTCINEMATIC fires during Loading; tickLoading's tail
+  setState(Playing) overwrites ST_CAMERA, and render gated the maya pose on
+  `state==Camera`. Legacy renders/updates the active camera whenever
+  isCameraActive() regardless of PLAYING/CAMERA (src/MovementController.cpp:
+  391-392, :518-520).
+- Fix: GameContext::render camera branch now keyed on activeCameraKey_>=0;
+  added throttled [dbg] in that branch + tickCamera + startCinematic state
+  log + STARTCINEMATIC IP log.
+- Build green; smoke boot logs cam-render state=3 with moving pose through
+  keys 1..10, then cam=1 handoff. User to verify visually.
+
+## 2026-08-25 — chained ADV_CAMERAKEY ate every 2nd key (fixed)
+- Legacy answer: EV_ADV_CAMERAKEY parks AFTER NextKey (src/ScriptThread.cpp:
+  690-702; IP already past the opcode, resume never re-executes it).
+  MayaCamera::Update on boundary does NOT advance: elapsed>=ms ->
+  resumeCount>0 ? Snap : hold (src/MayaCamera.cpp:72-77). Snap (:335-374)
+  snaps pose to next key WITHOUT charging duration or advancing, decrements
+  the count; at 0 it runs the thread and RETURNS (no advance) — the
+  resumed script's own ADV_CAMERAKEY/NextKey starts the next key fresh
+  (src/MayaCamera.cpp:36-44); while still counting it auto-advances once.
+- Rewrite bug: the tick loop charged NextKey at each boundary (startTime +=
+  dur; ++key) AND the resumed script charged another -> keys eaten (played
+  8775ms vs authored 14399ms).
+- Fix: GameContext::nextKey() split out; boundary branch now snap+resume OR
+  auto-advance (never both); pose holds when elapsed>=keyMs (no update);
+  render no longer recomputes pose; finish/skip use maya_.snap().
+- Measured (temp [camtmp], removed after): cam1 authored 8099 = key0 1499
+  truncated + 6600 played vs 6645 measured (+45ms tick quantization);
+  cam0 16995ms = 13400 keys + legacy-faithful WAIT holds (2000+1500) +
+  quantization. All temp logs ([camkey]/[camera] START/END/[dbg]) removed;
+  build green; pre-existing unrelated: UNIMPLEMENTED opcode 92 @IP=2336.

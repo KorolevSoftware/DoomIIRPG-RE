@@ -4,15 +4,27 @@ _Last updated: 2026-08-23_
 
 ## Working on
 
-- **Phase 5 skeleton done & user-verified** (2026-08-23): GameContext state
-  machine (Loading→Playing→Dying) + revived GameLoop fixed-step loop via
-  `AppContext::run()`; ScriptVM (20-thread pool, ~40-opcode subset) with tile
-  triggers and dialog-lite; scripted door unlock (`setLineLocked`) with lazy
-  sprite-texture creation fixing the post-unlock vanish; angle-wrap freeze
-  fix (raw accumulated angles per legacy). Debug instrumentation stripped.
-- Queued candidates for the next unit: (a) intro sequence — NPC gun-give
-  dialog → scripted move into spawn room → tutorial (needs mini-cutscene
-  infra + inventory display); (b) monsters/AI/combat.
+- **Next unit: INTRO SEQUENCE** (user-picked 2026-08-23). Target: game start
+  plays like the original — NPC dialog gives the gun → scripted move/cutscene
+  into the spawn room → tutorial (corpse + loot). Step outline:
+  1. Research: camera/cutscene states (ST_CAMERA/ST_INTER_CAMERA), full
+     DialogSystem (styles/speakers/paging), loot & inventory flow
+     (EV_MAKE_CORPSE/ASSIGN_LOOTSET/pickup).
+  2. Architect spec (+ADR if needed) → coder groups → review → user eyes.
+  Already in place from Phase 5: ScriptVM core, dialog-lite, EV_GIVEITEM,
+  lazy textures, state machine.
+- **Known bugs (deferred):**
+  - **Camera judder in cinematics** — persists after MayaCamera tween-window
+    fix + render-locked pacing; needs deeper investigation (suspects: key-boundary
+    Snap truncation feel, shake randomization cadence, vsync-vs-sim drift ~10%).
+  - **Hangar door (13,19) doesn't open on E** — silent unlock lives in evt#56
+    @tile(10,19) BEHIND the blue door; user clarifies the shaft is behind the
+    blue door and the hangar door is elsewhere — re-map which door/tile actually
+    gates it before fixing.
+  - Subtitles: CAMERA_STR bit14 showCinPlayer not portable yet; portrait art
+    fallback for style 8.
+- Backlog after intro: monsters/AI/combat; automap; save/load; EV_CHANGE_MAP
+  real transitions; renderMode blending; stderr [script]/[load] log polish.
 
 ## Fidelity pass 2026-08-23 (doors + sprites)
 

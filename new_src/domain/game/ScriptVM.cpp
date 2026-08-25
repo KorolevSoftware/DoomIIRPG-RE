@@ -4,6 +4,7 @@
 #include <string>
 
 #include "core/GameContext.h"
+#include "domain/game/DialogSystem.h"
 #include "domain/game/Entity.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
@@ -438,7 +439,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			// n2 forwarded to performDoorEvent (src/ScriptThread.cpp:760):
 			// 1 animates, 0 snaps the animation instantly.
 			int snapMode = interactive ? 1 : 0;
-			static const char* kActNames[4] = { "open", "unlock+open", "lock", "unlock" };
+			// act 1 unlocks then CLOSES (src/ScriptThread.cpp:757-762 passes
+			// n44=1 into performDoorEvent, which closes: slide -32, dstScale
+			// 64, sound 1028, src/Game.cpp:1104-1110).
+			static const char* kActNames[4] = { "open", "unlock+close", "lock", "unlock" };
 			std::fprintf(stderr, "[script] DOOROP sprite=%d %s%s\n",
 				args & 0x3FF, kActNames[act], interactive ? " (blocking)" : "");
 			Entity* ent = env_.game->findEntityBySprite(args & 0x3FF);
@@ -446,6 +450,18 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (act == 0 || act == 1) {
 				if (act == 1 && ent->isDoor()) env_.game->setLineLocked(ent, false);
 				bool doorOk = env_.game->performDoorEvent(act, ent, snapMode, interactive ? t : nullptr);
+				// Door family flips to media frame 1 while open/animating
+				// (src/Game.cpp:1150-1152); updateDoors restores frame 0 on
+				// close completion.
+				if (doorOk && act == 0) {
+					int info = env_.map->mapSpriteInfo[args & 0x3FF];
+					int tileNum = info & 0xFF;
+					if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
+					if (tileNum >= 271 && tileNum < 281) {
+						env_.map->mapSpriteInfo[args & 0x3FF] =
+							(info & 0xFFFF00FF) | (1 << 8);
+					}
+				}
 				if (doorOk && interactive) {
 					t->unpauseTime = -1;           // resumed by the door-lerp completion
 					n = 2;
@@ -466,8 +482,9 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (idx < env_.map->numTileEvents) {
 				int& w1 = env_.map->tileEvents[idx * 2 + 1];
 				w1 = (w1 & ~Enums::EVFL_FLAG_DISABLE) | (((v >> 15) & 1) << Enums::EVFL_DISABLE_SHIFT);
+				// bit15 SET = disabled (src/ScriptThread.cpp:808-816).
 				std::fprintf(stderr, "[script] EVENTOP %s event[%d]\n",
-					((v >> 15) & 1) != 0 ? "enable" : "disable", idx);
+					((v >> 15) & 1) != 0 ? "disable" : "enable", idx);
 			}
 			break;
 		}
@@ -583,67 +600,169 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
+		// ---- LERP* sprite family (docs/original-code/lerp-opcodes.md) ----
+
+		case Enums::EV_LERPSPRITE: {               // src/ScriptThread.cpp:344-398
+			int packed = readUByte(t) | readUByte(t) << 8 | readUByte(t) << 16;
+			int sprite = (packed >> 14) & 0xFF;
+			int dstTileX = (packed >> 9) & 0x1F;
+			int dstTileY = (packed >> 4) & 0x1F;
+			int lsFlags = packed & 0xF;
+			int dstZrel = (lsFlags & Enums::SCRIPT_LS_DEFAULT_Z)
+				? 32 : (readUByte(t) - 48);
+			int time = (lsFlags & Enums::SCRIPT_LS_NO_TIME)
+				? 0 : readUByte(t) * 100;
+			if (time != 0 && (lsFlags & Enums::SCRIPT_LS_FLAG_BLOCK) != 0) {
+				evWait(t, time);                   // up-front (:353-355)
+			}
+			Game::SpriteLerp* ls = env_.game->allocLerpSprite(
+				t, sprite, (lsFlags & Enums::SCRIPT_LS_FLAG_BLOCK) != 0);
+			if (ls == nullptr) break;
+			ls->dstX = 32 + (dstTileX << 6);       // tile centers (:361-362)
+			ls->dstY = 32 + (dstTileY << 6);
+			Entity* ent = env_.game->findEntityBySprite(sprite);   // info |= 0x400000 (:364-371)
+			if (ent != nullptr) ent->info |= 0x400000;
+			ls->dstZ = env_.ctx->getHeight(ls->dstX, ls->dstY) + dstZrel;   // (:370)
+			const MapData& m = *env_.map;
+			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
+			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
+			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).
+			ls->srcZ = m.mapSprites[sprite + 2 * m.numSprites]
+				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
+			ls->srcScale = ls->dstScale =
+				m.mapSprites[sprite + 8 * m.numSprites];   // scale held constant
+			ls->startTime = env_.game->clockMs();
+			ls->travelTime = time;
+			ls->flags = lsFlags & Enums::SCRIPT_LS_FLAG_ASYNC_BLOCK;   // scriptBits&3 (:377)
+			// TEMP [dbg] lerp audit (remove after bugs #1/#2 verified)
+			std::fprintf(stderr, "[dbg] LERPSPRITE spr=%d src=%d,%d,%d dst=%d,%d,%d t=%dms flags=%d\n",
+				sprite, ls->srcX, ls->srcY, ls->srcZ, ls->dstX, ls->dstY, ls->dstZ, time, lsFlags);
+			if (time == 0) {
+				env_.game->updateLerpSprite(ls);   // single tick completes (:379-386)
+			} else if ((lsFlags & Enums::SCRIPT_LS_FLAG_ASYNC) == 0) {
+				env_.game->skipAdvanceTurn = true; // thread parks until completion (:388-394)
+				env_.game->queueAdvanceTurn = false;
+				t->unpauseTime = -1;
+				n = 2;
+			}
+			break;
+		}
+
+		case Enums::EV_LERPSPRITEOFFSET: {         // src/ScriptThread.cpp:1388-1441
+			int sprite = readUByte(t);
+			int time = readUByte(t) * 100;
+			int packed = readInt(t);
+			int dstY = packed & 0x7FF;             // ABSOLUTE fixed coords (:1393-1394)
+			int dstX = (packed >> 11) & 0x7FF;     // X in bits 11-21, Y in bits 0-10
+			int lsFlags = (packed >> 22) & 0x3;
+			int dstZrel = ((packed >> 24) & 0xFF) - 48;
+			Game::SpriteLerp* ls = env_.game->allocLerpSprite(
+				t, sprite, (lsFlags & 0x2) != 0);
+			if (ls == nullptr) break;
+			ls->dstX = dstX;
+			ls->dstY = dstY;
+			Entity* ent = env_.game->findEntityBySprite(sprite);   // info |= 0x400000 (+MFLAG_LERP_SHADOW n/a)
+			if (ent != nullptr) ent->info |= 0x400000;
+			ls->dstZ = env_.ctx->getHeight(dstX, dstY) + dstZrel;  // (:1410)
+			const MapData& m = *env_.map;
+			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
+			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
+			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).
+			ls->srcZ = m.mapSprites[sprite + 2 * m.numSprites]
+				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
+			ls->srcScale = ls->dstScale =
+				m.mapSprites[sprite + 8 * m.numSprites];
+			ls->startTime = env_.game->clockMs();
+			ls->travelTime = time;
+			ls->flags = lsFlags & 0x3;
+			// TEMP [dbg] lerp audit (remove after bugs #1/#2 verified)
+			std::fprintf(stderr, "[dbg] LERPOFFSET spr=%d src=%d,%d,%d dst=%d,%d,%d t=%dms flags=%d\n",
+				sprite, ls->srcX, ls->srcY, ls->srcZ, ls->dstX, ls->dstY, ls->dstZ, time, lsFlags);
+			if (time == 0) {
+				env_.game->updateLerpSprite(ls);
+			} else {
+				if ((lsFlags & 0x2) != 0) evWait(t, time);   // BLOCK after alloc (:1428-1429)
+				if ((ls->flags & Game::SpriteLerp::kFlagAsync) == 0) {
+					env_.game->skipAdvanceTurn = true;
+					env_.game->queueAdvanceTurn = false;
+					t->unpauseTime = -1;
+					n = 2;
+				}
+			}
+			break;
+		}
+
 		// ---- TIER-B: parsed, logged, no-op (args consumed exactly) ----
 
-		case Enums::EV_LERPSPRITE: {
-			int packed = readUByte(t) | readUByte(t) << 8 | readUByte(t) << 16;
-			int lsFlags = packed & 0xF;
-			if (!(lsFlags & Enums::SCRIPT_LS_DEFAULT_Z)) readUByte(t); // dstZ
-			if (!(lsFlags & Enums::SCRIPT_LS_NO_TIME)) readUByte(t);   // travel time
-			std::fprintf(stderr, "[script] LERPSPRITE sprite=%d skipped (no lerp system)\n", (packed >> 14) & 0xFF);
-			break;
-		}
-
-		case Enums::EV_LERPSPRITEOFFSET: {
-			readUByte(t);                 // sprite
-			readUByte(t);                 // travel time
-			readInt(t);                   // packed offsets
-			std::fprintf(stderr, "[script] LERPSPRITEOFFSET skipped (no lerp system)\n");
-			break;
-		}
-
 		case Enums::EV_STARTCINEMATIC: {
-			int cam = readByte(t);
-			std::fprintf(stderr, "[script] STARTCINEMATIC camera=%d skipped (no camera system)\n", cam);
+			// Bind the map camera and enter ST_CAMERA
+			// (src/ScriptThread.cpp:400-411).
+			int cam = readUByte(t);
+			std::fprintf(stderr, "[script] STARTCINEMATIC camera=%d\n", cam);
+			env_.ctx->startCinematic(cam);
+			env_.game->skipAdvanceTurn = true;                 // (:409-410)
+			env_.game->queueAdvanceTurn = false;
 			break;
 		}
 
 		case Enums::EV_ADV_CAMERAKEY: {
-			readUByte(t);
-			std::fprintf(stderr, "[script] ADV_CAMERAKEY skipped (no camera system)\n");
+			// Park until `count` more camera keys completed; the context's
+			// Snap analog resumes the thread (src/ScriptThread.cpp:690-702).
+			int count = readUByte(t);
+			if (!env_.ctx->cameraActive()) break;   // non-camera states consume the arg (:700-701)
+			std::fprintf(stderr, "[script] ADV_CAMERAKEY resumes=%d\n", count);
+			env_.ctx->advanceCameraKey(t, count);  // parks via unpauseTime=-1
+			n = 2;
 			break;
 		}
 
 		case Enums::EV_CAMERA_STR: {
+			// Cinematic subtitle/title (src/ScriptThread.cpp:519-543):
+			// packed u16 = str id bits0-13 | bit14 showCinPlayer (portrait
+			// has no rewrite counterpart) | bit15 title; second u16 = ms.
 			int v = readUShort(t);
 			int timeMs = readUShort(t);
-			std::fprintf(stderr, "[script] CAMERA_STR str=%d time=%d skipped (no camera system)\n", v & 0x3FFF, timeMs);
+			int strIdx = v & 0x3FFF;
+			std::string text = env_.loc->get(kTextMap, strIdx);
+			if ((v & 0x8000) != 0) {
+				env_.hud->setCinTitle(text, timeMs);
+				std::fprintf(stderr, "[script] CAMERA_STR TITLE str=%d \"%s\" time=%dms\n",
+					strIdx, text.c_str(), timeMs);
+			} else {
+				env_.hud->setSubtitle(text, timeMs);
+				std::fprintf(stderr, "[script] CAMERA_STR SUBTITLE str=%d \"%s\" time=%dms\n",
+					strIdx, text.c_str(), timeMs);
+			}
 			break;
 		}
 
 		case Enums::EV_DIALOG: {
-			// Dialogs-lite bring-up: legacy startDialog switches to ST_DIALOG,
-			// claims skipAdvanceTurn and parks the thread at unpauseTime=-1
-			// (src/ScriptThread.cpp:545-585); DialogSystem::closeDialog resumes
-			// it via dialogThread->run() (src/DialogSystem.cpp:559-562). The
-			// port shows the text through Hud and lets GameContext route the
-			// dismiss key (Action::Use == ACTION_FIRE) to resumeThread.
+			// Full dialogs (spec GROUP 1): legacy decodes style = lo nibble,
+			// flags = hi nibble, then startDialog/enqueueHelp and parks the
+			// thread at unpauseTime == -1 (src/ScriptThread.cpp:545-584).
 			int strId = readUByte(t);
-			int styleByte = readUByte(t);
-			std::string text = env_.loc->get(kTextMap, strId); // loadMapStringID analog; map00 -> kTextMap
-			std::fprintf(stderr, "[script] DIALOG str=%d style=%d type=%d \"%s\" (dialog-lite)\n",
-				strId, styleByte & 0xF, styleByte >> 4, text.c_str());
-			t->unpauseTime = -1;                               // external resume on dismiss (:582)
-			if (!env_.ctx->enterScriptDialog(t)) {             // ST_DIALOG modal analog
-				// Refused (already modal): this thread just stays frozen at -1,
-				// exactly like legacy background threads under ST_DIALOG
-				// (src/Game.cpp:3259). No text swap, no turn claim, no re-park.
-				n = 2;
+			int packed = readUByte(t);
+			int style = packed & 0xF;                          // n32 (:550)
+			int flags = packed >> 4;                           // n31 (:549)
+			// ST_AUTOMAP force-exit (:551-554): no automap state in the subset.
+			if (env_.game->skipDialog) {                       // (:555-557)
+				std::fprintf(stderr, "[script] DIALOG str=%d style=%d skipped (skipDialog)\n", strId, style);
 				break;
 			}
-			env_.hud->showDialogMessage(text);
-			env_.game->skipAdvanceTurn = true;                 // src/ScriptThread.cpp:580-581
+			// Styles 6/7/1 clear player->inCombat (:558-560): combat not ported.
+			if (style == 2) {
+				// Style 2 opens NO box — it enqueues a help popup bound to this
+				// thread's pool index (:561-573). player->prevWeapon save is
+				// not ported (no weapon-swap restore path).
+				if (!env_.dialogs->enqueueHelpDialog(kTextMap, strId, indexOf(t))) {
+					break;                         // queue full -> no park
+				}
+			} else {
+				env_.dialogs->startDialog(t, kTextMap, strId, style, flags, true);  // (:574-579)
+			}
+			env_.game->skipAdvanceTurn = true;                 // (:580-581)
 			env_.game->queueAdvanceTurn = false;
+			t->unpauseTime = -1;                               // external resume on close (:582)
 			n = 2;
 			break;
 		}
@@ -658,6 +777,17 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		case Enums::EV_STOPSOUND: {
 			int id = readUByte(t);
 			std::fprintf(stderr, "[script] STOPSOUND id=%d\n", id + 1000);
+			break;
+		}
+
+		case Enums::EV_SPAWN_PARTICLES: {
+			// u8 packed(count<<3|color, bit8=absolute-tile mode), u16 pos,
+			// i8 z(+48) (src/ScriptThread.cpp:921-936); no particle system yet.
+			int packed = readUByte(t);
+			readUShort(t);                // sprite id or packed tile pos
+			readUByte(t);                 // dz (+48)
+			std::fprintf(stderr, "[script] SPAWN_PARTICLES count=%d color=%d skipped\n",
+				(packed >> 3) & 0xF, packed & 0x7);
 			break;
 		}
 
@@ -715,6 +845,57 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
+		case Enums::EV_MAKE_CORPSE: {    // src/ScriptThread.cpp:1614-1625
+			int sprite = readUShort(t) & 0xFFF;
+			int dstX = readUByte(t);                 // dst tile x
+			int dstY = readUByte(t);                 // dst tile y
+			Entity* ent = env_.game->findEntityBySprite(sprite);
+			// Legacy corpsifies only entities with a Monster struct
+			// (:1618-1620), else silent no-op; EntityMonster is not ported,
+			// the monster-family def check stands in.
+			if (ent == nullptr || !ent->isMonster()) {
+				std::fprintf(stderr, "[script] MAKE_CORPSE sprite=%d skipped (no monster entity)\n", sprite);
+				break;
+			}
+			env_.game->corpsifyMonster(ent, (dstX << 6) + 32, (dstY << 6) + 32); // pixel tile-centers
+			std::fprintf(stderr, "[script] MAKE_CORPSE sprite=%d -> corpse @ tile %d,%d\n",
+				sprite, dstX, dstY);
+			break;
+		}
+
+		// No-operand / one-byte HUD+fog toggles on the map00 init path
+		// (src/ScriptThread.cpp:1710-1726); fog effects have no rewrite
+		// target yet.
+		case Enums::EV_ENTITY_BREATHES: {  // src/ScriptThread.cpp:1907-1920
+			// Sits between the squad walk-in and the imp parabola of camera 5;
+			// consuming it keeps that thread alive (info bit 0x20000000 has no
+			// rewrite consumer yet).
+			int sprite = readUByte(t);
+			int mode = readUByte(t);
+			Entity* ent = env_.game->findEntityBySprite(sprite);
+			if (ent != nullptr) {
+				if (mode == 1) ent->info &= ~0x20000000;
+				else if (mode == 0) ent->info |= 0x20000000;
+			}
+			break;
+		}
+
+		case Enums::EV_TOGGLE_OVERLAY:
+			env_.hud->setCockpitOverlay(!env_.hud->cockpitOverlay());   // (:1710-1714)
+			std::fprintf(stderr, "[script] TOGGLE_OVERLAY -> %d\n",
+				env_.hud->cockpitOverlay() ? 1 : 0);
+			break;
+
+		case Enums::EV_FOG_AFFECTS_SKYMAP:
+			readUByte(t);
+			std::fprintf(stderr, "[script] FOG_AFFECTS_SKYMAP skipped\n");
+			break;
+
+		case Enums::EV_ENABLE_HELP:
+			readUByte(t);
+			std::fprintf(stderr, "[script] ENABLE_HELP skipped (no help system)\n");
+			break;
+
 		case Enums::EV_DAMAGEPLAYER: {
 			int dmg = readByte(t);
 			int arm = readByte(t);
@@ -747,10 +928,23 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
-		case Enums::EV_SCREEN_SHAKE: {
+		case Enums::EV_SCREEN_SHAKE: {            // src/ScriptThread.cpp:1228-1245
 			int v = readUShort(t);
-			std::fprintf(stderr, "[script] SCREEN_SHAKE dur=%d dx=%d dy=%d skipped\n",
-				((v >> 14) & 3) + 1, ((v >> 7) & 0x7F) + 1, (v & 0x7F) + 1);
+			int durUnits = (v >> 14) & 0x3;       // n90 (:1231-1234), always ++'d to 1..4
+			if (durUnits >= 0) ++durUnits;
+			int dx = (v >> 7) & 0x7F;             // n91: carries the DURATION ms
+			if (dx > 0) dx = (dx + 1) << 4;       // (:1235-1238)
+			int dy = v & 0x7F;                    // n92: vibration strength, unused here
+			if (dy > 0) dy = (dy + 1) << 4;       // (:1239-1242)
+			// Canvas::startShake(dx, durUnits, dy) — the dx field is the
+			// duration, durUnits*2 the amplitude (src/Canvas.cpp:1008-1011);
+			// vibration (dy) has no desktop counterpart.
+			if (env_.hud != nullptr) {
+				env_.hud->startShake(env_.ctx ? env_.ctx->upTimeMs : 0, dx,
+					2 * durUnits);
+				std::fprintf(stderr, "[script] SCREEN_SHAKE dur=%dms amp=%d\n",
+					dx, 2 * durUnits);
+			}
 			break;
 		}
 
@@ -775,16 +969,77 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		}
 
 		case Enums::EV_TURN_PLAYER: {
+			// Shortest-arc turn to facing dir<<7, 1024 = full circle
+			// (src/ScriptThread.cpp:1547-1574). bits0-2 target facing
+			// (=angle/128), bit3 animate (strict ==1 like legacy n34).
 			int b = readUByte(t);
-			std::fprintf(stderr, "[script] TURN_PLAYER dir=%d animate=%d skipped (teleport contract absent)\n",
-				b & 7, (b >> 3) & 1);
+			int viewAngle = env_.player->viewAngle & 0x3FF;
+			int destAngle = (b & 7) << 7;
+			if (destAngle - viewAngle > 512) destAngle -= 1024;
+			else if (destAngle - viewAngle < -512) destAngle += 1024;
+			if (viewAngle == destAngle) break;                 // already facing (:1560-1562)
+			if ((b >> 3) == 1) {                               // animated (:1563-1571)
+				env_.player->viewAngle = viewAngle;
+				env_.player->destAngle = destAngle;
+				env_.player->startRotation();
+				env_.ctx->gotoThread_ = t;         // resumed by the rotation arrival
+				t->unpauseTime = -1;
+				n = 2;
+			} else {                                           // instant snap (:1572)
+				env_.player->viewAngle = env_.player->destAngle = destAngle;
+			}
 			break;
 		}
 
 		case Enums::EV_GOTO: {
+			// Scripted player move (src/ScriptThread.cpp:593-661;
+			// cutscenes-camera.md §4). u16 packed: bits0-4 dstY tile,
+			// bits5-9 dstX tile, bits10-13 face dir (15 = keep angle),
+			// bit14 animated, bit15 advance-turn-after.
 			int v = readUShort(t);
-			std::fprintf(stderr, "[script] GOTO tile=%d,%d face=%d skipped (teleport contract absent)\n",
-				(v >> 5) & 0x1F, v & 0x1F, (v >> 10) & 0xF);
+			Player& p = *env_.player;
+			bool animate = (v & 0x4000) != 0;
+			p.destX = (((v >> 5) & 0x1F) << 6) + 32;           // (:604)
+			p.destY = ((v & 0x1F) << 6) + 32;                  // (:605)
+			p.destZ = env_.ctx->getHeight(p.destX, p.destY) + 36; // (:606)
+			int face = (v >> 10) & 0xF;
+			// TEMP [dbg] GOTO decode audit (remove after bug #1 verified)
+			std::fprintf(stderr, "[dbg] GOTO raw=0x%04X tile=%d,%d dest=%d,%d destZ=%d face=%d anim=%d adv=%d\n",
+				v, (v >> 5) & 0x1F, v & 0x1F, p.destX, p.destY, p.destZ, face, animate ? 1 : 0,
+				(v & 0x8000) ? 1 : 0);
+			// viewPitch/viewRoll zeroing (:608-610) n/a — no pitch/roll in the
+			// rewrite yet; knockbackDist=0 likewise.
+			if (animate) {
+				if (face != 15) {                              // shortest arc (:612-623)
+					int viewAngle = p.viewAngle & 0x3FF;
+					int destAngle = face << 7;
+					if (destAngle - viewAngle > 512) destAngle -= 1024;
+					else if (destAngle - viewAngle < -512) destAngle += 1024;
+					p.viewAngle = viewAngle;
+					p.destAngle = destAngle;
+				}
+				p.startRotation();                             // startRotation(false) (:624)
+				p.setZStep(p.destZ - p.viewZ);                 // (:625)
+				if (p.destX != p.viewX || p.destY != p.viewY || p.viewAngle != p.destAngle) {
+					env_.ctx->gotoThread_ = t;     // arrival resumes via tickPlaying (:627)
+					t->unpauseTime = -1;
+					n = 2;
+				}
+			} else {
+				p.viewX = p.destX;                             // snap (:636-638)
+				p.viewY = p.destY;
+				p.viewZ = p.destZ;
+				if (face != 15) {                              // ABSOLUTE angle (:639-642)
+					p.viewAngle = p.destAngle = face << 7;
+					env_.ctx->finishRotationFired();           // finishRotation(true) FACE events
+				}
+				if ((v & 0x8000) != 0) env_.game->advanceTurn(); // (:643-645)
+				if (env_.ctx->state != StateId::Camera) p.startRotation(); // (:646-649)
+				env_.ctx->gotoTriggered_ = true;   // destination events next tick (:653)
+			}
+			// relink()/clearEvents(1)/updateFacingEntity/invalidateRect
+			// (:656-659) n/a — player entity is unlinked and input events are
+			// consumed per tick already.
 			break;
 		}
 
@@ -824,19 +1079,124 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
-		case Enums::EV_LERPSCALE: {
-			readUShort(t);                // sprite/flags
-			readUShort(t);                // ms
-			readUByte(t);                 // dst scale
-			std::fprintf(stderr, "[script] LERPSCALE skipped (no lerp system)\n");
+		case Enums::EV_LERPSCALE: {                // src/ScriptThread.cpp:1453-1498
+			int packed = readUShort(t);
+			int sprite = packed >> 4;
+			int lsFlags = packed & 0xF;
+			int timeMs = readUShort(t);            // ms directly, no *100
+			int scaleByte = readUByte(t);
+			Game::SpriteLerp* ls = env_.game->allocLerpSprite(
+				t, sprite, (lsFlags & 0x2) != 0);
+			if (ls == nullptr) break;
+			const MapData& m = *env_.map;
+			ls->srcX = ls->dstX = m.mapSprites[sprite + 0 * m.numSprites];   // position/Z held
+			ls->srcY = ls->dstY = m.mapSprites[sprite + 1 * m.numSprites];
+			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).
+			ls->srcZ = ls->dstZ = m.mapSprites[sprite + 2 * m.numSprites]
+				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
+			ls->srcScale = m.mapSprites[sprite + 8 * m.numSprites];
+			ls->dstScale = scaleByte << 1;         // 64 = 1.0 (:1468)
+			Entity* ent = env_.game->findEntityBySprite(sprite);
+			if (ent != nullptr) ent->info |= 0x400000;   // (:1469-1472)
+			ls->startTime = env_.game->clockMs();
+			ls->travelTime = timeMs;
+			ls->flags = lsFlags & 0x3;
+			std::fprintf(stderr, "[script] LERPSCALE sprite=%d dstScale=%d t=%dms flags=%d\n",
+				sprite, ls->dstScale, timeMs, lsFlags);
+			if (timeMs == 0) {
+				env_.game->updateLerpSprite(ls);
+			} else {
+				if ((lsFlags & 0x2) != 0) evWait(t, timeMs);
+				if ((ls->flags & Game::SpriteLerp::kFlagAsync) == 0) {
+					env_.game->skipAdvanceTurn = true;
+					env_.game->queueAdvanceTurn = false;
+					t->unpauseTime = -1;
+					n = 2;
+				}
+			}
 			break;
 		}
 
-		case Enums::EV_ASSIGN_LOOTSET: {
+		case Enums::EV_LERPSPRITEPARABOLA:         // src/ScriptThread.cpp:1653-1708
+		case Enums::EV_LERPSPRITEPARABOLA_SCALE: { // :1962-2019
+			int op = bc[t->IP];                    // captured before operand reads advance IP
+			int packed = readInt(t);
+			int timeMs = readUShort(t);
+			int sprite = (packed >> 22) & 0x3FF;
+			int dstTileX = (packed >> 17) & 0x1F;
+			int dstTileY = (packed >> 12) & 0x1F;
+			int arcHeight = ((packed >> 4) & 0xFF) - 48;
+			int lsFlags = packed & 0xF;
+			int scaleByte = -1;
+			if (op == Enums::EV_LERPSPRITEPARABOLA_SCALE) {
+				scaleByte = readUByte(t);
+			}
+			Game::SpriteLerp* ls = env_.game->allocLerpSprite(
+				t, sprite, (lsFlags & 0x2) != 0);
+			if (ls == nullptr) break;
+			const MapData& m = *env_.map;
+			ls->dstX = 32 + (dstTileX << 6);       // (:1662-1663)
+			ls->dstY = 32 + (dstTileY << 6);
+			Entity* ent = env_.game->findEntityBySprite(sprite);   // info |= 0x400000; monster shadow bit CLEARED (:1672,1982)
+			if (ent != nullptr) ent->info |= 0x400000;
+			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
+			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
+			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).
+			ls->srcZ = m.mapSprites[sprite + 2 * m.numSprites]
+				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
+			// Relative landing height preserved (:1678): dstZ = h(dst)+srcZ-h(src).
+			ls->dstZ = env_.ctx->getHeight(ls->dstX, ls->dstY)
+				+ (ls->srcZ - env_.ctx->getHeight(ls->srcX, ls->srcY));
+			ls->srcScale =
+				m.mapSprites[sprite + 8 * m.numSprites];
+			ls->dstScale = (scaleByte >= 0) ? scaleByte << 1 : ls->srcScale;
+			ls->height = arcHeight;
+			ls->startTime = env_.game->clockMs();
+			ls->travelTime = timeMs;
+			ls->flags = (lsFlags & 0x3) | Game::SpriteLerp::kFlagParabola;   // (:1684-1685)
+			std::fprintf(stderr, "[script] %s sprite=%d tile=%d,%d h=%d t=%dms flags=%d\n",
+				op == Enums::EV_LERPSPRITEPARABOLA ? "LERPSPRITEPARABOLA"
+				                                   : "LERPSPRITEPARABOLA_SCALE",
+				sprite, dstTileX, dstTileY, arcHeight, timeMs, lsFlags);
+			if (timeMs == 0) {
+				env_.game->updateLerpSprite(ls);
+			} else {
+				if ((lsFlags & 0x2) != 0) evWait(t, timeMs);
+				if ((ls->flags & Game::SpriteLerp::kFlagAsync) == 0) {
+					env_.game->skipAdvanceTurn = true;
+					env_.game->queueAdvanceTurn = false;
+					t->unpauseTime = -1;
+					n = 2;
+				}
+			}
+			break;
+		}
+
+		case Enums::EV_ASSIGN_LOOTSET: { // src/ScriptThread.cpp:1782-1804
 			int sprite = readUShort(t) & 0xFFF;
 			int count = readUByte(t);
-			for (int i = 0; i < count; ++i) readUShort(t);
-			std::fprintf(stderr, "[script] ASSIGN_LOOTSET sprite=%d entries=%d skipped (no loot UI)\n", sprite, count);
+			// The entity resolves through mapSprites[S_ENT] (error 117 if
+			// none); operands are consumed regardless, entries only stored
+			// when the entity owns a lootSet (initspawn keeps it alive for
+			// monsters/corpses only), remaining slots zero-filled.
+			Entity* ent = env_.game->findEntityBySprite(sprite);
+			bool store = ent != nullptr && ent->hasLootSet;
+			int entries[Entity::kMaxCorpseLoot] = { 0, 0, 0 };
+			for (int i = 0; i < count; ++i) {
+				uint16_t entry = readUShort(t);
+				if (store && i < Entity::kMaxCorpseLoot) entries[i] = entry;
+			}
+			if (ent == nullptr) {
+				std::fprintf(stderr, "[script] ASSIGN_LOOTSET sprite=%d entries=%d Err117 (no entity)\n",
+					sprite, count);
+			} else if (store) {
+				for (int j = 0; j < Entity::kMaxCorpseLoot; ++j) ent->lootSet[j] = entries[j];
+				std::fprintf(stderr, "[script] ASSIGN_LOOTSET sprite=%d entries=%d [%X %X %X]\n",
+					sprite, count, ent->lootSet[0], ent->lootSet[1], ent->lootSet[2]);
+			} else {
+				std::fprintf(stderr, "[script] ASSIGN_LOOTSET sprite=%d entries=%d dropped (no lootSet)\n",
+					sprite, count);
+			}
 			break;
 		}
 

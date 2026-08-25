@@ -178,6 +178,12 @@ void SpriteBatch::flush() {
 		colorShader_.setVec2("uCanvasSize", (float)canvasWidth_, (float)canvasHeight_);
 	}
 
+	// Re-assert blend per flush: World3D leaves GL_BLEND disabled after its
+	// draws, and quads recorded before endFrame rasterize HERE (beginFrame's
+	// glEnable is long gone), which rendered kill-color pixels opaque.
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
 	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices_.size());
 
 	{

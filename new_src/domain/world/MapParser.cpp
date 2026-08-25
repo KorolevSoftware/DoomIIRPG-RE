@@ -168,6 +168,7 @@ bool MapParser::parse(const std::vector<uint8_t>& data, MapData& out) {
 		for (int a = 0; a < 6; ++a) {
 			perAxis[a] = r.readShort();
 			if (perAxis[a] < 0) perAxis[a] = 0;
+			cam.tweenCounts[a] = perAxis[a];
 			totalTweenBytes += perAxis[a];
 		}
 

@@ -31,7 +31,29 @@ bool RenderBackend::initialize(Window& window) {
 void RenderBackend::applyViewport(Window& window) {
 	int vx, vy, vw, vh;
 	window.computeViewport(vx, vy, vw, vh);
+	canvasVp_[0] = vx;
+	canvasVp_[1] = vy;
+	canvasVp_[2] = vw;
+	canvasVp_[3] = vh;
 	glViewport(vx, vy, vw, vh);
+}
+
+void RenderBackend::setCanvasViewport(int x, int y, int w, int h) {
+	if (canvasVp_[2] <= 0 || canvasVp_[3] <= 0 || w <= 0 || h <= 0) return;
+	float scaleX = static_cast<float>(canvasVp_[2]) / Window::kCanvasWidth;
+	float scaleY = static_cast<float>(canvasVp_[3]) / Window::kCanvasHeight;
+	float scale = scaleX < scaleY ? scaleX : scaleY;
+	// GL y-axis is bottom-up; canvas y is top-down.
+	int gx = canvasVp_[0] + static_cast<int>(x * scale);
+	int gy = canvasVp_[1] + static_cast<int>((Window::kCanvasHeight - y - h) * scale);
+	int gw = static_cast<int>(w * scale);
+	int gh = static_cast<int>(h * scale);
+	if (gw < 1 || gh < 1) return;
+	glViewport(gx, gy, gw, gh);
+}
+
+void RenderBackend::restoreCanvasViewport(Window& window) {
+	applyViewport(window);
 }
 
 void RenderBackend::beginFrame(Window& window) {

@@ -28,6 +28,14 @@ public:
 	// Ends the frame and presents the back buffer.
 	void endFrame(Window& window);
 
+	// Restricts drawing to a sub-rect of the letterboxed canvas, given in
+	// canvas coordinates (480x320 logical space, origin top-left). Cinematic
+	// letterbox analog of tinyGL setViewport(cinRect) (src/Canvas.cpp:1215).
+	void setCanvasViewport(int x, int y, int w, int h);
+
+	// Restores the full letterboxed canvas viewport.
+	void restoreCanvasViewport(Window& window);
+
 	// Flushes all pending draw calls to the back buffer without presenting.
 	// Used for readback/tests before the swap.
 	void flushFrame();
@@ -41,6 +49,8 @@ private:
 	SpriteBatch batch_;
 	Graphics2D g2d_;
 	bool initialized_ = false;
+	// Letterboxed canvas rect in drawable pixels, latched by applyViewport.
+	int canvasVp_[4] = { 0, 0, 0, 0 };
 };
 
 } // namespace newcore

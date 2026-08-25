@@ -26,9 +26,33 @@ public:
 	bool startup();
 
 	const Texture& imgCockpitOverlay() const { return imgCockpitOverlay_; }
+	// Shared UI sheet (tail arrows, scrollbar caps) and the dialog extras
+	// loaded for DialogSystem (hero portrait rows, page icons).
+	const Texture& imgUIImages() const { return imgUIImages_; }
+	const Texture& imgPortraitsSmall() const { return imgPortraitsSmall_; }
+	const Texture& imgPageUp() const { return imgPageUp_; }
+	const Texture& imgPageDown() const { return imgPageDown_; }
+	const Texture& imgPageOk() const { return imgPageOk_; }
 
 	void draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeight);
 	void drawOverlay(Graphics2D& g, int cinX, int cinY, int cinW);
+
+	// Screen shake (legacy Canvas::startShake + shakeTime/shakeIntensity/
+	// shakeX/shakeY, src/Canvas.cpp:1000-1018, src/Canvas.h:228-231).
+	// EV_SCREEN_SHAKE arms it; GameContext ticks it each quantum (the
+	// MovementController.cpp:381-388 randomize block) and applies the offsets
+	// to the rendered view (src/Render.cpp:2265-2270). Amplitude decays
+	// linearly to zero across the duration.
+	void startShake(int64_t nowMs, int durationMs, int intensity);
+	void tickShake(int64_t nowMs);
+	int shakeX() const { return shakeX_; }
+	int shakeY() const { return shakeY_; }
+
+	// Cockpit overlay raw toggle (legacy hud->cockpitOverlayRaw,
+	// src/Hud.h:57): written only by EV_TOGGLE_OVERLAY
+	// (src/ScriptThread.cpp:1710-1714), drawn during cinematics.
+	void setCockpitOverlay(bool on) { cockpitOverlay_ = on; }
+	bool cockpitOverlay() const { return cockpitOverlay_; }
 	void drawMonsterHealth(Graphics2D& g, int scrCx, int viewTop);
 	void drawWeaponSelection(Graphics2D& g, const Font& font);
 	void drawBubbleText(Graphics2D& g, const Font& font, int scrCx, int viewTop, int viewRight);
@@ -57,12 +81,17 @@ public:
 		importantTime_ = 0;
 	}
 	void clearImportantMessage() { hasImportant_ = false; importantText_.clear(); }
-	// Dialog-lite passthrough (task FIX B): gray bottom panel like the legacy
-	// script dialogs, NOT ticked by update() — persists until explicitly
-	// dismissed (legacy dialogs close on ACTION_FIRE,
-	// src/DialogSystem.cpp:34-48).
-	void showDialogMessage(const std::string& text) { dialogText_ = text; hasDialog_ = true; }
-	void clearDialogMessage() { hasDialog_ = false; dialogText_.clear(); }
+
+	// Cinematic text (EV_CAMERA_STR target, legacy hud->subTitleID/
+	// subTitleTime + cinTitleID/cinTitleTime: set by src/ScriptThread.cpp:
+	// 519-543, expired by src/Hud.cpp:787-798, cleared on ST_CAMERA entry by
+	// src/Canvas.cpp:1207-1210, drawn by drawCinematicText src/Hud.cpp:
+	// 447-491). Subtitle sits bottom-center at y=280, title top-center at
+	// y=1 (480x320 canvas); both shown for the operand duration.
+	void setSubtitle(const std::string& text, int durationMs);
+	void setCinTitle(const std::string& text, int durationMs);
+	void clearCinematicText();
+
 	void update(int timeMs);
 	void clearMessages() { hasCenterMessage_ = false; importantText_.clear(); }
 
@@ -89,7 +118,6 @@ private:
 	void drawArrowControls(Graphics2D& g);
 	void drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
 	void drawCenterMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
-	void drawDialogMessage(Graphics2D& g, const Font& font);
 
 	Texture imgPanelTop_;
 	Texture imgWeaponNormal_;
@@ -116,6 +144,10 @@ private:
 	Texture imgArrowRightPressed_;
 
 	Texture imgUIImages_;
+	Texture imgPortraitsSmall_;
+	Texture imgPageUp_;
+	Texture imgPageDown_;
+	Texture imgPageOk_;
 	Texture imgDamageVignette_;
 	Texture imgAttArrow_;
 	Texture imgHudTest_;
@@ -139,8 +171,6 @@ private:
 	bool hasImportant_ = false;
 	int importantTime_ = 0;          // style-3 messages auto-expire like the legacy queue
 	static constexpr int kImportantDurationMs = 3500;
-	bool hasDialog_ = false;         // dialog-lite: no timer, dismiss-driven
-	std::string dialogText_;
 
 	// Demo monster for the health bar.
 	bool monsterValid_ = false;
@@ -165,6 +195,30 @@ private:
 	int damageDir_ = -1;
 	int damageTime_ = 0;
 	int damageCount_ = 0;
+
+	// Cinematic text state (subTitleID/subTitleTime + cinTitleID/
+	// cinTitleTime analogs; duration-counted instead of gameTime-stamped).
+	bool hasSubtitle_ = false;
+	std::string subText_;
+	int subTitleTime_ = 0;
+	int subTitleDuration_ = 0;
+	bool hasCinTitle_ = false;
+	std::string cinTitleText_;
+	int cinTitleTime_ = 0;
+	int cinTitleDuration_ = 0;
+
+	// Cockpit overlay toggle (initially false like the legacy memset,
+	// src/Hud.cpp:24-26).
+	bool cockpitOverlay_ = false;
+
+	// Screen shake state (Canvas shakeTime/shakeIntensity/shakeX/shakeY
+	// analogs, src/Canvas.h:228-231).
+	int64_t shakeStartMs_ = 0;
+	int64_t shakeEndMs_ = 0;
+	int shakeIntensity_ = 0;
+	int shakeX_ = 0;
+	int shakeY_ = 0;
+	uint32_t shakeRng_ = 0x2A5F2A5F; // LCG stand-in for legacy app->nextByte()
 };
 
 } // namespace newcore

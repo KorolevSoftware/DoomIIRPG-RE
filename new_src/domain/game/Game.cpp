@@ -2,11 +2,48 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
 
 #include "domain/game/Enums.h"
 #include "domain/game/ScriptVM.h"
+#include "io/Localization.h"
+#include "io/Tables.h"
+#include "ui/Hud.h"
 
 namespace newcore {
+
+// Monster subtypes of the default-lootset table (src/Enums.h:71-79; the
+// constants are not ported into new_src Enums yet).
+enum {
+	kMonZombie = 0,
+	kMonCacodemon = 6,
+	kMonMancubus = 8,
+	kMonRevenant = 9,
+	kMonSentryBot = 11,
+};
+
+// Port of Entity::populateDefaultLootSet (src/Entity.cpp:1997-2048). The
+// default (imp etc.) branch fills a per-map joke string via
+// findRandomJokeItem (:2050+); that flavor table is not ported, so those
+// corpses stay empty (class-6 lines would never grant anyway).
+static void populateDefaultLootSet(Entity& e) {
+	e.hasLootSet = true;
+	e.lootSet[0] = e.lootSet[1] = e.lootSet[2] = 0;
+	if (e.def->eType == Enums::ET_CORPSE) {
+		if (e.def->eSubType != kMonSentryBot) e.lootSet[0] = 1089; // Health Pack x1 (INV_HEALTH_PACK=17)
+		return;
+	}
+	int s = e.getSprite();
+	switch (e.def->eSubType) {
+	case kMonZombie:    e.lootSet[0] = 0x600 | (s % 3 + 1); break;
+	case kMonCacodemon: e.lootSet[0] = 0x2100 | (s % 5 + 3); break;
+	case kMonMancubus:  e.lootSet[0] = 0x2140 | (s % 3 + 1); break;
+	case kMonRevenant:  e.lootSet[0] = 0x2140 | (s % 3 + 3); break;
+	case kMonSentryBot: e.lootSet[0] = 0x2040 | (s % 6 + 6); break;
+	default: break;
+	}
+}
+
 
 // ---- entityDb (32x32 tile lists) ----
 
@@ -51,10 +88,14 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	queueAdvanceTurn = false;
 	for (auto& a : doorAnims_) { a.active = false; a.door = nullptr; a.ownerThread = nullptr; }
 	for (auto& d : openDoors_) d = nullptr;
+	for (auto& ls : spriteLerps_) ls.hSprite = 0;
 
-	// Create door entities from TILE-flagged sprites whose tileNum+257 is a
-	// door (271-278). Legacy does the same in loadMapEntities: map tile
-	// +257 for TILE sprites, then EntityDefs::lookup(tileNum).
+	// Create entities from TILE-flagged sprites whose tileNum+257 resolves to
+	// a door (271-278), plus monster/corpse sprites so script loot opcodes
+	// and the pickup path have targets (legacy loadMapEntities gives every
+	// sprite an entity, src/Game.cpp:374-452; the rewrite limits itself to
+	// the families that participate in gameplay this phase — items/decor
+	// would change traceMove blocking).
 	int nextSlot = 2; // entities[0]=world, entities[1]=player (reserved)
 	for (int i = 0; i < map.numSprites; ++i) {
 		if (nextSlot >= kEntities) break;
@@ -63,18 +104,31 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		int tileNum = info & 0xFF;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
 		const EntityDef* def = (tileNum >= 0 && tileNum < 512) ? defs.lookup(tileNum) : nullptr;
-		if (tileNum < Enums::TILENUM_FIRST_DOOR || tileNum > Enums::TILENUM_LAST_DOOR) continue;
-		if (!def || def->eType != Enums::ET_DOOR) continue;
+		if (!def) continue;
+		if (def->eType == Enums::ET_DOOR) {
+			if (tileNum < Enums::TILENUM_FIRST_DOOR || tileNum > Enums::TILENUM_LAST_DOOR) continue;
+		} else if (def->eType != Enums::ET_MONSTER && def->eType != Enums::ET_CORPSE) {
+			continue;
+		}
 
 		Entity& e = entities_[nextSlot++];
 		e.def = def;
 		e.setSprite(i);
-		e.info |= Entity::kInfoActive;
+		if (def->eType == Enums::ET_DOOR) {
+			e.info |= Entity::kInfoActive;
+		} else {
+			// Placed corpse props spawn with info |= 0x420000
+			// (src/Entity.cpp:96-98); generalized to every monster/corpse.
+			e.info |= Entity::kInfoActive | Entity::kInfoActivated;
+			populateDefaultLootSet(e);
+		}
 		int x = map.mapSprites[i + 0 * map.numSprites];
 		int y = map.mapSprites[i + 1 * map.numSprites];
 		linkEntity(&e, x >> 6, y >> 6);
-		fprintf(stderr, "DOOR entity sprite=%d tile=%d (%d,%d) sub=%d\n",
-			i, tileNum, x >> 6, y >> 6, def->eSubType);
+		fprintf(stderr, "%s entity sprite=%d tile=%d (%d,%d) sub=%d loot=[%X %X %X]\n",
+			def->eType == Enums::ET_DOOR ? "DOOR" : "BODY",
+			i, tileNum, x >> 6, y >> 6, def->eSubType,
+			e.lootSet[0], e.lootSet[1], e.lootSet[2]);
 	}
 }
 
@@ -500,6 +554,186 @@ Entity* Game::findEntityBySprite(int sprite) {
 	return nullptr;
 }
 
+// Port of ScriptThread::corpsifyMonster (src/ScriptThread.cpp:2249-2266),
+// see Game.h for the elided parts. Callers guarantee a monster-family
+// entity (legacy requires entity->monster != nullptr, src/
+// ScriptThread.cpp:1618-1620).
+void Game::corpsifyMonster(Entity* e, int x, int y) {
+	if (!e || !e->isMonster() || !map_ || !defs_) return;
+	int s = e->getSprite();
+	if (s < 0 || s >= map_->numSprites) return;
+	int n = map_->numSprites;
+
+	// Visual death state: anim/frame overlay bits 8-14 = 0x7000, low byte
+	// keeps the original art tileNum (src/ScriptThread.cpp:2253-2255).
+	map_->mapSpriteInfo[s] = (map_->mapSpriteInfo[s] & 0xFFFE00FF) | 0x7000;
+
+	// Position to the tile center; stored S_Z is raw-relative in this
+	// rewrite (the renderer adds terrain per frame), so write the bare
+	// +32 offset — legacy writes getHeight+32 into its terrain-baked
+	// storage (src/ScriptThread.cpp:2256-2257).
+	map_->mapSprites[s + 0 * n] = (int16_t)x;
+	map_->mapSprites[s + 1 * n] = (int16_t)y;
+	map_->mapSprites[s + 2 * n] = 32;
+
+	// Corpse entity info: keep the sprite id, add corpse/inactive marker +
+	// active visibility + activated (src/ScriptThread.cpp:2258-2259).
+	e->info = (e->info & 0xFFFF) | Entity::kInfoCorpse | Entity::kInfoActive |
+		Entity::kInfoActivated;
+
+	// Def swap: same subtype/parm, now an ET_CORPSE def
+	// (src/ScriptThread.cpp:2261-2263).
+	const EntityDef* corpseDef =
+		defs_->find(Enums::ET_CORPSE, e->def ? e->def->eSubType : 0,
+		            e->def ? e->def->parm : -1);
+	if (corpseDef != nullptr) e->def = corpseDef;
+
+	// Relink at the new tile (:2264-2265). checkMonsterDeath sound omitted.
+	linkEntity(e, x >> 6, y >> 6);
+}
+
+// See Game.h. Adjacent-tile stand-in for the legacy one-tile trace distance
+// (tileDistances[0] = 4096 = distFrom squared across one tile).
+Entity* Game::findLootableCorpseFacing(int px, int py, int stepX, int stepY) {
+	int tx = (px + stepX) >> 6;
+	int ty = (py + stepY) >> 6;
+	for (Entity* e = findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
+		if (!e->isCorpse()) continue;
+		if (!(e->info & Entity::kInfoLinked)) continue;   // unlinked = not traceable
+		// Looted gate: prop corpses count prior loots in param
+		// (src/PlayingInputHandler.cpp:324-330); the monster flag 0x800 is
+		// unified into param here (EntityMonster not ported).
+		if (e->param != 0) continue;
+		if (!e->hasLootSet) continue;                     // (:325/:331)
+		return e;
+	}
+	return nullptr;
+}
+
+// %NN arg substitution, decode rules of Localization composeText
+// (src/Text.cpp:281-326; DialogSystem.cpp:85-115 in the rewrite).
+static void composeArgs(std::string& text, const std::string* args, int numArgs) {
+	std::string out;
+	for (size_t i = 0; i < text.size(); ++i) {
+		char c = text[i];
+		if (c == '%' && i + 2 < text.size() &&
+		    text[i + 1] >= '0' && text[i + 1] <= '9' &&
+		    text[i + 2] >= '0' && text[i + 2] <= '9') {
+			int a = (text[i + 1] - '0') * 10 + (text[i + 2] - '0') - 1; // first arg is %01
+			i += 2;
+			if (a >= 0 && a < numArgs) out += args[a];
+		} else {
+			out += c;
+		}
+	}
+	text.swap(out);
+}
+
+static std::string itemLongName(const EntityDefs& defs, const Localization& loc,
+                                int cls, int idx) {
+	const EntityDef* d = defs.find(Enums::ET_ITEM, cls, idx); // src/LootingSystem.cpp:240
+	if (d == nullptr) return {};
+	return Localization::titleOf(loc.get(kTextIngame, d->longName));
+}
+
+// Direct-grant loot pool close (see Game.h). Replaces the ST_LOOTING UI:
+// poolLoot's immediate looted-marking + entry pooling and giveLootPool's
+// grant run back-to-back (src/LootingSystem.cpp:154-221, :281-307).
+void Game::lootCorpse(Entity* corpse, const Localization& loc, Hud& hud,
+                      Player& player, const Tables* tables) {
+	(void)hud;
+	// Mark the source looted BEFORE looking at contents (src/LootingSystem.
+	// cpp:163-179): ++param on props; the monster flag 0x800 unifies into
+	// param; info |= 0x400000.
+	++corpse->param;
+	corpse->info |= Entity::kInfoActivated;
+
+	int pool[Entity::kMaxCorpseLoot];
+	int numPool = 0;
+	int credits = 0;
+	bool gotKeycard = false;                               // parm 19/20 -> str84
+	std::string itemNames;                                 // str85 arg
+
+	if (corpse->hasLootSet) {
+		for (int i = 0; i < Entity::kMaxCorpseLoot; ++i) { // stop at first zero slot (:181-183)
+			int entry = corpse->lootSet[i];
+			if (entry == 0) break;
+			int cls = entry >> 12 & 0xF;
+			if (cls == 6) continue;                        // display-only flavor line
+			int cnt = entry & 0x3F;
+			int idx = (entry & 0xFC0) >> 6;
+			if (cls == 0 && idx == 24) { credits += cnt; continue; }      // (:200-207)
+			if (cls == 0 && idx == 25) { credits += cnt * 100; continue; }
+			bool merged = false;
+			for (int k = 0; k < numPool; ++k) {            // dupes merge, saturated (:209-216)
+				if ((entry >> 6) == (pool[k] >> 6)) {
+					pool[k] = (pool[k] & 0xFFFFFFC0) | ((cnt + (pool[k] & 0x3F)) & 0x3F);
+					merged = true;
+					break;
+				}
+			}
+			if (!merged && numPool < Entity::kMaxCorpseLoot) pool[numPool++] = entry;
+		}
+	}
+
+	// Grant pass (src/LootingSystem.cpp:284-297): give() results are ignored
+	// by legacy too; weapon entries add starter ammo max(usage,10).
+	for (int i = 0; i < numPool; ++i) {
+		int cls = pool[i] >> 12 & 0xF;
+		int idx = (pool[i] & 0xFC0) >> 6;
+		int cnt = pool[i] & 0x3F;
+		player.give(cls, idx, cnt);
+		if (cls == 1 && tables != nullptr &&
+		    (size_t)(idx * 9 + 5) < tables->weaponData.size()) {
+			int ammoType = tables->weaponData[idx * 9 + 4];   // AMMOTYPE (src/Combat.h:26-36)
+			int usage = tables->weaponData[idx * 9 + 5];      // AMMOUSAGE
+			if (usage > 0) player.give(2, ammoType, std::max(usage, 10));
+		}
+		if (cls == 0 && (idx == 19 || idx == 20)) gotKeycard = true; // repaintFlags 0x4 analog
+		const std::string& name = itemLongName(defs_ ? *defs_ : EntityDefs(), loc, cls, idx);
+		if (!name.empty()) {
+			if (!itemNames.empty()) itemNames += ", ";
+			itemNames += name;
+		}
+		std::fprintf(stderr, "[loot] give class=%d idx=%d cnt=%d\n", cls, idx, cnt);
+	}
+	if (credits != 0) {
+		player.give(0, 24, credits);                       // (:299-302)
+		std::fprintf(stderr, "[loot] credits=%d\n", credits);
+	}
+	std::fprintf(stderr, "[loot] sound 1055\n");           // menu-settle blip analog
+
+	// HUD feedback through the existing center-message path. Legacy shows the
+	// loot LIST here instead of a toast (msg analogs from touchedItem,
+	// src/Entity.cpp:171-190).
+	std::string msg;
+	if (gotKeycard) {
+		msg = loc.get(kTextMain, 84);                      // "You got the key-card" (no args)
+	} else if (!itemNames.empty()) {
+		msg = loc.get(kTextMain, 85);                      // "Got %01"
+		std::string args[1] = { itemNames };
+		composeArgs(msg, args, 1);
+		if (credits != 0) {
+			msg += ", ";
+			msg += std::to_string(credits);
+			msg += " ";
+			std::string crName = defs_ ? itemLongName(*defs_, loc, 0, 24) : std::string();
+			if (crName.empty()) crName = Localization::titleOf(loc.get(kTextIngame, 157));
+			msg += crName;
+		}
+	} else if (credits != 0) {
+		msg = loc.get(kTextMain, 86);                      // "Got %01 %02."
+		std::string args[2] = { std::to_string(credits),
+			defs_ ? itemLongName(*defs_, loc, 0, 24) : std::string() };
+		if (args[1].empty()) args[1] = Localization::titleOf(loc.get(kTextIngame, 157));
+		composeArgs(msg, args, 2);
+	} else {
+		msg = loc.get(kTextMain, 228);                     // "None found!" empty-corpse fallback
+	}
+	hud.showCenterMessage(msg, 0xAA000000, 3500);
+	// foundLoot stat bump not ported (run counters absent).
+}
+
 void Game::touchTile(int x, int y, bool b) {
 	// Legacy touchTile drives automap uncover + pickups (absent this phase).
 	(void)x; (void)y; (void)b;
@@ -526,6 +760,132 @@ int Game::eventFlagForDirection(int dx, int dy) {
 		return Enums::EVFL_MOD_WEST;
 	}
 	return (dy > 0) ? Enums::EVFL_MOD_SOUTH : Enums::EVFL_MOD_NORTH;
+}
+
+// ---- Script sprite lerps (docs/original-code/lerp-opcodes.md) ----
+
+// Pool lookup (src/Game.cpp:3028-3066): a still-active lerp for the same
+// sprite reuses its slot, otherwise the first free slot is taken. Legacy
+// also resets monster anim state on reuse — no EntityMonster here.
+Game::SpriteLerp* Game::allocLerpSprite(ScriptThread* thread, int sprite, bool block) {
+	SpriteLerp* reuse = nullptr;
+	SpriteLerp* freeSlot = nullptr;
+	for (SpriteLerp& ls : spriteLerps_) {
+		if (ls.hSprite == sprite + 1) { reuse = &ls; break; }   // hSprite stores sprite+1 (:3030)
+		if (freeSlot == nullptr && ls.hSprite == 0) freeSlot = &ls;
+	}
+	SpriteLerp* ls = (reuse != nullptr) ? reuse : freeSlot;
+	if (ls == nullptr) {
+		// Legacy fatals with Error(36) ERR_MAX_LERPSPRITES
+		// (src/Enums.h:1050); bring-up logs and reports failure instead.
+		std::fprintf(stderr, "[lerp] ERR_MAX_LERPSPRITES (36): pool exhausted\n");
+		return nullptr;
+	}
+	int flags = 0;
+	if (reuse == nullptr) {
+		*ls = SpriteLerp{};
+		ls->hSprite = sprite + 1;
+	}
+	if (thread == nullptr) ls->flags |= SpriteLerp::kFlagAsync; // (:3068-3070)
+	if (block) flags |= SpriteLerp::kFlagAnimatingEffect;       // (:3071-3074);
+	                                                            // the opcode tail overwrites flags again
+	ls->flags |= flags;
+	ls->ownerThread = thread;
+	return ls;
+}
+
+// Terrain-height bias between raw stored S_Z and the legacy baked space
+// (getHeight == heightMap << 3 with 11-bit coord masks, src/Render.cpp:2444-2451;
+// z-sprite -32 nudge from postProcessSprites, :2465-2467).
+int Game::spriteZBias(int sprite, int x, int y) const {
+	if (!map_ || map_->heightMap.empty()) return 0;
+	int h = map_->heightMap[((y & 0x7FF) >> 6) * 32 + ((x & 0x7FF) >> 6)] << 3;
+	if (sprite >= map_->numNormalSprites) h -= 32;
+	return h;
+}
+
+// Single tick of updateLerpSprite (src/Game.cpp:2855-2956), script-lerp
+// subset: relink keeps linked entities on their tile; S_NORELINK/
+// ENT_NORELINK never apply to script lerps and staleView culling,
+// walk-frame anim + boss footsteps have no rewrite counterpart yet.
+int Game::updateLerpSprite(SpriteLerp* ls) {
+	if (!map_ || ls->hSprite == 0) return 4;
+	const int n = map_->numSprites;
+	const int sprite = ls->hSprite - 1;
+
+	int elapsed = lerpClock_ - ls->startTime;
+	if (elapsed >= ls->travelTime) {                       // completion (:2868-2870)
+		freeLerpSprite(ls);
+		return 3;
+	}
+	if (elapsed < 0) return 4;
+
+	int p = 0;
+	if (ls->travelTime != 0) p = (elapsed << 16) / (ls->travelTime << 8);   // :2876-2878
+
+	int x = ls->srcX + (p * ((ls->dstX - ls->srcX) << 8) >> 16);            // :2879-2882
+	int y = ls->srcY + (p * ((ls->dstY - ls->srcY) << 8) >> 16);
+	int scale = ls->srcScale + (p * ((ls->dstScale - ls->srcScale) << 8) >> 16);
+	int z = ls->srcZ + (p * ((ls->dstZ - ls->srcZ) << 8) >> 16);
+	if ((ls->flags & SpriteLerp::kFlagParabola) != 0 && sinTable_ != nullptr) {
+		z += (((*sinTable_)[(p << 1) & 0x3FF] >> 8) * (ls->height << 8)) >> 16;   // :2883-2893
+	}
+
+	map_->mapSprites[sprite + 0 * n] = (int16_t)x;
+	map_->mapSprites[sprite + 1 * n] = (int16_t)y;
+	map_->mapSprites[sprite + 8 * n] = (int16_t)scale;
+	// z interpolates in legacy baked space; storage is raw-relative, so
+	// strip the terrain bias of the tile currently written to.
+	int zStored = z - spriteZBias(sprite, x, y);
+	map_->mapSprites[sprite + 2 * n] = (int16_t)zStored;
+
+	// TEMP [dbg] lerp audit (remove after user confirms visually)
+	{
+		static const int dbgSprites[] = {7, 9, 10, 135, 150};
+		for (int di = 0; di < 5; ++di) {
+			if (sprite != dbgSprites[di]) continue;
+			static int lastBucket[5] = {-1, -1, -1, -1, -1};
+			int bucket = elapsed / 100;
+			if (bucket != lastBucket[di]) {
+				lastBucket[di] = bucket;
+				std::fprintf(stderr, "[dbg] tick spr=%d t=%d/%dms p=%d XYZ=%d,%d,%d (bakedZ=%d)\n",
+					sprite, elapsed, ls->travelTime, p, x, y, zStored, z);
+			}
+			break;
+		}
+	}
+
+	// Per-tick relinkSprite analog: keep a LINKED entity on its tile.
+	Entity* ent = findEntityBySprite(sprite);
+	if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0) {
+		int tx = x >> 6, ty = y >> 6;
+		if ((ent->linkIndex % 32) != tx || (ent->linkIndex / 32) != ty) {
+			linkEntity(ent, tx, ty);
+		}
+	}
+	return 0;
+}
+
+// Completion snap (freeLerpSprite head, src/Game.cpp:3078-3119, subset):
+// dst X/Y/(Z)/scale written back, entity relinked to the dst tile, slot
+// freed. Door/secret/chicken tails are not ported (door lerps use DoorAnim).
+void Game::freeLerpSprite(SpriteLerp* ls) {
+	const int sprite = ls->hSprite - 1;
+	if (map_ && sprite >= 0) {
+		const int n = map_->numSprites;
+		map_->mapSprites[sprite + 0 * n] = (int16_t)ls->dstX;
+		map_->mapSprites[sprite + 1 * n] = (int16_t)ls->dstY;
+		map_->mapSprites[sprite + 2 * n] =
+			(int16_t)(ls->dstZ - spriteZBias(sprite, ls->dstX, ls->dstY));
+		map_->mapSprites[sprite + 8 * n] = (int16_t)ls->dstScale;
+		Entity* ent = findEntityBySprite(sprite);
+		if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0 &&
+		    ((ent->linkIndex % 32) != (ls->dstX >> 6) || (ent->linkIndex / 32) != (ls->dstY >> 6))) {
+			linkEntity(ent, ls->dstX >> 6, ls->dstY >> 6);
+		}
+	}
+	ls->hSprite = 0;
+	ls->ownerThread = nullptr;
 }
 
 void Game::updateDoors() {
@@ -574,6 +934,24 @@ void Game::updateDoors() {
 }
 
 void Game::update(int dtMs) {
+	lerpClock_ += dtMs;
+	// updateLerpSprites sweep (src/Game.cpp:2985-3021): completed blocking
+	// lerps resume their owner AFTER the loop (legacy callThreads[] flush).
+	ScriptThread* done[kMaxLerpSprites];
+	int numDone = 0;
+	for (SpriteLerp& ls : spriteLerps_) {
+		if (ls.hSprite == 0) continue;
+		ScriptThread* owner = ls.ownerThread;
+		int flags = ls.flags;
+		int r = updateLerpSprite(&ls);
+		if ((r & 1) != 0 && owner != nullptr && (flags & SpriteLerp::kFlagAsync) == 0 &&
+		    numDone < kMaxLerpSprites) {
+			done[numDone++] = owner;
+		}
+	}
+	for (int i = 0; i < numDone; ++i) {
+		if (vm_ != nullptr) vm_->resumeThread(done[i]);
+	}
 	for (auto& a : doorAnims_) {
 		if (!a.active) continue;
 		a.t += dtMs;
