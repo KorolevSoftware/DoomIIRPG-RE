@@ -297,7 +297,12 @@ void ScriptVM::updateScriptVars() {
 	vars[2] = (short)(env_.player->viewX >> 6);
 	vars[3] = (short)(env_.player->viewY >> 6);
 	vars[8] = env_.player->inventory[24];
-	vars[14] = 0;                                  // character choice
+	// characterChoice: marine. Legacy forces {1,2,3} from the intro select
+	// (src/IntroSequenceManager.cpp:599/628/676, marine=1) and re-stamps
+	// scriptStateVars[14] each run (src/Game.cpp:3468); no select UI yet —
+	// hardcode marine so EVT 617 takes the v14==1 branch (hides doorway
+	// walkers 10+9 @IPs 3297/3299, docs/research/2026-08-26-choice-branch.md).
+	vars[14] = 1;
 	vars[16] = 0;                                  // familiar
 	// vars[12] (difficulty) is stamped at load only (src/Game.cpp:3461-3471).
 }
