@@ -510,7 +510,15 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 						(def->eSubType == 1 || def->eSubType == 2 || (def->eSubType == 0 && def->parm == 21))) {
 						std::fprintf(stderr, "[script] HIDE sprite=%d foundLoot\n", sprite);
 					} else if (def && def->eType == 2) {
-						std::fprintf(stderr, "[script] HIDE sprite=%d corpseify (no monsters yet)\n", sprite);
+						// Monster branch (src/ScriptThread.cpp:836-840):
+						// corpsifyMonster receives TILE indices where pixel coords
+						// are expected (legacy quirk, kept verbatim), then
+						// removeEntity re-hides the sprite and unlinks — net
+						// effect: the monster VANISHES (no visible corpse).
+						env_.game->corpsifyMonster(ent, ent->linkIndex % 32, ent->linkIndex / 32);
+						env_.game->removeEntity(ent);
+						ent->info |= Entity::kInfoActivated;           // :839 (0x400000)
+						std::fprintf(stderr, "[script] HIDE sprite=%d corpsify+remove\n", sprite);
 					}
 				}
 			}
@@ -845,10 +853,35 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
-		case Enums::EV_DAMAGEMONSTER: {
+		case Enums::EV_DAMAGEMONSTER: {          // src/ScriptThread.cpp:704-724
 			int sprite = readUByte(t);
-			readByte(t);                  // damage
-			std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d skipped (no monsters)\n", sprite);
+			int dmg = readByte(t);
+			std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d dmg=%d\n", sprite, dmg);
+			Entity* ent = env_.game->findEntityBySprite(sprite);
+			if (ent == nullptr || !ent->isMonster()) {
+				std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d skipped (%s)\n",
+					sprite, ent == nullptr ? "no entity" : "not a monster");
+				break;
+			}
+			// Legacy pains then dies when lethal; died(false,nullptr) leaves the
+			// VISIBLE corpse in place (death frame 0x7000, src/Entity.cpp:1627).
+			// No health model yet, so every scripted hit is treated as lethal —
+			// map00's only site (IP 2831, imp 15, dmg 127) is lethal anyway.
+			const MapData& m = *env_.map;
+			env_.game->corpsifyMonster(ent, m.mapSprites[sprite + 0 * m.numSprites],
+				m.mapSprites[sprite + 1 * m.numSprites]);
+			break;
+		}
+
+		case Enums::EV_DISABLED_WEAPONS: {
+			// Legacy stores the s16 bitmask into player->disabledWeapons and may
+			// switch away from a masked weapon (src/ScriptThread.cpp:1443-1451);
+			// combat/weapon UI has no rewrite counterpart yet, so consume the
+			// operand and continue. Unblocks the elevator-cinematic tail
+			// (map00 IP 2835 — the thread killer of research
+			// 2026-08-25-unhandled-script-events.md §1.1).
+			int weaponMask = readShort(t);
+			std::fprintf(stderr, "[script] DISABLED_WEAPONS mask=%d consumed\n", weaponMask);
 			break;
 		}
 

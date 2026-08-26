@@ -185,6 +185,12 @@ public:
 	// and name refresh are not ported yet.
 	void corpsifyMonster(Entity* e, int x, int y);
 
+	// Port of Game::removeEntity (src/Game.cpp:183-193): hide the bound
+	// sprite (info bit 0x10000) and unlink it from entityDb. The
+	// player->facingEntity clear has no counterpart (facingEntity not
+	// ported).
+	void removeEntity(Entity* e);
+
 	// Faced lootable corpse: legacy ACTION_FIRE traces forward and selects an
 	// ET_CORPSE candidate exactly one tile away (dist == tileDistances[0])
 	// that is not yet looted and owns a lootSet (src/PlayingInputHandler.cpp:

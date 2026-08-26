@@ -135,6 +135,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		if (nextSlot >= kEntities) break;
 		int info = map.mapSpriteInfo[i];
 		if (info & 0x10000) continue; // hidden
+		if (info & Enums::SPRITE_FLAG_NOENTITY) continue; // no-entity sprites never spawn entities (src/Game.cpp:398-400)
 		int tileNum = info & 0xFF;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
 		const EntityDef* def = (tileNum >= 0 && tileNum < 512) ? defs.lookup(tileNum) : nullptr;
@@ -665,6 +666,18 @@ void Game::corpsifyMonster(Entity* e, int x, int y) {
 		map_->mapSpriteInfo[s] & 0xFF00);
 }
 
+// Port of Game::removeEntity (src/Game.cpp:183-193); see Game.h.
+void Game::removeEntity(Entity* e) {
+	if (!e || !map_) return;
+	int s = e->getSprite();
+	if ((e->info & 0xFFFF) != 0 && s >= 0 && s < map_->numSprites) {   // :186-188
+		map_->mapSpriteInfo[s] |= 0x10000;
+	}
+	if ((e->info & Entity::kInfoLinked) != 0) {                        // :189-191
+		unlinkEntity(e);
+	}
+}
+
 // See Game.h. Adjacent-tile stand-in for the legacy one-tile trace distance
 // (tileDistances[0] = 4096 = distFrom squared across one tile).
 Entity* Game::findLootableCorpseFacing(int px, int py, int stepX, int stepY) {
@@ -1070,6 +1083,14 @@ void Game::freeLerpSprite(SpriteLerp* ls) {
 }
 
 void Game::updateDoors() {
+	// Completed-animation owners are collected and resumed AFTER the loop
+	// (legacy updateLerpSprites -> callThreads flush, src/Game.cpp:2985-3013):
+	// BOTH directions bind the calling thread (EV_DOOROP interactive ops pass
+	// it regardless of open/close, src/ScriptThread.cpp:751-779), so a
+	// blocking scripted close must resume too — otherwise the script strand
+	// dies parked between its close and the ops after it.
+	ScriptThread* done[kOpenDoors];
+	int numDone = 0;
 	for (auto& a : doorAnims_) {
 		if (!a.active) continue;
 		if (a.dur <= 0) a.t = a.dur;
@@ -1104,16 +1125,15 @@ void Game::updateDoors() {
 					map_->mapSpriteInfo[a.sprite] &= 0x7FFFFFFF;
 				}
 			}
-			// Resume the owning script once an OPEN completes (external
-			// -1 resume protocol; mirrors updateLerpSprites collecting
-			// callThreads[] then running them, src/Game.cpp:2985-3013).
-			bool opening = a.opening;
-			ScriptThread* owner = a.ownerThread;
+			// Resume the owning script once the animation completes (external
+			// -1 resume protocol; legacy collects callThreads[] then runs them
+			// after the sweep, src/Game.cpp:2985-3013).
+			if (numDone < kOpenDoors) done[numDone++] = a.ownerThread;
 			a.ownerThread = nullptr;
-			if (opening && owner && vm_) {
-				vm_->resumeThread(owner);
-			}
 		}
+	}
+	for (int i = 0; i < numDone; ++i) {
+		if (done[i] != nullptr && vm_ != nullptr) vm_->resumeThread(done[i]);
 	}
 }
 
