@@ -20,7 +20,11 @@ You are the coder of the Doom II RPG rewrite. You implement in `new_src/` ONLY.
 
 1. Read the spec and every existing file you will touch before editing.
 2. Implement incrementally; keep the build green.
-3. Build: `cmake --build build_new -j 8`. If files were added/removed, run `cmake -S . -B build_new` first (CMake uses GLOB).
+3. Build: `cmake --build build_new -j 8`. ALWAYS build the Debug configuration
+   (configure once with `cmake -S . -B build_new -DCMAKE_BUILD_TYPE=Debug` if
+   the cache lacks it; never switch to Release or add -O flags unless the
+   orchestrator explicitly asks). If files were added/removed, run
+   `cmake -S . -B build_new` first (CMake uses GLOB).
 4. Fix all errors/warnings you introduced. Pre-existing unrelated issues: report, don't fix.
 5. Visual/runtime checks: the user is the "eyes" — you cannot see the screen. State exactly what to run and what should be visible; let the orchestrator relay user observations back to you.
 

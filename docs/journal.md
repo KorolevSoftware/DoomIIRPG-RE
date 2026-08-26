@@ -386,3 +386,28 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
 - Docs: appended "Glass render-path audit (2026-08-26)" to
   docs/research/2026-08-25-elevator-glass.md; corrected stale "no FLAT branch"
   claim + added RAW-guard/cull/bias facts to docs/original-code/rendering.md §5.
+
+## 2026-08-26 — Walk-cinematic flicker root cause (BSP leaf-straddler drop)
+
+- Symptom: squad NPCs flicker while walking; anim bytes verified clean
+  (user dbg audit), alloc-reuse reset already monsters-only.
+- Legacy mechanism fully mapped: getNodeForPoint band early-out attaches
+  sprites within ±128 classify-units (±8 world units) of an internal node's
+  plane to THAT node (src/Render.cpp:2422-2424); per-frame rescue via
+  walkNode snapshot -> addSplitSprite -> addNodeSprites dual-leaf listing
+  (src/Render.cpp:1085,1094-1096,896-910,917-922, cap 8/frame); membership
+  refreshed per lerp tick (src/Game.cpp:2889-2896). No geometric clipping —
+  character stacks draw as one unit under one leaf listing.
+- Rewrite gap: per-frame spriteLeaf recompute exists (World3D.cpp:1277-1292)
+  and the early-out is ported (:1229), but nodeIdxs_ holds leaves only
+  (:1250-1253) and the `spriteLeaf[i]!=leaf` filter (:1311-1312) drops
+  internal-band sprites entirely → frame-alternating vanish = flicker.
+- Probe (docs/research/assets/probe_bsp_bands.py, byte-exact map00 replay):
+  6 sprites invisible at load (incl. zombie spr53, imps spr54/55 — all
+  classify EXACTLY 0 on split planes); 62/85 entity sprites cross the band
+  within a tile of home; dbg squad walkers spend 12–17% of neighborhood
+  positions in the dropped state.
+- Corrected docs: rendering.md "split-sprites vestigial" claim was WRONG
+  (getNodeForPoint DOES return internal nodes); sprite-placement.md §6
+  severity updated. Report + coder checklist:
+  docs/research/2026-08-26-walk-flicker.md.

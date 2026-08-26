@@ -303,8 +303,11 @@ indexing (`new_src/render/World3D.cpp:535-542,828-834`); sort key formula and
    `src/Render.cpp:880-893`). Its MVP also carries a constant +256 offset from
    the halved `proj[14]` (`new_src/render/Camera3D.cpp:90-92` vs
    `src/GLES.cpp:174-176`) — order-preserving. Also missing: split-sprite
-   duplication across leaves (`src/Render.cpp:896-910,1094-1096`). Effects
-   appear only as occasional wrong draw order between overlapping sprites.
+   dual-leaf listing (`src/Render.cpp:896-910,1094-1096`). Severity corrected
+   2026-08-26: not merely draw-order — sprites attached to internal nodes by
+   the ±128 band rule (`src/Render.cpp:2422-2424`) are NEVER drawn without it
+   (walk flicker + invisible statics; see
+   `docs/research/2026-08-26-walk-flicker.md`).
 7. **Height snap re-derived per frame instead of baked at load.** Legacy snaps
    Z once during load and stores it (`src/Render.cpp:2459-2467`,
    `src/LoadingManager.cpp:569`); the rewrite recomputes it every draw from

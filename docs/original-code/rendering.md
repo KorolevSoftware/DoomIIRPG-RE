@@ -139,10 +139,24 @@ Facts verified byte-level against `tmp_map00.bin` (layout provenance in
   chain DECAL→MAX / TILE+6 / water→MIN / oriented+5 / entity±1
   (`src/Render.cpp:827-893`). Glass pane spr155 sorts +5 (oriented), one step
   behind its car side (+6 TILE), so the car draws first.
-* The split-sprite machinery (`addSplitSprite`, `src/Render.cpp:1094-1096`,
-  `:896-910`) is vestigial: `getNodeForPoint` only ever returns leaves
-  (`:2411-2433`), so internal-node sprite lists stay empty and splits never
-  fire — a rewrite needs no port of it.
+* **Split-sprite machinery is LIVE, not vestigial** (earlier revision of this
+  file claimed otherwise — disproven 2026-08-26,
+  `docs/research/2026-08-26-walk-flicker.md`): `getNodeForPoint` returns an
+  **internal node** whenever a sprite's classify value lands in `(-128,128)`
+  of that node's plane (`src/Render.cpp:2422-2424`; ±8 world units because
+  relink feeds coords `<<4`, normals 16384-fixed). Map data snaps props onto
+  tile edges that BSP planes reuse, so sprites rest dead-on planes (map00:
+  spr53 x=992u == node 205 offset 15872 exactly). Those sprites live in the
+  internal node's `nodeSprites` list; every frame `walkNode` snapshots
+  `numVisibleNodes` before recursing (`src/Render.cpp:1085`) and afterwards
+  feeds its list to `addSplitSprite` (`:1094-1096`), which lists the sprite
+  under the FIRST visible leaf of the subtree whose bounds overlap the
+  sprite's ±8-unit box (`:896-910`, cap 8/frame, `MAX_SPLIT_SPRITES`
+  `src/Render.h:121`). `addNodeSprites` merges those pairs into the leaf's
+  sorted draw list (`:917-922`). Net effect: a plane-straddling sprite draws
+  once per frame from the correct side — no geometric clipping. Membership
+  itself is refreshed per lerp tick by `relinkSprite`
+  (`src/Game.cpp:2889-2896`).
 * z-sprites parked out-of-bounds of every BSP leaf (e.g. before a cinematic
   moves them into place) simply never render until a scripted lerp completes:
   completion snaps position and calls `relinkSprite` unless `LS_FLAG_S_NORELINK`

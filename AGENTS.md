@@ -14,7 +14,9 @@ Reverse-engineering rewrite of **Doom II RPG** (J2ME) as modern C++ / OpenGL 3.3
 
 ## Build & run
 
-- Configure (once, or after adding/removing files — CMake uses GLOB): `cmake -S . -B build_new`
+- Configure (once, or after adding/removing files — CMake uses GLOB):
+  `cmake -S . -B build_new -DCMAKE_BUILD_TYPE=Debug` — Debug is REQUIRED
+  (gives `-g` for lldb/sampling; the game is fast enough at -O0).
 - Build: `cmake --build build_new -j 8`
 - Run: `cd build_new/new_src && ./DoomIIRPG`
 - Game archive expected at `build_new/new_src/Doom 2 RPG.ipa`.
