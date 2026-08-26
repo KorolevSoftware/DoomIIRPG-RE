@@ -116,6 +116,7 @@ private:
 	void applyBatchState(int renderMode);
 	void flush();
 	bool walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ);
+	void addSplitSprite(const MapData& map, size_t firstVisibleLeaf, int sprite);
 	int nodeClassifyPoint(const MapData& map, int n, int x, int y, int z);
 	int getNodeForPoint(const MapData& map, int x, int y, int z, int info);
 
@@ -144,6 +145,18 @@ private:
 
 	// BSP traversal state (mirrors legacy Render fields).
 	std::vector<int> nodeIdxs_; // visible leaf node indices
+
+	// Split-sprite rescue pipeline (legacy addSplitSprite/addNodeSprites,
+	// src/Render.cpp:896-924): sprites classified onto INTERNAL BSP nodes by
+	// getNodeForPoint's ±128 band early-out (src/Render.cpp:2422-2424) get
+	// re-listed under the first visible leaf whose bounds overlap their
+	// ±8-unit center box, so they stop being dropped by the leaf-only filter.
+	// All buffers preallocated/resized once; counts reset per frame.
+	static constexpr int kMaxSplitSprites = 8; // MAX_SPLIT_SPRITES, src/Render.h:121
+	std::vector<int> spriteLeaf_;                    // per-sprite owner (leaf OR internal node index)
+	std::vector<std::vector<int>> internalSprites_;  // per-node list of internally-attached sprites
+	std::vector<int> splitPairs_;                    // flat [leaf,sprite]*kMaxSplitSprites pairs
+	std::vector<int> leafSprites_, leafDepth_;       // per-leaf sorted draw lists (hoisted locals)
 
 	// Fog state (uniforms set in begin()).
 	bool fogEnabled_ = false;

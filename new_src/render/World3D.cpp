@@ -1253,6 +1253,9 @@ bool World3D::walkNode(const MapData& map, int n, int viewX, int viewY, int view
 		return true;
 	}
 
+	// Snapshot of visible-leaf count before recursing: everything appended
+	// after this point lies inside this node's subtree (src/Render.cpp:1085).
+	size_t start = nodeIdxs_.size();
 	if (nodeClassifyPoint(map, n, viewX, viewY, viewZ) >= 0) {
 		walkNode(map, map.nodeChildOffset1[n], viewX, viewY, viewZ);
 		walkNode(map, map.nodeChildOffset2[n], viewX, viewY, viewZ);
@@ -1260,22 +1263,55 @@ bool World3D::walkNode(const MapData& map, int n, int viewX, int viewY, int view
 		walkNode(map, map.nodeChildOffset2[n], viewX, viewY, viewZ);
 		walkNode(map, map.nodeChildOffset1[n], viewX, viewY, viewZ);
 	}
+	// Feed this internal node's attached sprites to the split rescue
+	// (src/Render.cpp:1094-1096).
+	for (int s : internalSprites_[n]) {
+		addSplitSprite(map, start, s);
+	}
 	return true;
+}
+
+// Legacy Render::addSplitSprite (src/Render.cpp:896-910): scan the visible
+// leaves discovered inside the node's subtree (near-subtree order first) and
+// pick the FIRST leaf whose byte-bounds (raw map units) overlap the sprite
+// center box [x-8,x+8] x [y-8,y+8] (SPLIT_SPRITE_BOUNDS=8, src/Render.h:122).
+// Capped at MAX_SPLIT_SPRITES pairs per frame; like legacy, once the cap is
+// full no leaf can match and the sprite is silently skipped this frame.
+void World3D::addSplitSprite(const MapData& map, size_t firstVisibleLeaf, int sprite) {
+	const int sx = map.mapSprites[sprite + 0 * map.numSprites];
+	const int sy = map.mapSprites[sprite + 1 * map.numSprites];
+	for (size_t k = firstVisibleLeaf; k < nodeIdxs_.size(); ++k) {
+		const int leaf = nodeIdxs_[k];
+		const int bx1 = (map.nodeBounds[(leaf << 2) + 0] & 0xFF) << 3;
+		const int by1 = (map.nodeBounds[(leaf << 2) + 1] & 0xFF) << 3;
+		const int bx2 = (map.nodeBounds[(leaf << 2) + 2] & 0xFF) << 3;
+		const int by2 = (map.nodeBounds[(leaf << 2) + 3] & 0xFF) << 3;
+		if (bx1 < sx + 8 && bx2 > sx - 8 && by1 < sy + 8 && by2 > sy - 8
+			&& splitPairs_.size() < 2 * kMaxSplitSprites) { // numSplitSprites < 8 (:905)
+			splitPairs_.push_back(leaf);                    // (leaf<<16|sprite), :906
+			splitPairs_.push_back(sprite);
+			return;
+		}
+	}
 }
 
 void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
 	const int* spriteSortBias, const uint8_t* charClass) {
 	if (!initialized_ || map.numNodes == 0) return;
 
-	nodeIdxs_.clear();
-	walkNode(map, 0, camera.viewX(), camera.viewY(), camera.viewZ());
+	// Preallocate traversal buffers once; only counts reset per frame.
+	if ((int)spriteLeaf_.size() != map.numSprites) spriteLeaf_.assign(map.numSprites, -1);
+	if ((int)internalSprites_.size() != map.numNodes) internalSprites_.resize(map.numNodes);
+	for (auto& bucket : internalSprites_) bucket.clear();
+	splitPairs_.clear(); // numSplitSprites = 0 each frame (src/Render.cpp:1745)
 
-	// Precompute the BSP leaf for every sprite (legacy relinkSprite does this
-	// once at level load, AFTER postProcessSprites added terrain height to Z).
-	// Sprites get drawn right after their leaf's geometry, so nearer leaves
-	// overdraw farther sprites (painter's algorithm).
-	std::vector<int> spriteLeaf(map.numSprites, -1);
+	// Recompute the BSP owner for every sprite EVERY frame from live positions
+	// (legacy relinkSprite runs on every lerp tick, src/Game.cpp:2889-2896;
+	// this is the per-tick half of membership tracking). The result is either
+	// a leaf index or an INTERNAL node index (getNodeForPoint band early-out,
+	// src/Render.cpp:2422-2424) - internal owners are rescued below.
 	for (int i = 0; i < map.numSprites; ++i) {
+		spriteLeaf_[i] = -1;
 		if (map.mapSpriteInfo[i] & 0x10000) continue; // invisible
 		int x = map.mapSprites[i + 0 * map.numSprites];
 		int y = map.mapSprites[i + 1 * map.numSprites];
@@ -1288,7 +1324,41 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 			if (i >= map.numNormalSprites) h -= 32 << 4;
 			hz += h;
 		}
-		spriteLeaf[i] = getNodeForPoint(map, x << 4, y << 4, hz, map.mapSpriteInfo[i]);
+		spriteLeaf_[i] = getNodeForPoint(map, x << 4, y << 4, hz, map.mapSpriteInfo[i]);
+	}
+	// Bucket sprites attached to INTERNAL nodes so walkNode can rescue them
+	// into a visible leaf (leaf-attached ones are consumed by the per-leaf
+	// filter in the draw pass directly).
+	for (int i = 0; i < map.numSprites; ++i) {
+		int nd = spriteLeaf_[i];
+		if (nd >= 0 && (map.nodeOffsets[nd] & 0xFFFF) != 0xFFFF)
+			internalSprites_[nd].push_back(i);
+	}
+
+	nodeIdxs_.clear();
+	walkNode(map, 0, camera.viewX(), camera.viewY(), camera.viewZ());
+
+	// TEMP [dbg] anomaly tripwire (freeze hunt 2026-08-26)
+	if (splitPairs_.size() > 2 * kMaxSplitSprites) {
+		fprintf(stderr, "[dbg] BSP ANOMALY splitPairs_=%zu (cap %d)\n",
+			splitPairs_.size(), 2 * kMaxSplitSprites);
+	}
+	// TEMP [dbg] anomaly tripwire (freeze hunt 2026-08-26): each sprite is
+	// pushed into exactly one bucket, so no bucket can exceed numSprites.
+	for (size_t n = 0; n < internalSprites_.size(); ++n) {
+		if (internalSprites_[n].size() > (size_t)map.numSprites) {
+			fprintf(stderr, "[dbg] BSP ANOMALY bucket[%d]=%zu\n",
+				(int)n, internalSprites_[n].size());
+		}
+	}
+
+	// TEMP [dbg] remove-at-sign-off (walk-flicker fix): one-shot proof that
+	// the split-sprite rescue path fires.
+	static bool dbgRescueShown = false;
+	if (!dbgRescueShown && !splitPairs_.empty()) {
+		dbgRescueShown = true;
+		fprintf(stderr, "[dbg] split-sprite rescue fired: %d sprite(s) rescued this frame\n",
+			(int)(splitPairs_.size() / 2));
 	}
 
 	begin(camera);
@@ -1298,65 +1368,79 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 	// by mvp depth (legacy addSprite) so nearer sprites overdraw farther ones
 	// (e.g. a billboard is not overdrawn by a wall decal behind it).
 	const int* mvp = camera.mvpInt();
-	std::vector<int> leafSprites;
-	std::vector<int> leafDepth;
+	// Depth/bias sort key, identical for own-chain and rescued sprites
+	// (legacy addSprite, src/Render.cpp:839-876).
+	auto computeDepth = [&](int i) -> int {
+		int info = map.mapSpriteInfo[i];
+		int x = map.mapSprites[i + 0 * map.numSprites];
+		int y = map.mapSprites[i + 1 * map.numSprites];
+		int z = map.mapSprites[i + 2 * map.numSprites];
+		// Sort by HEIGHT-SNAPPED Z (post-snap, in map units — legacy sorts
+		// the stored S_Z after postProcessSprites baked terrain height in,
+		// src/Render.cpp:2459-2467,846).
+		int zsnapped = z;
+		if (!map.heightMap.empty()) {
+			int hx = x & 0x7FF, hy = y & 0x7FF;
+			zsnapped += map.heightMap[((hy >> 6) * 32 + (hx >> 6))] << 3;
+			if (i >= map.numNormalSprites) zsnapped -= 32;
+		}
+		int d = ((x * mvp[2] + y * mvp[6] + zsnapped * mvp[10]) >> 14) + mvp[14];
+		int tn = info & 0xFF;
+		if (info & 0x10000000) d = (int)0x7FFFFFFF;   // DECAL bias (src/Render.cpp:839-841)
+		else if (info & 0x400000) d += 6;             // TILE (src/Render.cpp:847-849)
+		else if (tn == 240 || tn == 246 || tn == 245 || tn == 247)
+			d = (int)0x80000000;                      // water (src/Render.cpp:850-852)
+		else if (info & 0xF000000) d += 5;            // oriented (src/Render.cpp:853-855)
+		else {
+			// Entity bias hook (+1 corpse/linked, -1 monsters), supplied by
+			// the caller. A biased sprite skips the tileNum biases like the
+			// original else-if chain (src/Render.cpp:856-874).
+			bool biased = false;
+			if (spriteSortBias && spriteSortBias[i] != 0) { d += spriteSortBias[i]; biased = true; }
+			if (!biased) {
+				if ((tn >= 240 && tn <= 244) || tn == 255) d -= 3; // src/Render.cpp:863-865
+				else if (tn >= 137 && tn <= 139) d += 2;           // :866-868
+				else if (tn == 152) d += 5;                        // crate, :869-871
+				else if (tn == 239) d -= 3;                        // :872-874
+			}
+		}
+		return d;
+	};
 	for (int k = (int)nodeIdxs_.size() - 1; k >= 0; --k) {
 		int leaf = nodeIdxs_[k];
 		for (size_t i = 0; i < map.polygons.size(); ++i) {
 			if (map.polygons[i].leafNode == leaf) drawPoly(map, (int)i);
 		}
 		// Sprites of this leaf, drawn after its geometry.
-		leafSprites.clear();
-		leafDepth.clear();
+		leafSprites_.clear();
+		leafDepth_.clear();
 		for (int i = 0; i < map.numSprites; ++i) {
-			if (spriteLeaf[i] != leaf) continue;
+			if (spriteLeaf_[i] != leaf) continue;
 			int info = map.mapSpriteInfo[i];
 			if (info & 0x10000) continue;
-			int x = map.mapSprites[i + 0 * map.numSprites];
-			int y = map.mapSprites[i + 1 * map.numSprites];
-			int z = map.mapSprites[i + 2 * map.numSprites];
-			// Sort by HEIGHT-SNAPPED Z (post-snap, in map units — legacy sorts
-			// the stored S_Z after postProcessSprites baked terrain height in,
-			// src/Render.cpp:2459-2467,846).
-			int zsnapped = z;
-			if (!map.heightMap.empty()) {
-				int hx = x & 0x7FF, hy = y & 0x7FF;
-				zsnapped += map.heightMap[((hy >> 6) * 32 + (hx >> 6))] << 3;
-				if (i >= map.numNormalSprites) zsnapped -= 32;
-			}
-			int d = (x * mvp[2] + y * mvp[6] + zsnapped * mvp[10] >> 14) + mvp[14];
-			int tn = info & 0xFF;
-			if (info & 0x10000000) d = (int)0x7FFFFFFF;   // DECAL bias (src/Render.cpp:839-841)
-			else if (info & 0x400000) d += 6;             // TILE (src/Render.cpp:847-849)
-			else if (tn == 240 || tn == 246 || tn == 245 || tn == 247)
-				d = (int)0x80000000;                      // water (src/Render.cpp:850-852)
-			else if (info & 0xF000000) d += 5;            // oriented (src/Render.cpp:853-855)
-			else {
-				// Entity bias hook (+1 corpse/linked, -1 monsters), supplied by
-				// the caller. A biased sprite skips the tileNum biases like the
-				// original else-if chain (src/Render.cpp:856-874).
-				bool biased = false;
-				if (spriteSortBias && spriteSortBias[i] != 0) { d += spriteSortBias[i]; biased = true; }
-				if (!biased) {
-					if ((tn >= 240 && tn <= 244) || tn == 255) d -= 3; // src/Render.cpp:863-865
-					else if (tn >= 137 && tn <= 139) d += 2;           // :866-868
-					else if (tn == 152) d += 5;                        // crate, :869-871
-					else if (tn == 239) d -= 3;                        // :872-874
-				}
-			}
-			leafSprites.push_back(i);
-			leafDepth.push_back(d);
+			leafSprites_.push_back(i);
+			leafDepth_.push_back(computeDepth(i));
+		}
+		// Split-rescued internal-node sprites are appended AFTER the leaf's
+		// own chain, matching legacy addNodeSprites order (own nodeSprites
+		// first, then split pairs, src/Render.cpp:913-923). Each pair is
+		// consumed under exactly one visible leaf per frame.
+		for (size_t p = 0; p + 1 < splitPairs_.size(); p += 2) {
+			if (splitPairs_[p] != leaf) continue;
+			const int i = splitPairs_[p + 1];
+			leafSprites_.push_back(i);
+			leafDepth_.push_back(computeDepth(i));
 		}
 		// Sort descending by depth (larger = farther, drawn first).
-		for (size_t a = 0; a < leafSprites.size(); ++a) {
-			for (size_t b = a + 1; b < leafSprites.size(); ++b) {
-				if (leafDepth[b] > leafDepth[a]) {
-					std::swap(leafSprites[a], leafSprites[b]);
-					std::swap(leafDepth[a], leafDepth[b]);
+		for (size_t a = 0; a < leafSprites_.size(); ++a) {
+			for (size_t b = a + 1; b < leafSprites_.size(); ++b) {
+				if (leafDepth_[b] > leafDepth_[a]) {
+					std::swap(leafSprites_[a], leafSprites_[b]);
+					std::swap(leafDepth_[a], leafDepth_[b]);
 				}
 			}
 		}
-		for (int i : leafSprites) drawSprite(map, media, camera, i, charClass);
+		for (int i : leafSprites_) drawSprite(map, media, camera, i, charClass);
 	}
 	end();
 }
