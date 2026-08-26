@@ -10,6 +10,15 @@ Reverse-engineering rewrite of **Doom II RPG** (J2ME) as modern C++ / OpenGL 3.3
 | `Doom 2 RPG Java/` | Original J2ME `.class` files. Not used; ignore entirely. |
 | `new_src/` | The rewrite target. ALL development happens here. |
 | `tools/` | Python verification tools (e.g. `map_to_obj.py`). |
+
+## Script bytecode analysis
+
+- `tools/disasm_map_scripts.py` — persistent disassembler for mapXX.bin
+  location scripts (CFG walk from tileEvents/staticFuncs, verbatim operand
+  decoding, xref summary, self-test anchors). Researchers MUST use it instead
+  of writing ad-hoc decoders:
+  `python3 tools/disasm_map_scripts.py tmp_map00.bin -o out.txt --verify`
+  (`--ipa` optional for string resolution; `--funcs ip1,ip2` adds entry IPs).
 | `build_new/` | Build directory for `new_src`. |
 
 ## Build & run

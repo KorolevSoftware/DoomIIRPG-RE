@@ -104,6 +104,50 @@ paths in the MTL) and the viewer will load them automatically.
 
 ---
 
+## disasm_map_scripts.py — location script disassembler
+
+CFG-based bytecode disassembler for the tileEvents/mapByteCode VM embedded in
+`mapXX.bin` (see `docs/original-code/tile-events-vm.md`). Replaces the ad-hoc
+decoders previously rewritten every research session.
+
+### Usage
+
+```bash
+# Annotated listing to stdout
+python3 disasm_map_scripts.py ../tmp_map00.bin
+
+# Listing to file + run the built-in map00 anchor suite
+python3 disasm_map_scripts.py ../tmp_map00.bin -o /tmp/map00_disasm.txt --verify
+
+# Add extra entry IPs (e.g. dynamically bound death-func bodies)
+python3 disasm_map_scripts.py ../tmp_map00.bin --funcs 4510,4563
+```
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `map` | Path to a `mapXX.bin` file |
+| `-o, --output` | Write listing to file (default: stdout) |
+| `--funcs ip1,ip2` | Additional entry IPs to walk |
+| `--ipa` | Accepted for future string resolution; ids are printed raw |
+| `--verify` | Run map00 doc anchors; exits nonzero on any failure |
+
+### Method
+
+- Sections are located by walking the `CAFEBABE` marker chain backwards,
+  constrained by header counts (`staticFuncs`=24 B, `tileEvents`=N×8 B,
+  bytecode=`mapByteCodeSize` B); a full forward parse cross-checks it.
+- Code is discovered by CFG walk from entry IPs (all tile events + defined
+  static funcs + `--funcs`), never a linear scan. Unreachable bytes are listed
+  as `.byte` data runs — these include dynamically bound death-func bodies;
+  pass their IPs via `--funcs` to decode them.
+- Operand shapes mirror `new_src/domain/game/ScriptVM.cpp` (and
+  `src/ScriptThread.cpp` for not-yet-implemented opcodes). Unknown opcodes
+  emit `.byte` plus a WARNING and stop that path — no silent desync.
+
+---
+
 ## Typical workflow
 
 ```bash
