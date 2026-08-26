@@ -880,6 +880,24 @@ void GameContext::debugGiveKeycards() {
 
 // ---- render orchestration ----
 
+// Floater family (src/Render.cpp:3023-3025): Sentinel/Lost Soul/Cacodemon.
+// Legacy diverts these to renderFloaterAnim before the shared anim switch
+// (src/Render.cpp:3157-3161); drawCharacter has no counterpart, so they stay
+// on the billboard path (ADR 0007).
+static bool isFloaterTile(int n) {
+	return (n >= Enums::TILENUM_MONSTER_SENTINEL && n <= Enums::TILENUM_MONSTER_SENTINEL3) ||
+	       (n >= Enums::TILENUM_MONSTER_LOST_SOUL && n <= Enums::TILENUM_MONSTER_LOST_SOUL3) ||
+	       (n >= Enums::TILENUM_MONSTER_CACODEMON && n <= Enums::TILENUM_MONSTER_CACODEMON3);
+}
+
+// Special-boss family (src/Render.cpp:3027-3029): Mastermind/Arachnotron/
+// Boss Pinky/VIOS, diverted to renderSpecialBossAnim (src/Render.cpp:3162-3166).
+static bool isSpecialBossTile(int n) {
+	return n == Enums::TILENUM_BOSS_MASTERMIND || n == Enums::TILENUM_MONSTER_ARACHNOTRON ||
+	       n == Enums::TILENUM_BOSS_PINKY ||
+	       (n >= Enums::TILENUM_BOSS_VIOS && n <= Enums::TILENUM_BOSS_VIOS5);
+}
+
 void GameContext::render(AppContext& app) {
 	RenderBackend& renderer = app.renderer();
 	renderer.beginFrame(app.window());
@@ -951,28 +969,39 @@ void GameContext::render(AppContext& app) {
 		rvy += (shakeX << 4) * -viewCos >> 16;
 		rvz += shakeY << 4;
 	}
-	camera_.setView(rvx, rvy, rvz, sys_.player->viewAngle, 0, 0, 290,
+	// Pitch feeds the view matrix (positive = up; the loot crouch writes
+	// player->viewPitch). FOV stays at the documented 290: legacy widened by
+	// |pitch| only on the mvp2D billboard path (src/TinyGL.cpp:195-200), the
+	// world/GL projection kept viewFov — the rewrite has a single projection.
+	camera_.setView(rvx, rvy, rvz, sys_.player->viewAngle, sys_.player->viewPitch, 0, 290,
 		(290 << 14) / ((480 << 14) / 320));
 	}
 
 	if (sys_.world->initialized() && sys_.map->numNodes > 0) {
 		sys_.world->drawSky(camera_);
 		// Per-sprite sort-bias hooks (src/Render.cpp:856-862): corpse/linked
-		// entities draw nearer (+1), monsters (-1; none exist yet).
+		// entities draw nearer (+1), monsters (-1).
 		std::vector<int> spriteSortBias(sys_.map->numSprites, 0);
-		// Stacked-character classification (ADR 0005, spec §1): entity-def
-		// driven — live NPCs, plus corpsified NPCs whose art tile stayed in
-		// the NPC range after the def swap (src/Game.cpp:567-569).
+		// Stacked-character classification (ADR 0005/0007, spec
+		// 2026-08-26 §1): entity-def driven — live NPCs, monsters whose tile
+		// is outside the diverted floater/special-boss families (their
+		// renderers are not ported), corpsified NPCs whose art tile stayed in
+		// the NPC range after the def swap (src/Game.cpp:567-569), and
+		// corpsified monsters via the kInfoCorpse clause below. Legacy gate:
+		// renderSpriteAnim runs for every entity with monster != nullptr
+		// (src/Render.cpp:1622-1626); ET_MONSTER is its exact proxy
+		// (allocated iff eType == 2, src/Game.cpp:430-436).
 		std::vector<uint8_t> spriteCharClass(sys_.map->numSprites, 0);
 		for (const Entity& ent : sys_.game->entities()) {
 			int si = ent.getSprite();
 			if (!ent.def || si < 0 || si >= sys_.map->numSprites) continue;
 			if (ent.info & 0x1010000) spriteSortBias[si] = +1;
 			else if (ent.def->eType == Enums::ET_MONSTER) spriteSortBias[si] = -1;
+			const int tile = sys_.map->mapSpriteInfo[si] & 0xFF; // monsters never carry SPRITE_FLAG_TILE (+257)
 			if (ent.def->eType == Enums::ET_NPC ||
 			    (ent.def->eType == Enums::ET_CORPSE &&
-			     (sys_.map->mapSpriteInfo[si] & 0xFF) >= Enums::TILENUM_FIRST_NPC &&
-			     (sys_.map->mapSpriteInfo[si] & 0xFF) <= Enums::TILENUM_LAST_NPC)) {
+			     tile >= Enums::TILENUM_FIRST_NPC &&
+			     tile <= Enums::TILENUM_LAST_NPC)) {
 				spriteCharClass[si] = 1;
 			}
 			// Corpsified monsters keep their character-sheet art tile, so the
@@ -984,6 +1013,10 @@ void GameContext::render(AppContext& app) {
 			// path.
 			else if ((ent.info & Entity::kInfoCorpse) != 0 &&
 			         ((sys_.map->mapSpriteInfo[si] >> 8) & Enums::MANIM_MASK) == Enums::MANIM_DEAD) {
+				spriteCharClass[si] = 1;
+			}
+			else if (ent.def->eType == Enums::ET_MONSTER &&
+			         !isFloaterTile(tile) && !isSpecialBossTile(tile)) {
 				spriteCharClass[si] = 1;
 			}
 		}

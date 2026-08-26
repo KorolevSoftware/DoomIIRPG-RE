@@ -66,6 +66,19 @@ static constexpr int TILENUM_NPC_RILEY_OCONNOR = 66;
 static constexpr int TILENUM_NPC_SARGE = 72;
 static constexpr int TILENUM_SHADOW = 232;             // src/Enums.h:830
 
+// Monster art tiles (src/Enums.h:665-707) — classification-side subsets.
+static constexpr int TILENUM_MONSTER_LOST_SOUL  = 29;  // ..31  (floater, src/Render.cpp:3007-3009)
+static constexpr int TILENUM_MONSTER_LOST_SOUL3 = 31;
+static constexpr int TILENUM_MONSTER_CACODEMON  = 41;  // ..43  (floater, src/Render.cpp:3003-3005)
+static constexpr int TILENUM_MONSTER_CACODEMON3 = 43;
+static constexpr int TILENUM_MONSTER_SENTINEL   = 44;  // ..46  (floater, src/Render.cpp:2979-2981)
+static constexpr int TILENUM_MONSTER_SENTINEL3  = 46;
+static constexpr int TILENUM_MONSTER_ARACHNOTRON = 53; // special boss, src/Render.cpp:3027-3029
+static constexpr int TILENUM_BOSS_PINKY          = 56;
+static constexpr int TILENUM_BOSS_MASTERMIND     = 57;
+static constexpr int TILENUM_BOSS_VIOS           = 58; // ..62
+static constexpr int TILENUM_BOSS_VIOS5          = 62;
+
 // Sprite flags.
 static constexpr int SPRITE_FLAG_HIDDEN = 0x10000;
 static constexpr int SPRITE_FLAG_FLIP_HORIZONTAL = 0x20000;

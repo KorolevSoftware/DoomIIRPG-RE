@@ -99,7 +99,8 @@ private:
 	                       int flags,                        // info low bits (0x20000 etc.)
 	                       int scaleFactor);                 // byte<<10
 	// Stacked leg/torso/head character renderer (legacy renderSpriteAnim,
-	// src/Render.cpp:3144-3488; NPC subset per ADR 0005). Must be called
+	// src/Render.cpp:3144-3488; NPCs + non-diverted monster families per
+	// ADR 0007, ATTACK deltas in spec 2026-08-26 §2). Must be called
 	// between begin()/end().
 	void drawCharacter(const MapData& map, const MediaLoader& media, int i);
 	// Decodes/uploads the sprite texture for one mediaId on first use and

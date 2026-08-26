@@ -950,6 +950,26 @@ int Game::vecToDir(int dx, int dy) {
 	return dir << 7;
 }
 
+// TEMP [dbg] lerp audit extension (spec 2026-08-26 §3, remove with the
+// other TEMP logs): prints whenever an audited sprite's anim bits 8-15
+// change — covers the walk writer, the alloc-reuse reset and the
+// completion restore.
+static void dbgLerpAnimAudit(int sprite, int info) {
+	static const int kDbgSprites[] = {7, 9, 10, 135, 150};
+	static int lastAnimByte[5] = {-1, -1, -1, -1, -1};
+	for (int di = 0; di < 5; ++di) {
+		if (sprite != kDbgSprites[di]) continue;
+		const int a = (info >> 8) & 0xFF;
+		if (a != lastAnimByte[di]) {
+			if (lastAnimByte[di] >= 0)
+				std::fprintf(stderr, "[dbg] anim spr=%d animByte 0x%02X -> 0x%02X\n",
+					sprite, lastAnimByte[di], a);
+			lastAnimByte[di] = a;
+		}
+		break;
+	}
+}
+
 // Pool lookup (src/Game.cpp:3028-3066): a still-active lerp for the same
 // sprite reuses its slot, otherwise the first free slot is taken. Legacy
 // also resets monster anim state on reuse — no EntityMonster here.
@@ -972,12 +992,15 @@ Game::SpriteLerp* Game::allocLerpSprite(ScriptThread* thread, int sprite, bool b
 		*ls = SpriteLerp{};
 		ls->hSprite = sprite + 1;
 	} else {
-		// Alloc-side idle reset of a stale pose (src/Game.cpp:3049-3063).
-		// ls->flags still holds the OLD slot flags here — the async/block
-		// bits are OR'd in below, matching legacy read order.
+		// Alloc-side idle reset of a stale pose (src/Game.cpp:3049-3063):
+		// monsters ONLY (entity->monster != nullptr, src/Game.cpp:3054) —
+		// stamping IDLE onto a reused ACTIVE NPC walker's slot caused the
+		// mid-walk flicker (RF candidate 2). ls->flags still holds the OLD
+		// slot flags here — the async/block bits are OR'd in below, matching
+		// legacy read order.
 		Entity* ent = findEntityBySprite(sprite);
 		if (ent != nullptr && ent->def != nullptr &&
-		    (ent->def->eType == Enums::ET_NPC || ent->def->eType == Enums::ET_MONSTER)) {
+		    ent->def->eType == Enums::ET_MONSTER) {
 			int n3 = (map_->mapSpriteInfo[sprite] >> 8) & 0xF0;
 			n3 = (n3 == Enums::MANIM_WALK_FRONT || (ls->flags & SpriteLerp::kFlagAutoFace))
 			         ? Enums::MANIM_IDLE
@@ -985,6 +1008,7 @@ Game::SpriteLerp* Game::allocLerpSprite(ScriptThread* thread, int sprite, bool b
 			                                      : n3;
 			map_->mapSpriteInfo[sprite] =
 				(map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | (n3 << 8);
+			dbgLerpAnimAudit(sprite, map_->mapSpriteInfo[sprite]);
 		}
 	}
 	if (thread == nullptr) ls->flags |= SpriteLerp::kFlagAsync; // (:3068-3070)
@@ -1090,6 +1114,7 @@ int Game::updateLerpSprite(SpriteLerp* ls) {
 			int phase = (1 + ((p * ls->dist) >> 12)) & 3;  // 1 cycle per tile
 			map_->mapSpriteInfo[sprite] =
 				((info & 0xFFFF00FF) | ((phase | anim) << 8));   // :2943
+			dbgLerpAnimAudit(sprite, map_->mapSpriteInfo[sprite]);
 		}
 	}
 
@@ -1132,6 +1157,7 @@ void Game::freeLerpSprite(SpriteLerp* ls) {
 			              : 0x0000;
 			map_->mapSpriteInfo[sprite] =
 				(map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | restore;
+			dbgLerpAnimAudit(sprite, map_->mapSpriteInfo[sprite]);
 		}
 	}
 	ls->hSprite = 0;

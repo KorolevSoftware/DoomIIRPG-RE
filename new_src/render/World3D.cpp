@@ -160,6 +160,38 @@ constexpr int kTileNumLastNpc = 80;
 	constexpr int kTileNumNpcCivilian2 = 77;
 	constexpr int kTileNumNpcSarge = 72;
 constexpr int kTileNumShadow = 232;
+// Monster art tiles for the ATTACK deltas (spec 2026-08-26 §2) — same
+// duplication pattern as the NPC values above; render/ stays decoupled from
+// domain enums (ADR 0007 point 5).
+constexpr int kTileNumMonsterImpFirst = 23;    // src/Enums.h:671-673
+constexpr int kTileNumMonsterImpLast = 25;
+constexpr int kTileNumMonsterZombieFirst = 20; // src/Enums.h:668-670
+constexpr int kTileNumMonsterZombieLast = 22;
+constexpr int kTileNumMonsterRedSentryBot = 18;// src/Enums.h:666-667
+constexpr int kTileNumMonsterSentryBot = 19;
+// hasGunFlare set (src/Render.cpp:3019-3021): mancubus 38-40, revenant
+// 35-37, sentry 18/19, cyberdemon 54, mastermind 57.
+constexpr int kTileNumMonsterRevenantFirst = 35; // src/Enums.h:683-685
+constexpr int kTileNumMonsterRevenantLast = 37;
+constexpr int kTileNumMonsterMancubusFirst = 38; // src/Enums.h:686-688
+constexpr int kTileNumMonsterMancubusLast = 40;
+constexpr int kTileNumBossCyberdemon = 54;       // src/Enums.h:699
+constexpr int kTileNumBossMastermind = 57;       // src/Enums.h:701
+
+bool isImpFamily(int n) {
+	return n >= kTileNumMonsterImpFirst && n <= kTileNumMonsterImpLast;
+}
+
+bool isZombieFamily(int n) {
+	return n >= kTileNumMonsterZombieFirst && n <= kTileNumMonsterZombieLast;
+}
+
+bool hasGunFlareFamily(int n) {
+	return (n >= kTileNumMonsterMancubusFirst && n <= kTileNumMonsterMancubusLast) ||
+	       (n >= kTileNumMonsterRevenantFirst && n <= kTileNumMonsterRevenantLast) ||
+	       n == kTileNumMonsterSentryBot || n == kTileNumMonsterRedSentryBot ||
+	       n == kTileNumBossCyberdemon || n == kTileNumBossMastermind;
+}
 }
 
 World3D::World3D() = default;
@@ -592,17 +624,75 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	// are doors). Monsters/pickups never carry this bit.
 	if (info & 0x400000) tileNum += 257;
 
+	// TEMP [dbg] lift one-shot diagnostics (remove once elevator-glass is
+	// visually confirmed, docs/research/2026-08-25-elevator-glass.md): dumps
+	// identity + draw-branch decision + resolved mediaId + BSP leaf for the
+	// elevator shaft sprite group {149,152,153,154,155} on FIRST processing
+	// of each index. NOENTITY keeps these sprites off the stacked-character
+	// route below.
+	static const int kDbgLiftSprites[5] = { 149, 152, 153, 154, 155 };
+	static bool dbgLiftFired[5] = {};
+	for (int k = 0; k < 5 && i >= 149 && i <= 155; ++k) {
+		if (i != kDbgLiftSprites[k] || dbgLiftFired[k]) continue;
+		dbgLiftFired[k] = true;
+		int dFrame = (info >> 8) & 0xFF;
+		if ((info & 0x80000) && dFrame > 0) dFrame = (i + timeMs_ / 100) % dFrame;
+		const char* dBranch = "billboard";
+		if (tileNum == 240 /* WATER_STREAM */) dBranch = "none (water)";
+		else if ((info & 0x2F000000) != 0)
+			dBranch = (info & 0x20000000) ? "flat-plane" : "vertical-wall";
+		int dMedia = -1;
+		const auto& dm = media.mappings();
+		if (tileNum < (int)dm.mappings.size() && dm.mappings[tileNum] >= 0) {
+			int dLo = dm.mappings[tileNum];
+			int dHi = (tileNum + 1 < (int)dm.mappings.size())
+				? dm.mappings[tileNum + 1] : dLo + 1;
+			dMedia = dLo + dFrame;
+			if (dMedia >= dHi) dMedia = dLo;       // same clamp as the draw path
+		}
+		// BSP leaf exactly as drawBSP feeds getNodeForPoint (height-snapped Z).
+		int dx = map.mapSprites[i + 0 * n], dy = map.mapSprites[i + 1 * n];
+		int dz = map.mapSprites[i + 2 * n] << 4;
+		if (!map.heightMap.empty()) {
+			int h = (map.heightMap[(((dy & 0x7FF) >> 6) * 32 + ((dx & 0x7FF) >> 6))] << 3) << 4;
+			if (i >= map.numNormalSprites) h -= 32 << 4;
+			dz += h;
+		}
+		int dLeaf = getNodeForPoint(map, dx << 4, dy << 4, dz, info);
+		fprintf(stderr,
+			"[dbg] lift spr=%d first processed: info=0x%08X tileNum=%d frame=%d branch=%s mediaId=%d leaf=%d\n",
+			i, (unsigned)info, tileNum, dFrame, dBranch, dMedia, dLeaf);
+	}
+
 	// Blend/fog state for this sprite's legacy renderMode (S_RENDERMODE),
 	// applied BEFORE any emission so characters inherit a sane state too.
 	const int renderMode = map.mapSprites[i + 3 * n];
 	applyBatchState(renderMode);
 
-	// Stacked-character path (ADR 0005): tested BEFORE the AUTO_ANIMATE frame
-	// override so bits 8-15 can never be double-consumed (spec §1). Exclusive
-	// of doors/walls by construction: classified sprites carry no TILE flag.
+	// Stacked-character path (ADR 0005/0007): tested BEFORE the AUTO_ANIMATE
+	// frame override so bits 8-15 can never be double-consumed (spec §1).
+	// Exclusive of doors/walls by construction: classified sprites carry no
+	// TILE flag. Classification is purely entity-def driven (see the
+	// GameContext classification loop); legacy has NO anim-byte routing —
+	// entity-less sprites carrying a MANIM_DEAD byte intentionally fall back
+	// to the single-quad billboard below (raw-frame clamp vs legacy
+	// flat-array bleed, known edge divergence).
 	if (charClass != nullptr && charClass[i] != 0) {
 		drawCharacter(map, media, i);
 		return;
+	}
+
+	// TEMP [dbg] dead-fallback tripwire (remove at sign-off, spec
+	// 2026-08-26 §4): fires once per sprite when a MANIM_DEAD-byte sprite
+	// draws through this fallback — proves the retired anim-byte routing
+	// hack caught nothing on map00 during acceptance.
+	{
+		static std::vector<uint8_t> dbgDeadFired;
+		if ((int)dbgDeadFired.size() != n) dbgDeadFired.assign(n, 0);
+		if ((info >> 8 & kManimMask) == kManimDead && !dbgDeadFired[i]) {
+			dbgDeadFired[i] = 1;
+			fprintf(stderr, "[dbg] dead-fallback spr=%d tile=%d\n", i, tileNum);
+		}
 	}
 
 	int frame = (info >> 8) & 0xFF;
@@ -957,10 +1047,12 @@ void World3D::drawBillboardPart(const MapData& map, const MediaLoader& media,
 	vertices_.insert(vertices_.end(), tri, tri + 6);
 }
 
-// Stacked leg/torso/head character renderer. NPC-subset port of legacy
-// Render::renderSpriteAnim (src/Render.cpp:3144-3488); monster-only family
-// routing is deferred to EntityMonster (ADR 0005). Emission order gives the
-// painter stacking: shadow first, then legs -> torso -> head.
+// Stacked leg/torso/head character renderer. Port of legacy
+// Render::renderSpriteAnim (src/Render.cpp:3144-3488) for NPCs and the
+// non-diverted monster families (ADR 0007); floater/special-boss families
+// stay on the billboard path until their renderers land. ATTACK carries the
+// monster deltas of spec 2026-08-26 §2. Emission order gives the painter
+// stacking: shadow first, then legs -> torso -> head.
 void World3D::drawCharacter(const MapData& map, const MediaLoader& media, int i) {
 	const int n = map.numSprites;
 	const int info = map.mapSpriteInfo[i];
@@ -1067,13 +1159,18 @@ void World3D::drawCharacter(const MapData& map, const MediaLoader& media, int i)
 	}
 	case kManimAttack1:
 	case kManimAttack2: {
-		// Pose frames only (muzzle flash omitted this cycle, spec §2.4).
-		int pose = (anim == kManimAttack1) ? 8 : 10;
-		if (frame == 1) ++pose;                                // :3355-3357
-		emitShadow();                                          // :3310
-		emitPart(0, x, y, zR, info ^ 0x20000, scaleFactor);    // legs :3333
-		emitPart(pose, x, y, zR, info, scaleFactor);           // torso :3359
-		emitPart(3, x, y, zR, info, scaleFactor);              // head :3409
+		// Monster-family deltas (spec 2026-08-26 §2). Zombie frame-1 flip
+		// rides the LEGS only — n25 is consumed at src/Render.cpp:3333 alone;
+		// torso/head take raw flags (:3359/:3409, erratum E1).
+		int legFlags = info;
+		if (isZombieFamily(tileNum) && frame == 1) legFlags ^= 0x20000; // :3299-3301
+		int pose = (anim == kManimAttack1) ? 8 : 10;                    // :3303-3308
+		if (frame == 1 && !hasGunFlareFamily(tileNum)) ++pose;          // :3355-3357, set :3019-3021
+		emitShadow();                                                   // :3310
+		emitPart(0, x, y, zR, legFlags ^ 0x20000, scaleFactor);         // legs, n24=0 :3333
+		emitPart(pose, x, y, zR, info, scaleFactor);                    // torso, n15=0 on map00 :3359
+		if (!isZombieFamily(tileNum) && !isImpFamily(tileNum))          // head gate :3376
+			emitPart(3, x, y, zR, info, scaleFactor);                   // head, n18=n16=0 on map00 :3409
 		break;
 	}
 	case kManimPain:
