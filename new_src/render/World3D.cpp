@@ -316,6 +316,18 @@ void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	
 	}
 }
 
+const Texture* World3D::spriteTexture(const MediaLoader& media, int tileNum, int frame) {
+	// mediaId = mappings[tileNum] + frame, bounds-checked (spec combat-stage1
+	// §6.1); the upload itself validates the mediaId range.
+	const auto& m = media.mappings();
+	if (tileNum < 0 || tileNum >= (int)m.mappings.size()) return nullptr;
+	if (m.mappings[tileNum] < 0) return nullptr;
+	const int mediaId = m.mappings[tileNum] + frame;
+	if (!ensureSpriteTexture(media, tileNum, mediaId)) return nullptr;
+	auto it = spriteTexByMedia_.find(mediaId);
+	return it != spriteTexByMedia_.end() ? &it->second : nullptr;
+}
+
 // Decodes/uploads one sprite mediaId and caches it (dedup inside via count()).
 // Mirrors legacy Render::setupTexture: textures are created lazily on first
 // use, so a scripted setLineLocked flipping a sprite's tileNum after load

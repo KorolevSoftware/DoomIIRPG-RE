@@ -99,12 +99,16 @@ public:
 	// cockpit/HUD stay hidden (spec 2026-08-23-phase5-skeleton §2).
 	void drawMessages(Graphics2D& g, const Font& font);
 
-	// Demo monster for the health bar.
-	void setDemoMonster(int hp, int maxHp) {
-		monsterValid_ = true;
-		monsterHp_ = hp;
-		monsterMaxHp_ = maxHp;
-	}
+	// Top panel strip + segmented monster health bar. Public for the
+	// GameContext::render caller (spec combat-stage1 §0.F); messages are NOT
+	// drawn here — drawMessages owns them.
+	void drawTopBar(Graphics2D& g, const Font& font, int canvasWidth);
+
+	// Health-bar feed (replaces the demo setter; legacy state half of
+	// src/Hud.cpp:822-899): id = faced entity sprite index, -1 clears.
+	// A target change snaps display HP; an hp change on the same target
+	// restarts the 250 ms drain window that update() advances.
+	void feedMonsterHealth(int id, int hp, int maxHp);
 
 	// Bottom-bar sub-elements.
 	void drawWeapon(Graphics2D& g, int x, int y, int weapon, bool highlighted);
@@ -112,8 +116,6 @@ public:
 	void drawCurrentKeys(Graphics2D& g, int x, int y);
 
 private:
-	// Shared draw for the top panel strip.
-	void drawTopBar(Graphics2D& g, const Font& font, int canvasWidth);
 	void drawBottomBar(Graphics2D& g, const Font& font);
 	void drawArrowControls(Graphics2D& g);
 	void drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
@@ -172,10 +174,15 @@ private:
 	int importantTime_ = 0;          // style-3 messages auto-expire like the legacy queue
 	static constexpr int kImportantDurationMs = 3500;
 
-	// Demo monster for the health bar.
-	bool monsterValid_ = false;
-	int monsterHp_ = 100;
-	int monsterMaxHp_ = 100;
+	// Monster health-bar feed state (legacy lastTarget / monsterStartHealth /
+	// monsterDestHealth / monsterHealthChangeTime, src/Hud.cpp:822-899):
+	// monsterId_ < 0 hides the bar; displayHp_ eases toward monsterHp_ over
+	// the 250 ms window counted by monsterChangeTime_ (update()).
+	int monsterId_ = -1;
+	int displayHp_ = 0;
+	int monsterHp_ = 0;
+	int monsterMaxHp_ = 0;
+	int monsterChangeTime_ = 0;
 
 	// Demo weapon select screen.
 	bool weaponSelect_ = false;

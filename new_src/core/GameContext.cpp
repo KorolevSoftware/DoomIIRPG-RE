@@ -602,6 +602,98 @@ void GameContext::drawLootingMenu(Graphics2D& g) {
 		    std::min(lootPool_.topLine + 3, total), total, 3);
 }
 
+// First-person view weapon (spec combat-stage1 §6.2; legacy Combat::drawWeapon
+// GL path src/Combat.cpp:621-844, formulas per docs/research/
+// 2026-08-26-hero-choice-and-weapon.md Part B). Screen-space 176x176 quad at
+// (196 + wpX + shakeX, 131 - (wpY + shakeY)) — top-left anchor like
+// draw2DSprite's v12 box (src/Render.cpp:358-373). TinyGL-only anchors and
+// the 1.35x SCALE_WEAPON flag are not ported (rewrite targets GL numbers).
+void GameContext::drawViewWeapon(Graphics2D& g) {
+	// Gate (src/Combat.cpp:706-708 state check): gameplay states only. Zoom
+	// skip (src/Canvas.cpp:1348 isZoomedIn) is implicit — no zoom system yet.
+	if (state != StateId::Playing && state != StateId::Looting &&
+	    state != StateId::Dialog) return;
+	Player& p = *sys_.player;
+	const int w = p.ce.weapon;                                 // (:677)
+	if (w < 0 || p.weapons == 0) return;                       // (:706-708)
+
+	int scrX = 196;                        // 480/2 - 44                (:627)
+	int scrY = 131;                        // 320/2 - 29                (:628)
+	// weaponDown lower/raise lerp absent -> skip scrY += LOWEREDWEAPON_Y(38)
+	// (:672-674); shiftWeapon/LOWERWEAPON_TIME=200 stays unported.
+	// Per-weapon scrY bias (:679-693).
+	scrY += (w == 1) ? 3 : (w == 2) ? 10 : (w >= 3 && w <= 6) ? 12 : 0;
+
+	// wpinfo table 1: idleX,idleY,atkX,atkY,flashX,flashY signed bytes per
+	// weapon (src/Combat.h:53-59).
+	const Tables& tables = *sys_.tables;
+	if ((size_t)(w * 6 + 5) >= tables.weaponInfo.size()) return;
+	const int idleX = tables.weaponInfo[w * 6 + 0];
+	const int idleY = tables.weaponInfo[w * 6 + 1];
+	const int atkX  = tables.weaponInfo[w * 6 + 2];
+	const int atkY  = tables.weaponInfo[w * 6 + 3];
+	const int flashX = tables.weaponInfo[w * 6 + 4];
+	const int flashY = tables.weaponInfo[w * 6 + 5];
+
+	// Attack pose: hold (atkX,atkY) until flashDone, then lerp back over
+	// animTime in 16.16 (src/Combat.cpp:735-767). b5 reduces to
+	// "seq running for this weapon" (curAttacker == nullptr always).
+	int wpX = idleX, wpY = idleY;
+	bool flash = false;
+	Combat& c = sys_.game->combat;
+	if (c.active && c.attackerWeaponId == w) {
+		wpX = atkX;
+		wpY = atkY;
+		if (!c.flashDone) {
+			flash = ((1 << w) & 0x200) == 0;                   // :741 (weapon 9 excluded)
+			// Render-side flip exactly like legacy drawWeapon (:742-744).
+			if (gameTime >= c.flashDoneTime) c.flashDone = true;
+		} else {
+			// SHOTHOLD return lerp; chainsaw jitter branch (:752-761) omitted.
+			const int elapsed = (int)(gameTime - c.animStartTime);
+			const int t = std::clamp(elapsed - c.flashTime, 0, c.animTime) *
+				65536 / std::max(c.animTime, 1);
+			wpX = atkX + (((idleX - atkX) * t) >> 16);
+			wpY = atkY + (((idleY - atkY) * t) >> 16);
+		}
+	}
+
+	// Canvas shake; legacy negates sy first (sy = -|sy|, src/Combat.cpp:709).
+	const int sx = sys_.hud->shakeX();
+	const int sy = -std::abs(sys_.hud->shakeY());
+	const int x = scrX + wpX + sx;                             // (:786)
+	const int y = scrY - (wpY + sy);                           // (:787)
+
+	// Muzzle flash FIRST so the gun art draws on top (:826-834): tile 1
+	// frame 3 at (+flashX+40, +flashY+40), 88x88 (scaleFactor 0x8000).
+	// renderMode 5 additive blend has no Graphics2D counterpart — alpha blit.
+	if (flash && ((1 << w) & 0x181) != 0) {  // legacy flash gate (src/Combat.cpp:826)
+		const Texture* ftex = sys_.world->spriteTexture(*sys_.media,
+			Combat::getWeaponTileNum(0), 3);
+		if (ftex != nullptr) {
+			g.drawImage(*ftex, 0, 0, ftex->width(), ftex->height(),
+				x + flashX + 40, y + flashY + 40, 88, 88, 0);
+		}
+	}
+
+	// Weapon art frame 0; the chainsaw-return/weapons 8+13 frame-1 rule
+	// (:822-825) is dead on the map00 rifle route. Sentry-bot stack
+	// (:797-813), weapon 14 (:814-820) and weapon 9 underlay (:835-837)
+	// deferred (hero-choice doc §B.3 exclusions).
+	const int tileNum = Combat::getWeaponTileNum(w);
+	const Texture* tex = sys_.world->spriteTexture(*sys_.media, tileNum, 0);
+	// TEMP [dbg] view-weapon audit (remove with Group-3 acceptance)
+	static bool texLogged = false;
+	if (!texLogged && tex != nullptr) {
+		texLogged = true;
+		std::fprintf(stderr, "[weapon] w=%d tile=%d mediaTex=%dx%d quad=(%d,%d)\n",
+			w, tileNum, tex->width(), tex->height(), x, y);
+	}
+	if (tex != nullptr) {
+		g.drawImage(*tex, 0, 0, tex->width(), tex->height(), x, y, 176, 176, 0);
+	}
+}
+
 // ---- cinematic camera (docs/original-code/cutscenes-camera.md §1-§3) ----
 
 void GameContext::startCinematic(int camIdx) {
@@ -1234,6 +1326,10 @@ void GameContext::render(AppContext& app) {
 		g.fillRect(0, 0, 480, 320, 32, 32, 64);
 	}
 
+	// View weapon paints over the world, before viewport restore/overlays
+	// (legacy renderScene order src/Canvas.cpp:1344-1355; spec §6.2).
+	drawViewWeapon(g);
+
 	// Overlays draw in full canvas space again; the cockpit overlay anchors
 	// at the cinRect top edge y=42 (src/Hud.cpp:623-624 draws both copies at
 	// cinRect positions in screen space).
@@ -1245,6 +1341,28 @@ void GameContext::render(AppContext& app) {
 	// The boot intro enables it only around camera 0 (IP 1945-2062).
 	if (state == StateId::Camera && sys_.hud->cockpitOverlay()) {
 		sys_.hud->drawOverlay(g, 0, 42, 480);
+	}
+
+	// Health-bar feed (spec §0.F): resolve the facing probe into LIVE
+	// ET_MONSTER stats every frame; -1 hides the bar (legacy gates
+	// src/Hud.cpp:825-835). Then the top bar gains its real caller for the
+	// gameplay states — messages stay solely in drawMessages.
+	{
+		int feedId = -1, feedHp = 0, feedMaxHp = 0;
+		Entity* fe = sys_.player->facingEntity;
+		if (fe != nullptr && fe->monster != nullptr && fe->isMonster() &&
+		    (fe->info & Entity::kInfoActive) != 0) {
+			feedHp = fe->monster->ce.getStat(Enums::STAT_HEALTH);
+			if (feedHp > 0) {
+				feedId = fe->getSprite();
+				feedMaxHp = fe->monster->ce.getStat(Enums::STAT_MAX_HEALTH);
+			}
+		}
+		sys_.hud->feedMonsterHealth(feedId, feedHp, feedMaxHp);
+	}
+	if (state == StateId::Playing || state == StateId::Looting ||
+	    state == StateId::Dialog) {
+		sys_.hud->drawTopBar(g, *sys_.font, 480);
 	}
 
 	// Messages overlay while cockpit/HUD stay hidden.

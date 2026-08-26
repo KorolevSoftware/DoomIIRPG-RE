@@ -71,6 +71,12 @@ public:
 	// Static sprites only for now; entity-driven monsters/NPCs come later.
 	void drawSprites(const MapData& map, const MediaLoader& media, const Camera3D& camera);
 
+	// Returns the cached (uploading lazily) texture for
+	// mediaMappings[tileNum] + frame, or nullptr when the mapping/media is
+	// missing. Screen-space consumers (view weapon, spec combat-stage1
+	// §6.1); mediaId resolution mirrors the draw path (src/Render.cpp:2047).
+	const Texture* spriteTexture(const MediaLoader& media, int tileNum, int frame);
+
 	// Renders a single polygon list (used for per-node BSP traversal later).
 	void drawPolys(const MapData& map, const std::vector<int>& polyIdx, const Camera3D& camera);
 

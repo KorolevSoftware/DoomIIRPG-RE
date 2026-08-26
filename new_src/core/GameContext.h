@@ -148,6 +148,10 @@ private:
 	void handleLootingAction(Action a);  // src/LoothingSystem.cpp:85-117
 	void closeLootSession();             // grant + stand-up restart (:89-103)
 	void drawLootingMenu(Graphics2D& g); // src/LoothingSystem.cpp:121-150
+	// First-person weapon quad, drawn after drawBSP (spec combat-stage1 §6.2;
+	// legacy Combat::drawWeapon GL-path anchors, docs/research/
+	// 2026-08-26-hero-choice-and-weapon.md Part B).
+	void drawViewWeapon(Graphics2D& g);
 
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)

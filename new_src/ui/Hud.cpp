@@ -218,20 +218,30 @@ void Hud::drawHudOverdraw(Graphics2D& g, int hudX, int hudY, int hudW, int hudH)
 }
 
 void Hud::drawMonsterHealth(Graphics2D& g, int scrCx, int viewTop) {
-	if (!monsterValid_ || monsterMaxHp_ <= 0) return;
+	if (monsterId_ < 0 || monsterMaxHp_ <= 0) return;
+
+	// Drain animation tail (src/Hud.cpp:851-859): clamp the animated source
+	// to max, then ease toward the fed hp across the 250 ms window
+	// (monsterChangeTime_ advances in update(); >250 snaps to monsterHp_).
+	int stat = monsterMaxHp_;
+	int stat2;
+	if (displayHp_ > stat) displayHp_ = stat;
+	if (monsterChangeTime_ > 250) {
+		stat2 = monsterHp_;                                                          // :854-856
+	} else {
+		stat2 = displayHp_ - (displayHp_ - monsterHp_) * monsterChangeTime_ / 250;   // :858
+	}
 
 	// Legacy: n=25, n4 = 2*(screenRect[2]<<8)/128>>8 = 2*screenW/128 (=7.5).
 	int n = 25;
-	int stat = monsterMaxHp_;
-	int stat2 = monsterHp_;
 	if (stat2 > stat) stat2 = stat;
 	int n2 = ((n << 8) * ((stat2 << 16) / (stat << 8)) >> 8) + 256 - 1 >> 8;
 	if (n2 == 0 && stat2 > 0) n2 = 1;
 	int n4 = 2 * (480 << 8) / 128 >> 8;
-	if ((n4 & 0x1) != 0) ++n4; // odd -> even
+	if ((n4 & 0x1) != 0) ++n4; // odd -> even (boss +1 branch deferred)
 	int n5 = 2 + n4 * n;
 	int n6 = scrCx - (n5 >> 1);
-	int n3 = 6;
+	int n3 = 6;   // VIOS-boss 50 / zoomed +20 variants deferred (:866-871)
 	int y = viewTop + n3;
 
 	g.fillRect(n6, y, n5, n4 * 2 + 1, 0, 0, 0);
@@ -246,6 +256,23 @@ void Hud::drawMonsterHealth(Graphics2D& g, int scrCx, int viewTop) {
 		g.fillRect(n6, y + 2, n4 - 1, n4 * 2 - 2, r, g8, b8);
 		n6 += n4;
 	}
+}
+
+void Hud::feedMonsterHealth(int id, int hp, int maxHp) {
+	// State half of legacy drawMonsterHealth (src/Hud.cpp:838-850): a new
+	// target snaps the animated value; changed hp on the same target starts
+	// a fresh 250 ms drain from the previous destination.
+	if (id != monsterId_) {
+		monsterId_ = id;
+		displayHp_ = hp;
+		monsterHp_ = hp;
+		monsterChangeTime_ = 0;
+	} else if (hp != monsterHp_) {
+		displayHp_ = monsterHp_;
+		monsterHp_ = hp;
+		monsterChangeTime_ = 0;
+	}
+	monsterMaxHp_ = maxHp;
 }
 
 void Hud::drawWeaponSelection(Graphics2D& g, const Font& font) {
@@ -292,18 +319,10 @@ void Hud::drawTopBar(Graphics2D& g, const Font& font, int canvasWidth) {
 	if (!imgPanelTop_.valid()) return;
 	g.drawImage(imgPanelTop_, canvasWidth / 2, 0, Graphics2D::kAnchorHCenter);
 
-	drawMonsterHealth(g, 240, 42);
-
-	// Messages take priority over the default center text.
-	if (hasImportant_) {
-		Text t;
-		t.append(importantText_);
-		drawImportantMessage(g, font, t, 0xFF7F0000);
-	} else if (hasCenterMessage_ && centerTime_ >= 0) {
-		Text t;
-		t.append(centerText_);
-		drawCenterMessage(g, font, t, centerColor_);
-	}
+	// Segmented health bar under the panel (spec combat-stage1 §0.F):
+	// viewRect[1]=20 here + the legacy n3=6 inset = absolute y=26
+	// (src/Hud.cpp:882). Messages are drawn solely by drawMessages.
+	drawMonsterHealth(g, 240, 20);
 }
 
 void Hud::drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color) {
@@ -455,6 +474,9 @@ void Hud::update(int timeMs) {
 		if (importantTime_ >= kImportantDurationMs) hasImportant_ = false;
 	}
 	if (!bubbleText_.empty()) bubbleTextTime_ += timeMs;
+	// Health-bar drain clock (src/Hud.cpp:854 threshold): past 250 ms the
+	// bar snaps to the fed hp instead of easing.
+	if (monsterId_ >= 0) monsterChangeTime_ += timeMs;
 	if (damageCount_ > 0) {
 		damageTime_ -= timeMs;
 		if (damageTime_ <= 0) damageCount_ = 0;
