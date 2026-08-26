@@ -150,6 +150,60 @@ Billboards ALWAYS face the camera; there is no 8-dir art rotation.
   (`src/Render.cpp:3411-3460`); gated by `hasGunFlare()` = Mancubus/Revenant/SentryBot/
   Cyberdemon/Mastermind (`src/Render.cpp:3019-3021`).
 
+## 8. Monster-family routing: monsters ARE stacked humans (except floaters/bosses)
+
+`renderSpriteAnim` is entered for EVERY entity with `monster != nullptr`
+(`src/Render.cpp:1624-1626`) and for NPCs via `def->eType == ET_NPC`
+(`src/Render.cpp:1660-1661`) — one shared code path, no separate "monster
+logic". Only two families divert before the switch:
+
+- Floaters (Sentinel/Lost Soul/Cacodemon) → `renderFloaterAnim`
+  (`src/Render.cpp:3157-3161`, predicate `:3023-3025`).
+- Special bosses (Mastermind/Arachnotron/Boss Pinky/VIOS) →
+  `renderSpecialBossAnim` (`src/Render.cpp:3162-3166`, predicate `:3027-3029`).
+
+Everything else — imps (23–25), zombies (20–22), pinkies, saw goblins,
+sentry bots, arch-vile, mancubus, revenant, Cyberdemon — uses the same
+shadow+legs+torso+head stack with per-family deltas only:
+
+- **Imps**: no offsets anywhere; attack draws NO head (`!isImp` gate at
+  `src/Render.cpp:3376`); no muzzle flash (not in `hasGunFlare`,
+  `src/Render.cpp:3019-3021`); attack2 frames are byte-identical copies of
+  attack1 (media 124→122, 125→123 texel/palette references in
+  tmp_newMappings.bin).
+- **Zombies**: attack LEGS mirror on frame 1 (`n25 ^= 0x20000` at
+  `src/Render.cpp:3299-3301`, consumed by the legs only at `:3333`; torso/head
+  take raw `flags`, `:3359/:3409`) and no head in attack (`:3376`). Erratum
+  (spec 2026-08-26 §9-E1): an earlier revision of this bullet said the TORSO
+  mirrors; the source shows `n25` never reaches the torso/head draws.
+- **Sentry bots**: head sprite H-flips on `(time+n*1337)/2048 & 1` idle and
+  `/1024 & 1` walk (`src/Render.cpp:3234-3236,3280-3282`); NOT floaters.
+- **Arch-vile**: idle torso −36 / head +109 (`:3218-3220,3240-3244`), walk
+  torso −36 and mirrors together with legs (`:3273-3274,3277`), attack frame 0
+  torso z+288 with no head (`:3335-3340,3349`).
+- **Pain auto-revert**: render itself rewrites anim byte to 0 when
+  `anim ∈ {96,144}` and `time > monster->frameTime`
+  (`src/Render.cpp:1600-1604`).
+
+Imp sheet inventory (tileNum 23 = media 114..127; bounds from
+tmp_newMappings.bin, pixel counts decoded from tmp_newTexels*.bin):
+[0]=frontLegsA 50×87, [1]=frontLegsB 50×88, [2]=frontTorso 114×79,
+[3]=frontHead 30×46, [4]/[5]=backLegs A/B (40×82, 105×91), [6]=backTorso 91×60,
+[7]=backHead 24×21, [8]/[9]=attack1 windup/pose (121×94, 80×91),
+[10]/[11]=copies of [8]/[9], [12]=pain near-full-body 107×147, [13]=dead lying
+164×61. No frame 0–11 is a complete standing body — live imps exist ONLY as
+the stacked parts.
+
+Legacy texture resolution does NOT clamp frame indices:
+`mediaMappings[tile]+frame` indexes the flat media array directly
+(`src/GLES.cpp:586-592`; `src/Render.cpp:2043-2047`), so an out-of-range frame
+silently draws the NEXT tile's art. (The rewrite clamps to its own base —
+see docs/research/2026-08-26-monster-render-flicker.md.)
+
+Map00 note: z-sprites 185/186/187 carry NOENTITY and anim bytes 0x00/0x02/0x03
+at the same spot — legacy composes one imp from three single-frame quads
+(no entity ⇒ no `renderSpriteAnim`, raw frame quad at `src/Render.cpp:1728`).
+
 ## Port checklist — animating a walking human sprite-stack
 
 1. Store per-sprite state as ONE byte: `(anim<<4)|frame` (mirror original semantics, `src/Enums.h:567-581`).

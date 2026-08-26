@@ -391,18 +391,18 @@ Legend: MATCH / MISMATCH / MISSING vs the sections above.
 |---|---|---|---|---|
 | R1 | Creation | generic def lookup, all sprites (`src/Game.cpp:374-460`) | door-range filter + `defs.lookup`, links at tile (`new_src/domain/game/Game.cpp:54-73`) | MATCH (subset) |
 | R2 | Use trigger | faced entity, Chebyshev ≤ 1 tile, LOS via trace, then advanceTurn (`src/PlayingInputHandler.cpp:445-459`) | E-key → nearest door within Euclidean 3 tiles of faced tile, no facing/LOS/1-tile cap (`new_src/domain/game/Game.cpp:78-96`, `new_src/core/Main.cpp:366-373`) | MISMATCH |
-| R3 | Locked doors | refuse + message 44 (`src/PlayingInputHandler.cpp:447-449`); unlock via scripts EV_ITEM_COUNT→EV_DOOROP + `setLineLocked` tileNum bit 0 flip (`src/ScriptThread.cpp:433-454,747-780`, `src/Game.cpp:2477-2498`) | blanket refuse, no key items/scripts/`setLineLocked` (`new_src/domain/game/Game.cpp:100`) | refusal MATCH, unlock path MISSING |
+| R3 | Locked doors | refuse + message 44 (`src/PlayingInputHandler.cpp:447-449`); unlock via scripts EV_ITEM_COUNT→EV_DOOROP + `setLineLocked` tileNum bit 0 flip (`src/ScriptThread.cpp:433-454,747-780`, `src/Game.cpp:2477-2498`) | EV_DOOROP acts 1–3 + low-byte-only `setLineLocked` + def swap tn+257 (`new_src/domain/game/ScriptVM.cpp:431-476`, `new_src/domain/game/Game.cpp:580-590`); HUD message 44 still a log stub | MATCH for mechanics, message MISSING |
 | R4 | Slide rule | ±32 along wall axis, suppressed when `parm & 1` (`src/Game.cpp:1097-1126`) | identical rule (`new_src/domain/game/Game.cpp:130-139`) | MATCH |
 | R5 | Duration/lerp | 750 ms linear, frac8 = `(elapsed<<16)/(travelTime<<8)` (`src/Game.cpp:2877`) | 750 ms linear `t/dur` (`new_src/domain/game/Game.cpp:148-150,348-351`) | MATCH |
 | R6 | srcScale on re-open | always current `mapSprites[S_SCALEFACTOR]` (`src/Game.cpp:1095`) | hardcoded 64 on open (`new_src/domain/game/Game.cpp:146`) | MISMATCH (pop if reused mid-anim) |
-| R7 | DOORLERP flag lifetime | set at open start; cleared only at close END (`src/Game.cpp:1089,3125`) | cleared at close START (`new_src/domain/game/Game.cpp:153-154`) | MISMATCH |
-| R8 | Solidity timeline | solid during whole open; solid from close start (`src/Game.cpp:1079,3131`) | unlink at open end ok; relink at close END → passable while closing; passable as soon as opening anim starts (`new_src/domain/game/Game.cpp:186-194,358-368`) | MISMATCH |
-| R9 | Auto-close | `advanceTurn` → `CanCloseDoor` (player/monsters on door tile + both neighbours along slide axis, tile-granular) → close with snap-if-offscreen (`src/Game.cpp:1238-1281,1215-1236,1153-1155`) | `advanceTurnDoors` with radius-32-circle occupancy, no snap, skips animating doors (`new_src/domain/game/Game.cpp:198-245`) | PARTIAL |
+| R7 | DOORLERP flag lifetime | set at open start; cleared only at close END (`src/Game.cpp:1089,3125`) | set at EVERY anim start (:290), cleared only at close completion (`new_src/domain/game/Game.cpp:1104`) | MATCH |
+| R8 | Solidity timeline | solid during whole open (unlink at open end); solid from close START (`src/Game.cpp:1076-1081,3131`) | close-start relink + open-end unlink (`new_src/domain/game/Game.cpp:237-239,1095`) | MATCH |
+| R9 | Auto-close | `advanceTurn` → `CanCloseDoor` (player/monsters on door tile + both neighbours along slide axis, tile-granular) → close with snap-if-offscreen (`src/Game.cpp:1238-1281,1215-1236,1153-1155`) | `advanceTurnDoors` tile-granular occupancy incl. fresh player pos, n2=2 kept but cull-snap not ported (animates instead), animating doors early-out via linked check (`new_src/domain/game/Game.cpp:344-382`); LATENT GAP: `else if (info & 0xC000000)` skips neighbour checks for orientation-less doors where legacy tests X unconditionally when 0x3000000 is clear (`src/Game.cpp:1229-1231`) | PARTIAL (verified correct for sp22 `0x0C500010`, docs/research/2026-08-25-blue-door-regression.md) |
 | R10 | Monster blocks closing | yes (`src/Game.cpp:1070-1075`) | no monster entities yet | MISSING (by scope) |
 | R11 | Renderer: full-size + one-axis collapse | `n10` real scale, geometry forced 65536 (`src/Render.cpp:428-432`) | same pattern (`new_src/render/World3D.cpp:691-697`) | MATCH |
 | R12 | Renderer: red/blue vertical split (two quads + growing gap + v-recenter) | `src/Render.cpp:587-592,601-623` | absent — all doors collapse WIDTH only (`new_src/render/World3D.cpp:710-713`) | MISSING |
 | R13 | Renderer: UV compensation | u-shift by full delta (slide doors), v-recenter by half delta (`src/Render.cpp:591,597`) | none (`new_src/render/World3D.cpp:720-725` untouched by lerp) | MISSING |
-| R14 | Frame 1 while open | bits 8–15 := 0x100 (`src/Game.cpp:1150-1152`) | never written (renderer would honour it: `new_src/render/World3D.cpp:517`) | MISSING |
+| R14 | Frame 1 while open | bits 8–15 := 0x100 (`src/Game.cpp:1150-1152`) | written at open start for family doors + redundant EV_DOOROP flip; restored at close completion (`new_src/domain/game/Game.cpp:297-299,1103`; `new_src/domain/game/ScriptVM.cpp:456-464`). Bits 8–15 have no solidity reader; orientation bits 24–27 preserved by all `& 0xFFFF00FF` writers | MATCH |
 | R15 | Hidden/frame restore, sounds | `src/Game.cpp:1082,3122,1137,1144` | not implemented | MISSING |
 
 Ranked likely causes of "doors work incorrectly":
@@ -414,3 +414,22 @@ Ranked likely causes of "doors work incorrectly":
 4. R2 — wrong door can open (nearest-in-3-tiles vs faced-within-1-tile+LOS).
 5. R7/R8 — closing looks like a both-axis shrink into the floor (flag cleared
    too early) and the door is passable at the wrong times.
+
+## 8. Blue-door regression audit (2026-08-25)
+
+Full timeline + verdicts: `docs/research/2026-08-25-blue-door-regression.md`.
+Verified facts:
+
+* sp22 open path is faithful end-to-end: blocking EV_DOOROP open parks the
+  thread via `unpauseTime=-1` as DoorAnim owner, 750 ms scale-only collapse
+  (`parm&1`), open-end unlink, single owner resume
+  (`new_src/domain/game/Game.cpp:204-315,1072-1118`;
+  `new_src/domain/game/ScriptVM.cpp:431-476`).
+* Auto-close CANNOT close sp22 while the player stands west at (9,19):
+  info word `0x0C500010` has `0xC000000` → X-neighbours checked, player tile
+  blocks; `playerX_/playerY_` refreshed every tick
+  (`new_src/core/GameContext.cpp:153`). A quiet scripted close/op=6 lock would
+  snap it solid same-tick — the story trigger EVT 617 tail (@3324 op=1 +
+  @3327 op=6, docs/original-code/tile-events-vm.md:362-364) is the prime
+  suspect for "задъехалась"; NPC lerp dst tiles (sprites 7/10/19, playersolid
+  mask bit 3) are the alternative for "open but solid".

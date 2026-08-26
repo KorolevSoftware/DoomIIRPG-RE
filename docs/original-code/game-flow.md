@@ -256,6 +256,23 @@ The per-state *tick* dispatcher is the big if/else chain in `Canvas::run`
   `game->loadState(loadType)` and shows message 39
   (`src/Canvas.cpp:911-915`).
 
+### 3.3.1 Player spawn position — `Game::spawnPlayer` (`src/Game.cpp:941-972`)
+
+Runs at the end of every map load (`src/LoadingManager.cpp:673`). With
+`spawnParam == 0` (normal load):
+
+* `loadType == 3` (save-slot restore variant): hardcoded tile **(3,15)**,
+  facing dir 6 (`src/Game.cpp:947-951`);
+* otherwise: tile `(mapSpawnIndex % 32, mapSpawnIndex / 32)` with facing
+  `mapSpawnDir` from the map header (`src/Game.cpp:953-955`; header fields
+  parsed at `src/LoadingManager.cpp:370-371`). The `%32`/`/32` split implies
+  **32-tile-wide maps** (matches the heightMap index math
+  `heightMap[(y>>6)*32 + (x>>6)]`, `src/Render.cpp:2444-2451`).
+* View snaps to tile center: `viewX = n*64+32`, `viewZ = getHeight+36`,
+  `viewAngle = dir << 7` (`src/Game.cpp:964-968`). For map00
+  (`mapSpawnIndex = 612`, `mapSpawnDir = 0`, read from `map00.bin` header) the
+  fresh-game spawn is **tile (4,19) facing angle 0**.
+
 Ordered `loadMedia()` sequence (`src/LoadingManager.cpp:604-744`):
 
 1. `unloadMedia()`: free runtime HUD images + `game->unloadMapData()` +

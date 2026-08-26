@@ -211,3 +211,178 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
   cam0 16995ms = 13400 keys + legacy-faithful WAIT holds (2000+1500) +
   quantization. All temp logs ([camkey]/[camera] START/END/[dbg]) removed;
   build green; pre-existing unrelated: UNIMPLEMENTED opcode 92 @IP=2336.
+
+## 2026-08-25 — loot dwell + menu UI spec (research)
+- Traced the full ST_LOOTING interaction: after the 500 ms crouch the original
+  HOLDS the pose (dwell), plays sound 1055 once, draws a top-screen loot list
+  (red body 0xFF660000 {0,36,479,48} + black "Looted Items:" bar) and accepts
+  FIRE(page×3/close)/PASSTURN/BACK(close+grant)/UP/DOWN/LEFT/RIGHT
+  (src/LootingSystem.cpp:85-152). Grant runs at UI close BEFORE stand-up;
+  advanceTurn at stand-up expiry (:73-103).
+- Decoded strings from the .ipa: str90 "%01%02x %03|", str91 "%01%02|",
+  str227 "Looted Items:", str228 "None found!", entity-table str157
+  "UAC Credits" (tables.bin header is skipped — offsets relative to byte 80).
+- Deliverables: docs/original-code/loot-inventory.md §2.6 (port-ready spec +
+  new_src delta list), docs/research/2026-08-25-loot-ui-spec.md (raw log).
+- Rewrite gap confirmed: new_src auto-grants at settle and toasts instead of
+  listing (GameContext.cpp:469-485, Game.cpp:791-818); delta list in §2.6.
+
+## 2026-08-25 — elevator end-scene visibility audit (research)
+
+- Task: why "standing legs" persist near the lift after the cutscene fixes;
+  what the original end scene contains.
+- Read-only audit of src/Render.cpp gating + raw decode of map00 sprites/defs
+  (tmp_map00.bin layout mirrors LoadingManager.cpp:463-552; TE@0xED07,
+  bytecode@62019 reconfirmed) and tmp_entities.bin defs.
+- Key findings: (1) hidden bit 0x10000 has one funnel, checked before entity
+  lookup — no render path bypasses it (src/Render.cpp:830-837,1501-1504).
+  (2) Squad sprites 185-188 + props 203/204 are SPRITE_FLAG_NOENTITY
+  (0x200000, Enums.h:1237) → load skips entity creation (Game.cpp:398-400),
+  so legacy EV_HIDE only sets the hidden bit for them. (3) Corpse prop 105 =
+  tile 138 = single-frame media 738, lying art, lerped to (5,19). (4) Player
+  spawns at tile (4,19) angle 0 post-intro (mapSpawnIndex=612,
+  Game.cpp:953-968); NPC 19 walks out to ~(9,19) then BACK to (5,19) — a
+  standing NPC beside the corpse is faithful original behavior.
+- Verdict: rewrite cannot draw hidden sprites and ScriptVM has no killer op
+  in IP 2799-2933 anymore; residual sightings = stale build or the legitimate
+  standing NPC 19. Verification lines documented.
+- Deliverables: docs/research/2026-08-25-unhandled-script-events.md §5;
+  new docs/original-code/rendering.md (hidden-bit gates, corpse-prop tiles,
+  NOENTITY binding); game-flow.md §3.3.1 (spawnPlayer spawn position).
+
+## 2026-08-25 — interactive loot dwell + loot menu UI (spec 2026-08-25-loot-dwell-ui)
+
+- Implemented both groups: Game::LootPool + poolLootCorpse/giveLootPool replace
+  lootCorpse (toast deleted); GameContext gained kLootPhaseMs, lootSettleSfx_,
+  lootPool_, handleLootingAction/closeLootSession/drawLootingMenu, the Looting
+  input dispatch, pool-at-entry, pose-hold dwell with one-shot sound 1055 log,
+  and the render() overlay hook; DialogSystem::drawScrollBar promoted to public.
+- Legacy fidelity: class-6 dedupe quirk kept verbatim (tests source
+  entity->lootSet[j], src/LoothingSystem.cpp:186-194); mark-before-read for all
+  eType-9 entities on the tile; grant-on-close ordering (give -> lootCrouch_
+  false -> lootTime_ restart); guard/draw predicates strict `>` like :87/:122.
+- Notes: spec's LootPool::entries is kMaxCorpseLoot=3 while legacy lootPool[9]
+  — multi-corpse tiles beyond 3 entries drop (bound-guarded); quirk loop skips
+  j >= 3 instead of reading past lootSet[].
+- Build green (--clean-first), zero new warnings; lootCorpse/pendingLootCorpse_
+  grep-clean. User verification pending (sp29 keycard list, sp121 3-line list,
+  flavor corpses, re-open prevention).
+
+## 2026-08-25 — review PASS + minor fixes (loot dwell + elevator batch)
+
+- Reviewer verdict: **PASS**, 0 blockers, 6 minors across the uncommitted diff
+  (loot dwell/UI vs spec 2026-08-25-loot-dwell-ui; elevator VM fixes vs
+  research 2026-08-25-unhandled-script-events.md §4/§5). Full line-by-line
+  fidelity confirmed (pooling order, dwell predicate strict `>`, grant-on-close,
+  MANIM_DEAD routing cannot hijack doors/props, hidden-bit skips precede).
+- Fixed minors: NOENTITY sprite skip in loadEntities
+  (Game.cpp:137 ≈ src/Game.cpp:398-400; squad imps 185-187 no longer get
+  entities, so EV_HIDE takes the bare hidden-bit path like legacy) and the
+  EV_HIDE else-if indentation. Research §5-Q4 stale cite updated
+  (GameContext.cpp:970-980).
+- Remaining documented deviations (accepted): lootPool cap 3 vs legacy int[9]
+  (map00-inert), DAMAGEMONSTER non-monster skip logged (legacy died()
+  unconditional), ENTITY_FRAME 0x7x-on-prop routing corner (dormant).
+- Blue door passage: rewrite ALREADY honors tile-event self-disable
+  (ScriptVM.cpp eventMatches :107 + EV_EVENTOP write :484) — replay hypothesis
+  dead; awaiting user [dbg] moveBlocked log to name a blocker entity.
+  Research: docs/research/2026-08-25-blue-door-passage.md (+ op=1 is
+  UNLOCK+CLOSE correction; quiet LOCK on open door = lock-while-passable).
+
+## 2026-08-26 — blue-door blocker root-caused: v14 (characterChoice) hardcoded 0
+
+- Full annotated decode of EVT 617 (event[54], IP 2993-3332 + callees
+  func@3333/3375/3401), cross-validated line-by-line against the canonical
+  docs/research/assets/map00_disasm.txt. Walker table per choice:
+  v14==1 → {9,10} onto doorway (10,19); ==2 → {7,9}; ==3/else → {7,10};
+  HIDE guards test only ==3/==1/==2 (IPs 3276-3315) — an else-value hides
+  NOTHING and the event still closes+locks sp22 on top of the walkers.
+- Legacy var14 = player->characterChoice ∈ {1,2,3} guaranteed by the forced
+  intro select (IntroSequenceManager.cpp:599/628/676; constants {1,3,2}
+  :328-341) and refreshed into scriptStateVars[14] on every run()
+  (Game.cpp:3468 via ScriptThread.cpp:230). Rewrite hardcodes vars[14]=0
+  (ScriptVM.cpp:300) with no characterChoice anywhere → fall-through branch:
+  spr7+spr10 lerp onto (10,19) (@3236/@3243), zero HIDEs, door closes over
+  them → "[dbg] moveBlocked to 10,19 by spr=10 type=3". EV_HIDE/EV_EVAL/
+  EV_GOTO verified faithful — not the cause.
+- Acceptance target documented (marine default): 9+10 hidden mid-walk,
+  spr7 stays at boot park (22,29), bob 19 →(21,21), props hidden, sp22
+  closed+locked, 205/206 untouched at (1,19).
+- Fix: set vars[14]=1 (marine per DialogSystem.cpp comment intent) in
+  updateScriptVars. Research: docs/research/2026-08-26-choice-branch.md.
+
+## 2026-08-25 — elevator shaft glass identified (spr155, tile 178) + whole/broken mechanism
+
+- Marker-anchored re-parse of tmp_map00.bin (X@59078 Y@59339 info_lo@59600
+  info_hi@59865 Z@60391 anim@60521, N=261; staticFuncs LE@60651; bytecode@62019)
+  + legacy-exact CFG disassembly (BE operands, loop-tail ++IP).
+- Glass = spr155: TILENUM_GLASS (Enums.h:792), W|2SIDE|NOENT z-sprite at
+  (2,19), frame0 whole (media 779) / frame1 broken (780); renderMode 3 (ADD);
+  wall-plane quad at x=128px, leaf 161. Car side = spr153 (52+257→309);
+  floor slabs = FLAT|TILE spr154/spr152 (+257→451/455; raw ranges EMPTY).
+- Break mechanism: ENTITY_FRAME(155,1) @3797 inside crash cinematic event[48]
+  (trigger tile (18,19), camera 9 parked in-shaft at (160,1248)) and @1065 in
+  the per-load restorer gated `EVAL v22==1`; NEXTSTATE 22 @3706 persists it.
+  Corrected prior "ship landing" note in lerp-opcodes.md (155 not hidden).
+- Rewrite audit: parser/renderMode/textures/leaf-math/script semantics all
+  verify equal; confirmed renderer divergence for the slabs = missing FLAT
+  plane branch (World3D.cpp:721-742 vertical-only); unproven whether event[48]
+  ever fires in rewrite sessions (no executeTile(18,19)/camera=9 in any log).
+  Probes specified per stage in docs/research/2026-08-25-elevator-glass.md §4.
+
+## 2026-08-26 — hero choice ↔ player identity + first-person weapon display spec
+
+- PART A verdict: CONFIRMED, v14=1 is correct. Choice 1 = Major **Kira
+  Morgan**, the FEMALE marine-stat hero (names from strings.idx type-3 IDs
+  215/216/217; art gender verified from extracted tiles 66/68/72 head frames;
+  NPC frames are stacked legs/torso/head composites, Enums.h:604-613). No
+  choice-gated spawn position (Game.cpp:941-972) and no choice-gated view
+  hands (Combat.cpp:621-844); the chosen squad sprite (7/10/9) IS the
+  player's world body: formation walk-in incl. chosen one (func@2328),
+  INSTANT park to (22,29) @2531/2545/2552, later tile-event companion walk
+  (IPs 7184-7633, tiles (21,27)-(23,28)). EVT 617 doorway walkers are always
+  the two NON-chosen sprites, hidden after. Today's err.log proves the
+  rewrite (v14=1) reproduces the legacy end state; the "duplicate hero" the
+  user saw = intentional formation appearance (+ yesterday's v14=0 bug).
+  No further fix needed.
+- PART B: legacy view-weapon spec extracted (Combat::drawWeapon 621-844:
+  176x176 quad at (196+wpX, 131-wpY), wpinfo table-1 values for all 15
+  weapons, getWeaponTileNum map, muzzle flash = tile 1 frame 3, no
+  reload/switch anims, 200ms lower/raise). Rewrite audit: HUD icon strip +
+  Tables.weaponInfo/weaponData + Player weapon fields exist; NO view-weapon
+  draw; Hud::drawBottomBar never called; Hud::weapon_ hardcoded 3. Minimal
+  scope: tile fn + idle offsets + screen-space blit after drawBSP.
+- Docs: docs/research/2026-08-26-hero-choice-and-weapon.md (full report);
+  new curated docs/original-code/entities.md (choice↔identity, NPC
+  composites, squad sprite lifecycle) and docs/original-code/combat.md
+  (weapon HUD spec + rewrite audit).
+
+## 2026-08-26 — elevator glass render-path audit (research, read-only)
+
+- Hypothesis: spr155 reaches drawSprite yet shows nothing; find the stage that
+  drops it. Method: full walk of legacy path (renderBSP → addSprite →
+  renderSpriteObject → renderSprite wall branch → GLES state) vs rewrite
+  (drawBSP → drawSprite → applyBatchState/flush), plus media decode and raw
+  map-record parse.
+- Verdict: every static renderer stage verifies EQUAL for this sprite
+  (leaf attach 161, index space, painter order + biases, corner math on
+  plane x=128px z∈[575,639]mu, ADD blend GL_SRC_ALPHA/GL_ONE + fog off,
+  RAW-texture guard passes — media 779 is 16384==128×128 bytes).
+  Refuted by evidence: double height-add (rewrite doesn't bake S_Z at load),
+  index-space split, TWO_SIDED double-draw (GLES never enables cull face),
+  DECAL bit (not set), batch-state inheritance (flush-before-switch),
+  missing split-sprites (vestigial upstream — getNodeForPoint only returns
+  leaves). Glass art is fully opaque mean RGB(60,124,110) — a solid teal
+  veil under ADD, not hideable.
+- #1 remaining suspect: viewing geometry — pane lives at z 575–639 mu, far
+  above reachable eye heights; original's glass view = in-shaft camera 9
+  which never fired in rewrite sessions (D-B). Smoking-gun test specified:
+  env-gated renderMode=0 force + one-per-second NDC log of the pane corners;
+  outcome table separates never-emitted / off-screen / blended-subtle /
+  overdrawn.
+- Q4: spr152 raw record proves NOT hidden (0x20F400C6, pos (96,1056), Z=64);
+  it is leaf-less until event[48]'s LERPSPRITE parks it at (2,19); both
+  engines skip leaf-less sprites identically. drawSprites confirmed dead code.
+- Docs: appended "Glass render-path audit (2026-08-26)" to
+  docs/research/2026-08-25-elevator-glass.md; corrected stale "no FLAT branch"
+  claim + added RAW-guard/cull/bias facts to docs/original-code/rendering.md §5.

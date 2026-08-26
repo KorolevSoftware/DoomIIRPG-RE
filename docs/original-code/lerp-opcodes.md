@@ -116,10 +116,18 @@ function chains `CALL 1942` (camera 0), `CALL 2084` (camera 1), `CALL 2328` (cam
   npc_sarge, types 68/66/72) placed per character choice, walk 1500/1700/2000 ms, doors open
   (DOOROP), then a scripted imp attack (sp15 type 23, LERPSPRITEPARABOLA h=48 600 ms) killing
   sp16 (type 71) with shake/particles.
-- Later "ship lands on pad" cinematic (trigger tiles 581-645, IP 3687-3872, camera 9): sp152
-  (type 198 = thruster/ship art, media 801) to (160,1248); landing gear sp153/sp154/sp155/sp205/
-  sp206 rise from below floor (zrel -40/24, 800 ms) then hide; fire sp0 (type 130) scale 128;
-  HIDE 152.
+- Later "lift crashes into the shaft" cinematic (trigger tile 610=(18,19),
+  event[48] IP 3703-3872, camera 9 = parked at (160,1248,Z=484) inside the
+  shaft): sp152 (type 198 wall art via +257) to (160,1248); car side sp153
+  (type 52+257=309) drops dz −40 then HIDE; debris sp205/sp206 HIDE;
+  **sp155 = TILENUM_GLASS pane (`src/Enums.h:792`) is NOT hidden** — it is
+  re-parked at (127,1248) and switched to its broken frame by
+  `ENTITY_FRAME 155 frame=1` @3797 (`src/ScriptThread.cpp:669-687`);
+  `NEXTSTATE 22` @3706 makes every later map load re-run the restorer
+  function @1028-1069 whose `EVAL v22==1` gate falls through to
+  `ENTITY_FRAME 155 frame=1` @1065 — i.e. whole glass before the crash,
+  broken glass after it, persisted purely via script var v22.
+  (Full decode: docs/research/2026-08-25-elevator-glass.md §2.)
 
 ## Cockpit overlay condition (for the rewrite)
 

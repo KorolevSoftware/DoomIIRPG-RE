@@ -310,6 +310,152 @@ Spawn (4,19) facing E (`tmp_map00.bin` header; also `docs/original-code/tile-eve
 - Search-object events use EV_GIVELOOT (instant-grant dialog): EVT tiles 583/830/916
   @1686-1884 (medkits, bullets, drinks, credits) — distinct from corpse looting.
 
+## 2.6 Loot dwell + menu UI port spec (2026-08-25)
+
+> Verdict CONFIRMED; full method/evidence in `docs/research/2026-08-25-loot-ui-spec.md`.
+> §2.4 already covers pooling/grant math and entry conditions; this section is the
+> interaction + pixel-exact UI spec for the dwell window between crouch-settle and stand-up.
+
+### Session timeline
+
+`setState(ST_LOOTING)` → `poolLoot()` **immediately after**, in that order
+(`src/PlayingInputHandler.cpp:374-378`) — corpse(s) marked looted + list text built at ENTRY,
+not at close. Phase A crouch lerp 500 ms (`src/LootingSystem.cpp:42-51`); at settle sound 1055
+plays once per session (latch `field_0xac5_`, set in `onEnterLooting` `src/LootingSystem.cpp:32`,
+checked `:62-65`). Then the **dwell**: crouch pose held every frame (`:66-72`) and
+`drawLootingMenu` paints the list (`:122`). Close (input) → `giveLootPool()` runs **before**
+standing up, `crouchingForLoot=false`, `lootingTime=now` restarts the clock with zero extra delay
+(`:89-103`). Phase B stand-up is another 500 ms; on expiry snap + `setState(ST_PLAYING)` +
+`advanceTurn()` (`:73-81`). Input during both transition windows is dropped by the guard
+`crouchingForLoot && app->time > lootingTime+500` (`src/LootingSystem.cpp:87`) — note it also
+blocks everything during stand-up because `crouchingForLoot` is false then.
+
+### Input (dwell only) — `src/LootingSystem.cpp:85-117`
+
+Line count `n = numPoolItems + (lootPoolCredits ? 1 : 0)`; scroll bound
+`max = max(n - 3, 0)` (`:88`); `lootLineNum` = index of the top visible line, reset to 0 by
+`poolLoot` (`:161`).
+
+| Action | Effect | Cite |
+|---|---|---|
+| ACTION_FIRE | if `lootLineNum >= max` → `lootingTime=now; crouchingForLoot=false; giveLootPool();` (close+grant+start stand-up); else page `lootLineNum = min(lootLineNum+3, max)` | `:89-98` |
+| ACTION_PASSTURN / ACTION_BACK | same close+grant immediately, any page | `:99-103` |
+| ACTION_DOWN / ACTION_UP | `lootLineNum ± 1`, clamped to `[0,max]` (single-line scroll of the window) | `:104-109` |
+| ACTION_LEFT / ACTION_RIGHT | jump to top (`0`) / bottom (`max`) | `:110-115` |
+
+So with ≤3 lines (`max==0`, incl. empty corpse) the FIRST FIRE closes — there is no
+"press again to confirm". Routing: ST_LOOTING → `handleLootingEvents(keyAction)`
+(`src/InputEventController.cpp:432-434`). KEY_CLR as legacy raw code ±18 is swallowed upstream
+(`src/InputEventController.cpp:164-184`, only LOGO/MENU/INTRO_MOVIE react); AVK_CLR maps to
+ACTION_BACK (`:25`) and closes like PASSTURN. Touch during ST_LOOTING synthesizes key 6
+(`src/TouchController.cpp:29-31`) → `keys_numeric[5]` = **ACTION_FIRE** (table 5
+TBL_CANVAS_KEYSNUMERIC = `[5,9,1,10,3,6,4,12,2,14]`; loader `src/App.cpp:363,394`,
+format `src/Resource.cpp:278-293` + header skip `:217-220,:236-248`; values extracted from
+Packages/tables.bin). Any other action id is ignored (no menu/items shortcuts while looting).
+
+### Empty corpse (str 228)
+
+Still enters + crouches (entry checks only `lootSet != nullptr`); list text becomes exactly one
+line "None found!" (`src/LoothingSystem.cpp:259-261`; string table below), source is STILL marked
+looted (`:163-179`); `max==0` so one FIRE/PASSTURN closes; `giveLootPool` grants nothing but still
+calls `foundLoot(..., numLootItems=0)` (= `lootFound += 0`, harmless,
+`src/Game.cpp:3541-3543`) and disposes the buffer (`src/LootingSystem.cpp:281-307`). Turn still
+consumed via stand-up's `advanceTurn()`.
+
+### Menu geometry & paint (480×320 letterbox)
+
+Drawn by LootingSystem itself — NOT DialogSystem (no style table; its own rects/colors).
+Paint order: 3D view → HUD → `drawLootingMenu` state overlay (`src/Canvas.cpp:414-417,470-472`),
+so it renders OVER both. Only drawn while dwelling (`src/LoothingSystem.cpp:122`).
+`viewRect` = `{screenRect[0], 20, screenRect[2], evenHeight}` — y=20 is hardcoded
+(`src/Canvas.cpp:124-127`; 480×320 ⇒ `{0,20,480,250}`, SCR_CX=240 `:122`).
+
+```
+dialogRect = { viewRect[0], viewRect[1]+16, viewRect[2]-x-1, 48 }   // :123-127 ⇒ {0,36,479,48}
+fillRect(body)   color 0xFF660000 dark red                          // :128-129  ← "красный диалог"
+fillRect(title)  {x, y-18, w, 18} color 0xFF000000 black            // :130-131
+drawRect(title) + drawRect(body) color 0xFFFFFFFF white border      // :132-134
+title: compose str227 -> dehyphenate -> drawString(SCR_CX, y-16, anchor HCENTER)  // :135-139
+lines i=0..2: drawString(lootText, x+5, y+1+i*16, anchor TOP|LEFT,
+             offset=lootPoolIndices[2*(i+lootLineNum)], len=[...+1])            // :140-144
+scrollbar if n > pageSize(3): drawScrollBar(x+w, y+1, h-1, lootLineNum,
+             min(lootLineNum+3,n), n, 3)                                        // :145-150
+```
+
+Anchors: 1=HCENTER, 20=TOP|LEFT (`src/Graphics.h:13-23`; handling `src/Graphics.cpp:509-543`;
+16 px lines, '|' forces newline mid-string `src/Graphics.cpp:546-573`). Text is white
+(`currentCharColor=0` → palette row 0 `0xFFFFFFFF`, `src/Graphics.h:26`); each item line starts
+with glyph `\x88` rendered as one 12×16 font cell via `getCharIndices`
+(`src/Graphics.cpp:583-604,637-659`; 0x88 falls through to default font index).
+
+Scrollbar (`src/Canvas.cpp:1284-1314`): hidden when total ≤ page. Up/down arrow caps are
+imgUIImages regions [60,0,7,7]/[60,7,7,7] anchored RIGHT|TOP / RIGHT|BOTTOM at x (`:1305-1306`);
+track fill 0xFFB3AA93 rect `(x-7, y+7, 7, h-14)` (`:1307-1308`); thumb fill 0xFFE7CFAD height
+`v15 = 3*h / (4*ceil(total/page))`, y-offset `v16 = ((first<<16)/(v12<<8) * ((h-v15-14)<<8))>>16`
+with `v12 = max(total-page, first)`, snapped to `h - v15 - 14` on the last page
+(`:1301-1304,:1310`); black 1px outlines around thumb and track (`:1311-1313`).
+
+### Line composition (poolLoot tail, `src/LoothingSystem.cpp:225-261`)
+
+Per pool entry, args pushed in order then composed into `lootText`:
+
+- class 6 flavor: append `\x88` + map-string text (`:229-234`);
+- class 1 weapon: args [`\x88`, longName] → common str **91** `%01%02|` ⇒ `<icon><Weapon>` (`:241-243`);
+- everything else: args [`\x88`, count, longName] → common str **90** `%01%02x %03|` ⇒
+  `<icon><COUNT>x <LongName>` (`:245-249`; `%NN` always eats two digits,
+  `src/Text.cpp:309-320`);
+- credits line (if `lootPoolCredits!=0`): args [`\x88`, credits, str157] through str 90 ⇒
+  `<icon><N>x UAC Credits` (`:252-258`) — name is **entity-table** (type 1) string 157 via the
+  `(short)1,(short)157` addTextArg overload (`src/Text.cpp:269-274`);
+- no items at all: single common str **228** (`:259-261`).
+
+Then `dehyphenate()` strips ALL '-' from the buffer (`src/Text.cpp:714-725`), and line offsets are
+recorded into `lootPoolIndices[18]` (9 × <start,len>, split on '|', last pair covers the tail;
+`src/LoothingSystem.cpp:263-278`). Strings verified against Packages/strings.idx + strings00.bin
+(index format `src/Resource.cpp:169-207`, NUL-split `src/Text.cpp:179-212`):
+type0[90]=`%01%02x %03|`, type0[91]=`%01%02|`, type0[227]=`Loot-ed Items:` ("Looted Items:"),
+type0[228]=`None found!|`, type1[157]=`UAC Cre-dits` ("UAC Credits").
+
+### HUD / softkeys during ST_LOOTING
+
+Nothing is hidden: `lootingState` re-arms `hud->repaintFlags |= 0x22`
+(TOP_BAR|HUD_OVERDRAW, `src/Hud.h:21,25`; `src/LoothingSystem.cpp:38`) and canvas
+REPAINT_HUD|REPAINT_VIEW3D (`:39`); arrow controls stay except in ST_DIALOG
+(`src/Hud.cpp:749-751`). Soft keys are cleared on entry (`onEnterLooting`,
+`src/LoothingSystem.cpp:28`) and only restored by `setState(ST_PLAYING)`'s hook
+(hud flags 0x2f, playing keys iff `monstersTurn==0` or oldState==ST_CAMERA,
+`src/Canvas.cpp:1065-1079`). The ST_LOOTING `setState` hook does NOTHING else — no clearEvents,
+no viewport change (`src/Canvas.cpp:1142-1144`).
+
+### Delta list → new_src (as of 2026-08-25)
+
+Current rewrite auto-grants and never shows a list. Required changes:
+
+1. **Pool at entry**: `GameContext::handlePlayingAction` Use branch stores `pendingLootCorpse_`
+   and defers all work (`new_src/core/GameContext.cpp:768-773`). Legacy order is
+   `setState(ST_LOOTING)` THEN `poolLoot(...)` (`src/PlayingInputHandler.cpp:374-376`) — build the
+   loot-line list + credits and mark looted AT ENTRY (also: legacy pools ALL eType-9 entities on
+   the dest tile chain, not just the faced one, `src/LoothingSystem.cpp:154-224`).
+2. **Dwell phase**: `tickLooting` grants at crouch settle and immediately starts standing
+   (`new_src/core/GameContext.cpp:469-485`). Instead: settle = play sound 1055 (latched) + hold
+   pose; grant/close moves into an input handler.
+3. **Input routing**: pending actions break on `state != StateId::Playing`
+   (`new_src/core/GameContext.cpp:161`). Add a Looting dispatch replicating
+   `src/LootingSystem.cpp:85-117` (FIRE page/close, PASSTURN/BACK close, UP/DOWN ±1 clamp,
+   LEFT/RIGHT jumps; guard drops input outside the dwell window).
+4. **Grant-on-close ordering**: run the grant (existing `Game::lootCorpse` grant pass,
+   `new_src/domain/game/Game.cpp:764-788`) when the UI CLOSES, then set `lootCrouch_=false` +
+   restart `lootTime_` so stand-up begins with no extra delay (`src/LootingSystem.cpp:89-103`).
+   Keep `advanceTurn()` at stand-up expiry (`new_src/core/GameContext.cpp:486-495` ✓ already).
+5. **UI overlay**: replace the center-message toast (`new_src/domain/game/Game.cpp:791-818`) with
+   the `drawLootingMenu` geometry above (red body 0xFF660000, black title bar str227, 3×16px
+   white lines from the built buffer, scrollbar when >3 lines, "None found!" fallback).
+6. **Mark-looted timing/unification**: `lootCorpse` marks at grant time and folds monster flag
+   0x800 into `param` (`new_src/domain/game/Game.cpp:730-734`); legacy marks at pool time and keeps
+   both markers distinct (`src/LoothingSystem.cpp:163-179`) — matters for render sparkle
+   (`docs/original-code/loot-inventory.md` §1.5) and re-open prevention.
+7. Minor: sound 1055 currently a stderr stub (`:789`); move playback to crouch-settle latch.
+
 ## Port checklist (minimal viable loop)
 
 1. **Corpse entity**: def-swap `find(9, eSubType, parm)` + keep Monster struct; corpse visual

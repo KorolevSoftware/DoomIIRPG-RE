@@ -12,7 +12,7 @@ Namespace for everything: `newcore`._
 | `Main.cpp` | Entry point (`main()` :36): data-archive init + loader smoke logs, constructs subsystems and `GameContext`, then `AppContext::run()`. (Ad-hoc inline loop removed by phase 5 — spec `specs/2026-08-23-phase5-skeleton.md`.) |
 | `AppContext.h/.cpp` | Composition root: Window, RenderBackend, InputSystem, ZipArchive (:41-44); `readResource()` applies archive prefix `Payload/Doom2rpg.app/Packages/` (AppContext.h:22, AppContext.cpp:57-59); `run()` delegates to `GameLoop::run`. |
 | `GameLoop.h/.cpp` | Fixed-step driver: accumulates clamped dt (≤125 ms), consumes 15 ms quanta calling `GameContext::tick()`, renders once per frame (revived in phase 5, ADR 0003). |
-| `GameContext.h/.cpp` | Legacy-*Canvas* analog (phase 5, ADR 0003): state machine (`StateId{Playing=3,Loading=7,Dying=13}`, setState semantics with stateVars[9] reset + old/new hooks), clocks (`upTimeMs`, `gameTime`, `blockInputTime`), pending input actions, per-state ticks (two-phase Loading ordered per game-flow §3.3; Playing tick per GameStateRunner order incl. finishMovement FACE+ENTER+advanceTurn), render orchestration. |
+| `GameContext.h/.cpp` | Legacy-*Canvas* analog (phase 5, ADR 0003): state machine (`StateId{Playing=3,Loading=7,Dying=13}`, setState semantics with stateVars[9] reset + old/new hooks), clocks (`upTimeMs`, `gameTime`, `blockInputTime`), pending input actions, per-state ticks (two-phase Loading ordered per game-flow §3.3; Playing tick per GameStateRunner order incl. finishMovement FACE+ENTER+advanceTurn), render orchestration. Loot dwell (ADR 0006, spec `specs/2026-08-25-loot-dwell-ui.md`): ST_LOOTING crouch/dwell/stand phases on one clock, `handleLootingAction` (FIRE pages/closes, PASSTURN/BACK close, arrows scroll; guard drops input outside the dwell window) and `drawLootingMenu` overlay (red body + black title bar str227, 3×16 px line slots, shared scrollbar); grant runs at close before stand-up, `advanceTurn` at stand-up expiry. |
 
 ### domain/game/
 | File | Responsibility |
@@ -21,8 +21,9 @@ Namespace for everything: `newcore`._
 | `Enums.h` | Legacy constants: entity types (:10-25), trace masks (:28-37), stat slots (:40-48), doors (:51-56), sprite flags (:63-72), monster anim/flags (:75-106); phase-5 additions: EV_* opcode ids, EVAL_* terms, EVFL_* trigger masks, SCR_* static-func indices. |
 | `CombatEntity.h/.cpp` | Battle-stat block (8 slots + weapon); clamped set/add, XP calc (:52-54). No calcHit/calcDamage yet. |
 | `Player.h/.cpp` | Player state: stats, inventory[26]/ammo[9]/weapon bitmask, XP; discrete grid movement via `kViewStepValues` 8-dir table (:8-11). |
-| `Game.h/.cpp` | Simulation subset: 32x32 entityDb lists (Game.h:69), door anims (6 slots), faced-door use `useDoorFacing` (ADR 0001), faithful swept-capsule move trace `traceMove` per ADR 0002 / spec `specs/2026-08-23-faithful-player-collision.md`, turn-advance auto-close with tile-granular occupancy, linked-state door solidity. Phase-5 additions: `setLineLocked` (tileNum bit0 flip + def re-lookup by tileNum+257), `advanceTurn` subset, eventFlags movement masks, `findEntityBySprite`, blocking-door-open thread resume via `DoorAnim::ownerThread`. |
+| `Game.h/.cpp` | Simulation subset: 32x32 entityDb lists (Game.h:69), door anims (6 slots), faced-door use `useDoorFacing` (ADR 0001), faithful swept-capsule move trace `traceMove` per ADR 0002 / spec `specs/2026-08-23-faithful-player-collision.md`, turn-advance auto-close with tile-granular occupancy, linked-state door solidity. Phase-5 additions: `setLineLocked` (tileNum bit0 flip + def re-lookup by tileNum+257), `advanceTurn` subset, eventFlags movement masks, `findEntityBySprite`, blocking-door-open thread resume via `DoorAnim::ownerThread`. Corpse loot (ADR 0006): `poolLootCorpse` marks + pools all eType-9 entities on a tile and composes the display lines (`Game::LootPool`: entries/credits/`Text` + line table), `giveLootPool` grants on UI close (replaced the interim auto-grant `lootCorpse`). |
 | `ScriptVM.h/.cpp` | Faithful tileEvents interpreter (phase 5, ADR 0003 / spec `specs/2026-08-23-phase5-skeleton.md` §7): 20-thread pool (`ScriptThread`: IP/FP/stackPtr/unpauseTime/type/flags/state), big-endian dispatch with the legacy post-opcode `++IP` contract, trigger filter, `executeTile`/`executeStaticFunc`/`runScriptThreads`, `scriptStateVars[128]`; TIER-A opcodes functional (EVAL/JUMP/CALL/RETURN/ITEM_COUNT/DOOROP/EVENTOP/GIVEITEM/WAIT/ABORT_MOVE/MESSAGE/TILE_EMPTY…), TIER-B logged no-ops (incl. parse-only EV_CHANGE_MAP, non-pausing EV_DIALOG). |
+| `DialogSystem.h/.cpp` | Faithful port of Canvas::dialogSystem (ADR 0004 / spec `specs/2026-08-24-intro-sequence.md` GROUP 1): styled bottom boxes, %NN text-arg composition, wrap + paging, typewriter reveal, style-2 help FIFO, ST_DIALOG input dispatch. `drawScrollBar` is the shared Canvas::drawScrollBar port; public since ADR 0006 so the loot menu overlay can reuse it. |
 
 ### domain/world/
 | File | Responsibility |
@@ -61,7 +62,7 @@ Namespace for everything: `newcore`._
 | `Camera3D` | Faithful 14.14 fixed view/projection/MVP via 1024-entry sin table (:15-62); GLES BeginFrame projection tweaks (:83-92); float + int matrix accessors. |
 | `Graphics2D` | Canvas-space 2D over SpriteBatch: rects/lines, blits with rotateModes 0-8, anchors, scaled draws, `drawString` with `^N` colors/buff icons; clip recorded but not applied (:20-24). |
 | `RenderBackend` | Frame owner: beginFrame clear + letterbox viewport + batch begin (:37-47); endFrame flush+swap (:49-52). |
-| `World3D` | GL 3.3 world renderer: palette-LUT textures (:202+), sky (:399-454), polys (:329+), BSP walkNode painter's algorithm with per-leaf sprites (:788-881), billboard/wall/flat/slip-door sprites + RLE (:100+, :507-746), eye-space fog (:180-200), time animation (:78), per-sprite sort-bias hook on `drawBSP`. |
+| `World3D` | GL 3.3 world renderer: palette-LUT textures (:202+), sky (:399-454), polys (:329+), BSP walkNode painter's algorithm with per-leaf sprites (:788-881), billboard/wall/flat/slip-door sprites + RLE (:100+, :507-746), eye-space fog (:180-200), time animation (:78), per-sprite sort-bias hook on `drawBSP`. Stacked characters (ADR 0005): NPC branches + monster-family ATTACK deltas (ADR 0007, spec `specs/2026-08-26-monsters-stack-flicker.md`); floater/special-boss families still excluded. |
 
 ### render/gl/
 | File | Responsibility |
@@ -125,6 +126,8 @@ _See [adr/](adr/):_
 - [0002 — Faithful swept-capsule collision trace](adr/0002-faithful-player-collision-trace.md) (2026-08-23; amends 0001)
 - [0003 — GameContext state machine + standalone ScriptVM](adr/0003-game-context-state-machine-and-script-vm.md) (2026-08-23)
 - [0005 — Character detection & stacked-billboard rendering boundary](adr/0005-character-detection-stacked-billboards.md) (2026-08-25)
+- [0006 — Loot dwell UI without a LootingSystem module](adr/0006-loot-ui.md) (2026-08-25)
+- [0007 — Monsters join the entity-driven stacked-character path](adr/0007-monsters-stacked-character-path.md) (2026-08-26; amends 0005)
 
 ## Specs
 
@@ -133,3 +136,5 @@ _See [adr/](adr/):_
 - [2026-08-23 — Phase 5 skeleton: game-state machine + tileEvents ScriptVM](specs/2026-08-23-phase5-skeleton.md)
 - [2026-08-24 — Intro sequence (dialogs v2, cinematics, corpse loot)](specs/2026-08-24-intro-sequence.md)
 - [2026-08-25 — Character animation (stacked-billboard humans, walk cycles, squad)](specs/2026-08-25-character-animation.md)
+- [2026-08-25 — Interactive loot dwell + loot menu UI (ST_LOOTING)](specs/2026-08-25-loot-dwell-ui.md)
+- [2026-08-26 — Monsters join the stacked path + walk-flicker fix (delta on 2026-08-25 character animation)](specs/2026-08-26-monsters-stack-flicker.md)

@@ -1,30 +1,30 @@
 # Status
 
-_Last updated: 2026-08-23_
+_Last updated: 2026-08-25 (evening)_
 
 ## Working on
 
-- **Next unit: INTRO SEQUENCE** (user-picked 2026-08-23). Target: game start
-  plays like the original — NPC dialog gives the gun → scripted move/cutscene
-  into the spawn room → tutorial (corpse + loot). Step outline:
-  1. Research: camera/cutscene states (ST_CAMERA/ST_INTER_CAMERA), full
-     DialogSystem (styles/speakers/paging), loot & inventory flow
-     (EV_MAKE_CORPSE/ASSIGN_LOOTSET/pickup).
-  2. Architect spec (+ADR if needed) → coder groups → review → user eyes.
-  Already in place from Phase 5: ScriptVM core, dialog-lite, EV_GIVEITEM,
-  lazy textures, state machine.
+- **User acceptance batch (map00 intro area)** — implemented + reviewed, AWAITING
+  USER EYES on the fresh build:
+  1. Lift cutscene end scene: squad imps 185-188/grenade hidden via NOENTITY
+     hidden-bit path; corpse prop 105 lies at (5,19) + standing NPC beside it
+     (= faithful); imp corpse at (3,26). If "legs" persist → capture stderr.
+  2. Loot dwell: E on corpse → 500ms crouch → red "Looted Items:" top panel,
+     E pages/closes, TAB/BACK closes, grant on close, stand-up, turn consumed.
+     Spec docs/architecture/specs/2026-08-25-loot-dwell-ui.md, ADR-0006;
+     reviewer PASS (see journal 2026-08-25 review entry).
+  3. Blue door sp22: opens with card. "Doesn't let through" — root cause NOT yet
+     proven; self-disable replay refuted (eventMatches honors bit19). Need one
+     stderr run: `[dbg] moveBlocked … by spr=N type=T` names the blocker;
+     `[script] DOOROP sprite=22` close pair would name a script.
+- **Deferred by user:** hangar door unlock chain (item dropped this cycle).
+- Fire additive flicker + scorch stains: done, user-confirmed matches original.
 - **Known bugs (deferred):**
-  - **Camera judder in cinematics** — persists after MayaCamera tween-window
-    fix + render-locked pacing; needs deeper investigation (suspects: key-boundary
-    Snap truncation feel, shake randomization cadence, vsync-vs-sim drift ~10%).
-  - **Hangar door (13,19) doesn't open on E** — silent unlock lives in evt#56
-    @tile(10,19) BEHIND the blue door; user clarifies the shaft is behind the
-    blue door and the hangar door is elsewhere — re-map which door/tile actually
-    gates it before fixing.
+  - Camera judder in cinematics (unchanged).
   - Subtitles: CAMERA_STR bit14 showCinPlayer not portable yet; portrait art
     fallback for style 8.
-- Backlog after intro: monsters/AI/combat; automap; save/load; EV_CHANGE_MAP
-  real transitions; renderMode blending; stderr [script]/[load] log polish.
+- Backlog: monsters/AI/combat; automap; save/load; EV_CHANGE_MAP real
+  transitions; renderMode blending leftovers; stderr log polish.
 
 ## Fidelity pass 2026-08-23 (doors + sprites)
 

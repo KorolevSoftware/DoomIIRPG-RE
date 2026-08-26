@@ -28,6 +28,22 @@ Reverse-engineering rewrite of **Doom II RPG** (J2ME) as modern C++ / OpenGL 3.3
 - Do not git-commit unless explicitly asked.
 - Documentation and code comments: English.
 
+## Subagent reliability (unstable network — keep!)
+
+The backend intermittently kills subagent runs (empty/truncated results, 429
+rate limits), write-capable agents more often than read-only ones.
+
+- **NEVER relaunch a failed / empty / truncated subagent task from scratch.**
+  Every task returns a `task_id`: re-invoke the SAME agent type with that
+  `task_id` (+ a short "continue from where you stopped" prompt) to WAKE it
+  with its full prior context (messages read, partial edits, plan).
+- Still empty after a wake → run a tiny probe task (e.g. one scratch file),
+  then immediately wake the real task again.
+- Split big implementations into small per-group tasks; verify landed work
+  yourself (`grep`, `cmake --build`) after EVERY delegation — reports can be
+  lost even when edits landed.
+- Do not use agents without file-write tools for edit work.
+
 ## Documentation system (keep it alive)
 
 | File | Content | Updated by |
