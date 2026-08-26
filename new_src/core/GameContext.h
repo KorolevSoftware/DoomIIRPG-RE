@@ -5,15 +5,17 @@
 #include <vector>
 
 #include "core/MayaCamera.h"
+#include "domain/game/Game.h"
 #include "render/Camera3D.h"
 
 namespace newcore {
 
 class AppContext;
 class DialogSystem;
+class Entity;
 class EntityDefs;
 class Font;
-class Game;
+class Graphics2D;
 class Hud;
 class Localization;
 class MapData;
@@ -35,6 +37,8 @@ enum class StateId : int {
 	Loading     = 7,  // legacy ST_LOADING
 	Dying       = 13, // legacy ST_DYING (stub)
 	Camera      = 18, // legacy ST_CAMERA (scripted cinematic, cutscenes-camera.md §1)
+	Looting     = 23, // legacy ST_LOOTING (src/Canvas.h:90; loot-crouch camera,
+	                  // docs/research/2026-08-25-camera-pitch-loot.md)
 };
 
 // Discrete input actions (legacy getKeyAction subset,
@@ -54,6 +58,8 @@ class GameContext {
 public:
 	static constexpr int kTickMs = 15;   // one fixed-step quantum
 	static constexpr int kNumStateVars = 9;
+	static constexpr int kLootPhaseMs = 500;  // LOOTING_CROUCH_TIME (src/Canvas.h:46);
+	                                          // promoted from tickLooting's local constant
 
 	struct Init {
 		MapData* map = nullptr;
@@ -137,10 +143,14 @@ private:
 
 	bool inputBlocked() const;
 	void handlePlayingAction(Action a);
+	void handleLootingAction(Action a);  // src/LoothingSystem.cpp:85-117
+	void closeLootSession();             // grant + stand-up restart (:89-103)
+	void drawLootingMenu(Graphics2D& g); // src/LoothingSystem.cpp:121-150
 
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)
 	void tickCamera();       // ST_CAMERA per-frame order (src/Canvas.cpp:949-958)
+	void tickLooting();      // ST_LOOTING pose driver (src/LootingSystem.cpp:35-83)
 	void tickDying();
 	void tickCinematicClock(); // key-boundary engine shared by Camera/Playing
 	                           // (src/MayaCamera.cpp:46-148, :335-374)
@@ -176,6 +186,17 @@ private:
 	StateId dialogPrevState_ = StateId::Playing; // dialog-close restore source (:541-554)
 	std::vector<ScriptThread*> cameraResumeList_; // ADV_CAMERAKEY park list (§2)
 	std::vector<int> cameraResumeCounts_;         // remaining key completions per entry
+
+	// Loot-crouch camera runtime (docs/research/2026-08-25-camera-pitch-loot.md;
+	// LootingSystem field analogs). lootDest* anchors the cached player pose
+	// the two 500 ms phases lerp away from and back to.
+	// Loot dwell session (legacy LootingSystem field analogs).
+	bool lootSettleSfx_ = false;              // field_0xac5_: sound 1055 once per session
+	Game::LootPool lootPool_;                 // pooled entries + lootText + lineIndex + lootLineNum
+	bool lootCrouch_ = false;             // crouchingForLoot (phase selector)
+	int64_t lootTime_ = 0;                // lootingTime (app->time latch)
+	int lootDestX_ = 0, lootDestY_ = 0, lootDestZ_ = 0, lootDestPitch_ = 0;
+	int lootStepX_ = 0, lootStepY_ = 0;   // facing unit steps (viewStep>>6, ±1/0)
 };
 
 } // namespace newcore

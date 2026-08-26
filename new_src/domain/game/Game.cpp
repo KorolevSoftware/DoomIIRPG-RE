@@ -9,7 +9,6 @@
 #include "domain/game/ScriptVM.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
-#include "ui/Hud.h"
 
 namespace newcore {
 
@@ -722,102 +721,159 @@ static std::string itemLongName(const EntityDefs& defs, const Localization& loc,
 	return Localization::titleOf(loc.get(kTextIngame, d->longName));
 }
 
-// Direct-grant loot pool close (see Game.h). Replaces the ST_LOOTING UI:
-// poolLoot's immediate looted-marking + entry pooling and giveLootPool's
-// grant run back-to-back (src/LootingSystem.cpp:154-221, :281-307).
-void Game::lootCorpse(Entity* corpse, const Localization& loc, Hud& hud,
-                      Player& player, const Tables* tables) {
-	(void)hud;
-	// Mark the source looted BEFORE looking at contents (src/LootingSystem.
-	// cpp:163-179): ++param on props; the monster flag 0x800 unifies into
-	// param; info |= 0x400000.
-	++corpse->param;
-	corpse->info |= Entity::kInfoActivated;
+// Pooling half of legacy LootingSystem::poolLoot (src/LoothingSystem.cpp:
+// 154-278); see Game.h. Marks every eType-9 entity on the tile looted BEFORE
+// reading its loot set, merges entries into `out`, then composes one
+// '|'-separated display buffer + the <start,len> line table.
+void Game::poolLootCorpse(int tx, int ty, const Localization& loc, LootPool& out) {
+	// Reset first (:158-162): a stale buffer would corrupt the line table.
+	out.numEntries = 0;
+	out.numItems = 0;
+	out.credits = 0;
+	out.topLine = 0;
+	out.text.setLength(0);
 
-	int pool[Entity::kMaxCorpseLoot];
-	int numPool = 0;
-	int credits = 0;
-	bool gotKeycard = false;                               // parm 19/20 -> str84
-	std::string itemNames;                                 // str85 arg
+	for (Entity* e = findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
+		if (!e->isCorpse()) continue;                    // eType == 9 only (:164)
+		if (e->param != 0) continue;                     // prop already looted (:166-169)
+		// Monster corpses carry a separate flag 0x800 in legacy (:172-177);
+		// EntityMonster is not ported, so both markers unify into ++param
+		// (spec Deviations #1).
+		++e->param;
+		e->info |= Entity::kInfoActivated;               // (:179)
 
-	if (corpse->hasLootSet) {
-		for (int i = 0; i < Entity::kMaxCorpseLoot; ++i) { // stop at first zero slot (:181-183)
-			int entry = corpse->lootSet[i];
-			if (entry == 0) break;
+		if (!e->hasLootSet) continue;                    // lootSet == nullptr analog
+		for (int i = 0; i < Entity::kMaxCorpseLoot; ++i) {
+			int entry = e->lootSet[i];
+			if (entry == 0) break;                       // stop at first zero slot (:181)
+			bool push = true;
 			int cls = entry >> 12 & 0xF;
-			if (cls == 6) continue;                        // display-only flavor line
-			int cnt = entry & 0x3F;
-			int idx = (entry & 0xFC0) >> 6;
-			if (cls == 0 && idx == 24) { credits += cnt; continue; }      // (:200-207)
-			if (cls == 0 && idx == 25) { credits += cnt * 100; continue; }
-			bool merged = false;
-			for (int k = 0; k < numPool; ++k) {            // dupes merge, saturated (:209-216)
-				if ((entry >> 6) == (pool[k] >> 6)) {
-					pool[k] = (pool[k] & 0xFFFFFFC0) | ((cnt + (pool[k] & 0x3F)) & 0x3F);
-					merged = true;
-					break;
+			if (cls == 6) {
+				int n2 = entry & 0xFFF;
+				for (int j = 0; j < out.numEntries; ++j) {
+					// Verbatim legacy quirk: the class bit is tested on the
+					// SOURCE entity's lootSet[j] where lootPool[j] was meant
+					// (src/LoothingSystem.cpp:186-194; loot-inventory.md §2.4).
+					// j >= kMaxCorpseLoot would read past lootSet[] (legacy
+					// read adjacent memory) — treated as no match.
+					if (j < Entity::kMaxCorpseLoot &&
+					    ((e->lootSet[j] >> 12) & 0xF) == 6 &&
+					    n2 == (out.entries[j] & 0xFFF)) {
+						push = false;
+						break;
+					}
+				}
+			} else {
+				int cnt = entry & 0x3F;
+				++out.numItems;                          // stat counts pre-merge (:197)
+				int idx = (entry & 0xFC0) >> 6;
+				if (cls == 0 && idx == 24) { out.credits += cnt; continue; }      // (:200-207)
+				if (cls == 0 && idx == 25) { out.credits += cnt * 100; continue; }
+				int key = entry >> 6;
+				for (int k = 0; k < out.numEntries; ++k) { // dupes merge, saturated (:209-216)
+					if (key == (out.entries[k] >> 6)) {
+						push = false;
+						out.entries[k] = (out.entries[k] & 0xFFFFFFC0) |
+						                 ((cnt + (out.entries[k] & 0x3F)) & 0x3F);
+						break;
+					}
 				}
 			}
-			if (!merged && numPool < Entity::kMaxCorpseLoot) pool[numPool++] = entry;
+			// Legacy had no bound here (its lootPool[9] is larger); entries
+			// beyond kMaxCorpseLoot are dropped.
+			if (push && out.numEntries < Entity::kMaxCorpseLoot) {
+				out.entries[out.numEntries++] = entry;
+			}
 		}
 	}
 
-	// Grant pass (src/LootingSystem.cpp:284-297): give() results are ignored
-	// by legacy too; weapon entries add starter ammo max(usage,10).
-	for (int i = 0; i < numPool; ++i) {
-		int cls = pool[i] >> 12 & 0xF;
-		int idx = (pool[i] & 0xFC0) >> 6;
-		int cnt = pool[i] & 0x3F;
-		player.give(cls, idx, cnt);
+	// Compose lines into one buffer (:226-261). Format strings end in '|'.
+	for (int l = 0; l < out.numEntries; ++l) {
+		int entry = out.entries[l];
+		int cls = entry >> 12 & 0xF;
+		if (cls == 6) {                                  // flavor: raw map string (:229-234)
+			out.text.append('\x88');
+			out.text.append(loc.get(kTextMap, entry & 0xFFF));
+			out.text.append("|");
+			continue;
+		}
+		int idx = (entry & 0xFC0) >> 6;
+		int cnt = entry & 0x3F;
+		std::string name = itemLongName(defs_ ? *defs_ : EntityDefs(), loc, cls, idx);
+		std::string line = loc.get(kTextMain, cls == 1 ? 91 : 90);
+		if (cls == 1) {                                  // "%01%02|" (:241-243)
+			std::string args[2] = { "\x88", name };
+			composeArgs(line, args, 2);
+		} else {                                         // "%01%02x %03|" (:245-249)
+			std::string args[3] = { "\x88", std::to_string(cnt), name };
+			composeArgs(line, args, 3);
+		}
+		out.text.append(line);
+	}
+	if (out.credits != 0) {                              // "<icon> N x UAC Credits" (:252-258)
+		std::string line = loc.get(kTextMain, 90);
+		std::string args[3] = { "\x88", std::to_string(out.credits),
+		                        Localization::titleOf(loc.get(kTextIngame, 157)) };
+		composeArgs(line, args, 3);
+		out.text.append(line);
+	}
+	if (out.numEntries == 0 && out.credits == 0) {
+		out.text.append(loc.get(kTextMain, 228));        // "None found!" (:259-261)
+	}
+
+	// Dehyphenate BEFORE recording offsets (legacy order :262-278), then
+	// split at '|' into <start,len> pairs; the last pair covers the tail.
+	out.text.dehyphenate();
+	for (short& v : out.lineIndex) v = 0;
+	int length = out.text.length();
+	int start = 0;
+	int slot = 0;
+	for (int i = 0; i < length; ++i) {
+		if (out.text.charAt(i) == '|') {
+			if (slot < LootPool::kMaxLines) {
+				out.lineIndex[slot * 2] = (short)start;
+				out.lineIndex[slot * 2 + 1] = (short)(i - start);
+			}
+			++slot;
+			start = i + 1;
+		}
+	}
+	if (slot < LootPool::kMaxLines) {
+		out.lineIndex[slot * 2] = (short)start;
+		out.lineIndex[slot * 2 + 1] = (short)(length - start);
+	}
+
+	std::fprintf(stderr, "[loot] pooled tile=%d,%d entries=%d items=%d credits=%d\n",
+		tx, ty, out.numEntries, out.numItems, out.credits);
+}
+
+// Grant half of legacy LootingSystem::giveLootPool (src/LoothingSystem.cpp:
+// 281-307); see Game.h.
+void Game::giveLootPool(LootPool& pool, Player& player, const Tables* tables) {
+	for (int i = 0; i < pool.numEntries; ++i) {
+		int entry = pool.entries[i];
+		int cls = entry >> 12 & 0xF;
+		if (cls == 6) continue;                          // display-only flavor (:287)
+		int idx = (entry & 0xFC0) >> 6;
+		int cnt = entry & 0x3F;
+		player.give(cls, idx, cnt);                      // (:289)
+		std::fprintf(stderr, "[loot] give class=%d idx=%d cnt=%d\n", cls, idx, cnt);
 		if (cls == 1 && tables != nullptr &&
 		    (size_t)(idx * 9 + 5) < tables->weaponData.size()) {
 			int ammoType = tables->weaponData[idx * 9 + 4];   // AMMOTYPE (src/Combat.h:26-36)
 			int usage = tables->weaponData[idx * 9 + 5];      // AMMOUSAGE
-			if (usage > 0) player.give(2, ammoType, std::max(usage, 10));
+			if (usage > 0) player.give(2, ammoType, std::max(usage, 10)); // (:290-296)
 		}
-		if (cls == 0 && (idx == 19 || idx == 20)) gotKeycard = true; // repaintFlags 0x4 analog
-		const std::string& name = itemLongName(defs_ ? *defs_ : EntityDefs(), loc, cls, idx);
-		if (!name.empty()) {
-			if (!itemNames.empty()) itemNames += ", ";
-			itemNames += name;
-		}
-		std::fprintf(stderr, "[loot] give class=%d idx=%d cnt=%d\n", cls, idx, cnt);
 	}
-	if (credits != 0) {
-		player.give(0, 24, credits);                       // (:299-302)
-		std::fprintf(stderr, "[loot] credits=%d\n", credits);
+	if (pool.credits != 0) {
+		player.give(0, 24, pool.credits);                // (:299-302)
+		std::fprintf(stderr, "[loot] credits=%d\n", pool.credits);
 	}
-	std::fprintf(stderr, "[loot] sound 1055\n");           // menu-settle blip analog
-
-	// HUD feedback through the existing center-message path. Legacy shows the
-	// loot LIST here instead of a toast (msg analogs from touchedItem,
-	// src/Entity.cpp:171-190).
-	std::string msg;
-	if (gotKeycard) {
-		msg = loc.get(kTextMain, 84);                      // "You got the key-card" (no args)
-	} else if (!itemNames.empty()) {
-		msg = loc.get(kTextMain, 85);                      // "Got %01"
-		std::string args[1] = { itemNames };
-		composeArgs(msg, args, 1);
-		if (credits != 0) {
-			msg += ", ";
-			msg += std::to_string(credits);
-			msg += " ";
-			std::string crName = defs_ ? itemLongName(*defs_, loc, 0, 24) : std::string();
-			if (crName.empty()) crName = Localization::titleOf(loc.get(kTextIngame, 157));
-			msg += crName;
-		}
-	} else if (credits != 0) {
-		msg = loc.get(kTextMain, 86);                      // "Got %01 %02."
-		std::string args[2] = { std::to_string(credits),
-			defs_ ? itemLongName(*defs_, loc, 0, 24) : std::string() };
-		if (args[1].empty()) args[1] = Localization::titleOf(loc.get(kTextIngame, 157));
-		composeArgs(msg, args, 2);
-	} else {
-		msg = loc.get(kTextMain, 228);                     // "None found!" empty-corpse fallback
-	}
-	hud.showCenterMessage(msg, 0xAA000000, 3500);
-	// foundLoot stat bump not ported (run counters absent).
+	std::fprintf(stderr, "[loot] foundLoot items=%d\n", pool.numItems); // run-stat stub (:303)
+	pool.numEntries = 0;                                 // counters reset + dispose analog
+	pool.numItems = 0;
+	pool.credits = 0;
+	pool.text.setLength(0);                              // (:304-306)
 }
 
 void Game::touchTile(int x, int y, bool b) {

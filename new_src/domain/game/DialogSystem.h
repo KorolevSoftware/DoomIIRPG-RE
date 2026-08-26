@@ -61,6 +61,11 @@ public:
 	// dialogState analog (src/DialogSystem.cpp:114-518).
 	void draw(Graphics2D& g);
 
+	// Shared Canvas::drawScrollBar port; also used by the loot overlay, like
+	// legacy src/LoothingSystem.cpp:146-150.
+	void drawScrollBar(Graphics2D& g, int x, int y, int h,
+		int topLine, int pageEnd, int numLines, int viewLines) const;
+
 	// Text-arg pool feeding %NN substitution (src/Text.cpp:222-275).
 	void resetTextArgs();
 	void addTextArg(const std::string& arg);
@@ -71,8 +76,6 @@ private:
 	void closeDialog(bool skip);
 	void composeText(int type, int idx, Text& out) const;
 	void drawTitle(Graphics2D& g, int cx, int y, bool greenText);
-	void drawScrollBar(Graphics2D& g, int x, int y, int h,
-		int topLine, int pageEnd, int numLines, int viewLines) const;
 
 	Env env_;
 

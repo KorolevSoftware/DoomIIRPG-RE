@@ -42,6 +42,11 @@ public:
 	// src/MovementController.cpp:455-466 marches linearly and every consumer
 	// masks with & 0x3FF at use). 1024 units = 360 degrees.
 	int viewAngle = 0, destAngle = 0;
+	// View pitch, legacy units (1024 = full turn, positive = up; written into
+	// the camera view matrix). Only the loot-crouch drives it so far — the
+	// terrain-slope target machinery is not ported yet
+	// (src/MovementController.cpp:230-281).
+	int viewPitch = 0;
 	int animFrames = 10;
 	int animPos = 0;   // step per frame in X/Y
 	int animAngle = 0; // step per frame in angle

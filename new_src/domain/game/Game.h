@@ -9,11 +9,11 @@
 #include "domain/game/Player.h"
 #include "io/EntityDefs.h"
 #include "domain/world/MapData.h"
+#include "text/Text.h"
 
 namespace newcore {
 
 class EntityDefs;
-class Hud;
 class Localization;
 class ScriptVM;
 struct ScriptThread;
@@ -199,17 +199,33 @@ public:
 	// tile is dist 0, never selected by legacy).
 	Entity* findLootableCorpseFacing(int px, int py, int stepX, int stepY);
 
-	// Direct-grant corpse loot — the ST_LOOTING UI is not ported. Marks the
-	// source looted (++param; info |= kInfoActivated, src/LootingSystem.cpp:
-	// 163-179), pools + merges its lootSet (class-6 lines skipped, class-0
-	// idx 24/25 become credits, dupes merge saturated to 63, src/
-	// LootingSystem.cpp:180-221), grants via Player::give with weapon starter
-	// ammo from tables.weaponData (src/LootingSystem.cpp:281-307), then
-	// reports through the HUD center-message path: str84 keycard / str85 got-
-	// item / str86 N x item / str228 empty (src/Entity.cpp:171-190).
-	// tables may be null (disables weapon starter ammo).
-	void lootCorpse(Entity* corpse, const Localization& loc, Hud& hud,
-	                Player& player, const Tables* tables);
+	// Pooled corpse-loot display state — legacy LootingSystem fields folded
+	// into one struct (lootPool / numPoolItems / numLootItems /
+	// lootPoolCredits / lootText / lootPoolIndices / lootLineNum).
+	struct LootPool {
+		static constexpr int kMaxLines = 9;      // lootPoolIndices[18] / 2 pairs
+		int entries[Entity::kMaxCorpseLoot] = { 0, 0, 0 }; // packed u16 (cls<<12|idx<<6|cnt)
+		int numEntries = 0;                      // numPoolItems (incl. class-6 flavor lines)
+		int numItems   = 0;                      // numLootItems (stat only, counts pre-merge)
+		int credits   = 0;                       // lootPoolCredits
+		Text text;                               // lootText: '|'-separated lines
+		short lineIndex[2 * kMaxLines] = { 0 };  // lootPoolIndices: <start,len> per line
+		int topLine = 0;                         // lootLineNum (scroll pos, reset by pool)
+		static int lineCount(const LootPool& p) { return p.numEntries + (p.credits != 0); }
+	};
+
+	// Mark-looted + pool + compose the loot list for ALL eType==9 entities on
+	// tile (tx,ty) (src/LoothingSystem.cpp:154-278). Marks BEFORE reading
+	// loot sets, per entity: prop ++param (skip when already != 0), monster
+	// flag 0x800 (unified into ++param — see Deviations #1 of spec
+	// 2026-08-25-loot-dwell-ui), info |= kInfoActivated.
+	void poolLootCorpse(int tx, int ty, const Localization& loc, LootPool& out);
+
+	// Grant pass (src/LoothingSystem.cpp:281-307): give() per non-class-6
+	// entry, weapon starter ammo max(usage,10) of tables.weaponData[idx*9+4],
+	// credits give(0,24,credits), foundLoot stderr stub, resets pool counters
+	// + text. tables may be null (skips starter ammo).
+	void giveLootPool(LootPool& pool, Player& player, const Tables* tables);
 
 
 	// Arrival tile hook (legacy touchTile -> automap uncover/pickups);

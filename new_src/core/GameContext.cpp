@@ -12,6 +12,7 @@
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
+#include "io/Localization.h"
 #include "io/Media.h"
 #include "io/Tables.h"
 #include "render/Graphics2D.h"
@@ -84,6 +85,30 @@ void GameContext::enterState_(StateId s) {
 	case StateId::Dying:
 		deathTimeMs_ = upTimeMs; // unused this phase (src/Canvas.cpp:1125-1131 analog)
 		break;
+	case StateId::Looting:
+		// Legacy setState hook -> LootingSystem::onEnterLooting
+		// (src/Canvas.cpp:1142-1143, src/LootingSystem.cpp:26-33): cache the
+		// pose + facing and restart the 500 ms clock, crouch phase first.
+		// The rewrite caches viewPitch (no destPitch slope machinery yet;
+		// identical value here). poolLoot runs immediately after setState
+		// (src/PlayingInputHandler.cpp:374-378): every eType-9 entity on the
+		// faced tile is marked looted and the list is built NOW, not at close.
+		pendingActions_.clear();
+		lootDestX_ = sys_.player->viewX;
+		lootDestY_ = sys_.player->viewY;
+		lootDestZ_ = sys_.player->viewZ;
+		lootDestPitch_ = sys_.player->viewPitch;
+		lootStepX_ = sys_.player->viewStepX >> 6;
+		lootStepY_ = sys_.player->viewStepY >> 6;
+		lootTime_ = upTimeMs;
+		lootCrouch_ = true;
+		lootSettleSfx_ = false;                            // field_0xac5_ (:32)
+		{
+			int tx = (lootDestX_ + lootStepX_ * 64) >> 6;
+			int ty = (lootDestY_ + lootStepY_ * 64) >> 6;
+			sys_.game->poolLootCorpse(tx, ty, *sys_.loc, lootPool_);
+		}
+		break;
 	case StateId::Loading:
 		loadingPhase_ = 0;     // arm the loading-phase counter
 		break;
@@ -94,12 +119,13 @@ void GameContext::enterState_(StateId s) {
 
 void GameContext::tick() {
 	upTimeMs += kTickMs;                                   // app->upTimeMs / app->time
-	// gameTime advances in PLAYING and CAMERA (scripts + the camera clock
-	// share it, src/Game.cpp:3259); frozen elsewhere (deviation C5, narrowed
-	// by the cinematic group). Freezing during Dialog is what pauses the
-	// camera clock over a dialog (legacy activeCameraTime flip,
-	// src/Canvas.cpp:1092-1094).
-	if (!pauseGameTime && (state == StateId::Playing || state == StateId::Camera)) gameTime += kTickMs;
+	// gameTime advances in PLAYING, CAMERA and LOOTING (scripts + the camera
+	// clock share it, src/Game.cpp:3259; the loot crouch runs on the shared
+	// clock too). Frozen elsewhere (deviation C5, narrowed by the cinematic
+	// group). Freezing during Dialog is what pauses the camera clock over a
+	// dialog (legacy activeCameraTime flip, src/Canvas.cpp:1092-1094).
+	if (!pauseGameTime && (state == StateId::Playing || state == StateId::Camera ||
+	                       state == StateId::Looting)) gameTime += kTickMs;
 
 	// Expired-latch sweep: legacy runInputEvents zeroes blockInputTime once
 	// gameTime passes it, independent of thread state
@@ -141,6 +167,7 @@ void GameContext::tick() {
 			if (gameTime >= cinUnpauseTime_) skipCinematic_ = true;
 			continue;
 		}
+		if (state == StateId::Looting) { handleLootingAction(a); continue; }
 		if (blocked || state != StateId::Playing) break;
 		handlePlayingAction(a);
 	}
@@ -184,6 +211,7 @@ void GameContext::tick() {
 		// threads resume via their owners only (runScriptThreads gates above).
 		break;
 	case StateId::Camera:  tickCamera(); break;
+	case StateId::Looting: tickLooting(); break;
 	case StateId::Dialog:
 		// Lerps+doors ticked in the globals section above (legacy ST_DIALOG
 		// branch, src/Canvas.cpp:920-926); view/input updates do not.
@@ -413,6 +441,129 @@ int GameContext::flagForFacingDir(int i) const {
 void GameContext::tickDying() {
 	// ST_DYING stub: legacy runs the fall/fade timeline then the dead menu
 	// (spec §11 out of scope). Health can only reach 0 via future combat.
+}
+
+// ---- loot-crouch camera (docs/research/2026-08-25-camera-pitch-loot.md) ----
+
+void GameContext::tickLooting() {
+	// LootingSystem::lootingState (src/LootingSystem.cpp:35-83): crouch lerp
+	// 500 ms -> dwell (settled crouch pose held every tick, sound 1055 once,
+	// loot menu drawn + input live) -> stand-up lerp 500 ms on close ->
+	// snap + advanceTurn. The pose is recomputed from scratch every tick,
+	// formulas verbatim (16.16 fraction n: remaining, n2: elapsed). Lerps and
+	// doors do NOT tick — legacy ST_LOOTING calls lootingState() only
+	// (src/Canvas.cpp:940-942).
+	Player& p = *sys_.player;
+	int t = (int)(upTimeMs - lootTime_);
+	if (t < kLootPhaseMs) {
+		int n = ((kLootPhaseMs - t) << 16) / kLootPhaseMs; // (:43)
+		int n2 = 65536 - n;
+		int h0 = getHeight(lootDestX_, lootDestY_);
+		int h1 = getHeight(lootDestX_ + lootStepX_ * 64, lootDestY_ + lootStepY_ * 64);
+		if (lootCrouch_) {                              // crouch down (:46-50)
+			int hb = (h0 > h1) ? h0 : ((h0 * n + h1 * n2) >> 16);
+			p.viewX = lootDestX_ + (48 + ((-48 * n) >> 16)) * lootStepX_;
+			p.viewY = lootDestY_ + (48 + ((-48 * n) >> 16)) * lootStepY_;
+			p.viewZ = hb + 26 + ((10 * n) >> 16);
+			p.viewPitch = std::max(-(64 - ((64 * n) >> 16)) + lootDestPitch_, -64);
+		} else {                                        // stand up (:53-57)
+			int hb = (h0 > h1) ? h0 : ((h0 * n2 + h1 * n) >> 16);
+			p.viewX = lootDestX_ + ((48 * n) >> 16) * lootStepX_;
+			p.viewY = lootDestY_ + ((48 * n) >> 16) * lootStepY_;
+			p.viewZ = hb + 36 + ((-10 * n) >> 16);
+			p.viewPitch = std::max(-((64 * n) >> 16) + lootDestPitch_, -64);
+		}
+		return;
+	}
+	if (lootCrouch_) {
+		// Crouch settled -> DWELL (:66-71): hold the end pose every tick and
+		// play sound 1055 once per session (field_0xac5_ latch :62-65). The
+		// clock is NOT restarted; closeLootSession (input) starts stand-up.
+		int h0 = getHeight(lootDestX_, lootDestY_);
+		int h1 = getHeight(lootDestX_ + lootStepX_ * 64, lootDestY_ + lootStepY_ * 64);
+		p.viewX = lootDestX_ + 48 * lootStepX_;
+		p.viewY = lootDestY_ + 48 * lootStepY_;
+		p.viewZ = std::max(h0, h1) + 26;
+		p.viewPitch = std::max(lootDestPitch_ - 64, -64);
+		if (!lootSettleSfx_) {
+			lootSettleSfx_ = true;
+			std::fprintf(stderr, "[loot] sound 1055\n");
+		}
+	} else {
+		// Stand-up expiry: snap home and close the session (:74-80); the turn
+		// is consumed only now.
+		p.viewX = lootDestX_;
+		p.viewY = lootDestY_;
+		p.viewZ = getHeight(lootDestX_, lootDestY_) + 36;
+		p.viewPitch = lootDestPitch_;
+		setState(StateId::Playing);
+		sys_.game->advanceTurn();
+	}
+}
+
+// ---- loot dwell session (src/LoothingSystem.cpp:85-150) ----
+
+void GameContext::handleLootingAction(Action a) {
+	if (!lootCrouch_ || upTimeMs <= lootTime_ + kLootPhaseMs) return;  // (:87)
+	int maxLine = std::max(Game::LootPool::lineCount(lootPool_) - 3, 0);
+	switch (a) {
+	case Action::Use:                                   // ACTION_FIRE
+		if (lootPool_.topLine >= maxLine) closeLootSession();
+		else lootPool_.topLine = std::min(lootPool_.topLine + 3, maxLine);
+		break;
+	case Action::Passturn:
+	case Action::BackKey:                closeLootSession(); break;
+	case Action::Forward:  lootPool_.topLine = std::max(lootPool_.topLine - 1, 0); break;
+	case Action::Back:     lootPool_.topLine = std::min(lootPool_.topLine + 1, maxLine); break;
+	case Action::TurnLeft:  lootPool_.topLine = 0; break;
+	case Action::TurnRight: lootPool_.topLine = maxLine; break;
+	default: break;                                     // other ids ignored
+	}
+}
+
+void GameContext::closeLootSession() {
+	sys_.game->giveLootPool(lootPool_, *sys_.player, sys_.tables);
+	lootCrouch_ = false;
+	lootTime_ = upTimeMs;                 // stand-up starts now, zero extra delay
+}
+
+namespace {
+
+void fillArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
+	g.fillRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
+}
+
+void rectArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
+	g.drawRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
+}
+
+} // namespace
+
+void GameContext::drawLootingMenu(Graphics2D& g) {
+	if (!(lootCrouch_ && upTimeMs > lootTime_ + kLootPhaseMs)) return; // (:121-122)
+	if (lootPool_.text.length() == 0 || sys_.font == nullptr) return;
+	constexpr int kViewY = 20;            // viewRect[1] (src/Canvas.cpp:124-127)
+	constexpr int kScrCx = 240;           // Canvas::SCR_CX
+	const int dx = 0, dy = kViewY + 16, dw = 480 - 1, dh = 48;   // dialogRect (:123-127)
+	fillArgb(g, dx, dy, dw, dh, 0xFF660000u);                    // body (:128-129)
+	fillArgb(g, dx, dy - 18, dw, 18, 0xFF000000u);               // title bar (:130-131)
+	rectArgb(g, dx, dy - 18, dw, 18, 0xFFFFFFFFu);               // (:132-133)
+	rectArgb(g, dx, dy, dw, dh, 0xFFFFFFFFu);                    // (:134)
+	Text title;                                                  // (:135-139)
+	title.append(sys_.loc->get(kTextMain, 227));
+	title.dehyphenate();
+	g.drawString(*sys_.font, title, kScrCx, dy - 16, Graphics2D::kAnchorHCenter, 16);
+	for (int i = 0; i < 3; ++i) {                                // (:140-144)
+		int line = i + lootPool_.topLine;
+		if (line < 0 || line >= Game::LootPool::kMaxLines) continue;
+		g.drawString(*sys_.font, lootPool_.text, dx + 5, dy + 1 + i * 16,
+		    Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft, 16,
+		    lootPool_.lineIndex[line * 2], lootPool_.lineIndex[line * 2 + 1]);
+	}
+	int total = Game::LootPool::lineCount(lootPool_);
+	if (total > 3)                                               // (:145-150)
+		sys_.dialogs->drawScrollBar(g, dx + dw, dy + 1, dh - 1, lootPool_.topLine,
+		    std::min(lootPool_.topLine + 3, total), total, 3);
 }
 
 // ---- cinematic camera (docs/original-code/cutscenes-camera.md §1-§3) ----
@@ -681,13 +832,16 @@ void GameContext::handlePlayingAction(Action a) {
 		// Corpse loot FIRST: the legacy ACTION_FIRE trace selects lootable
 		// corpses before tile TRIGGER events and door use (ST_LOOTING return
 		// preempts executeTile :398 and the door branch :445,
-		// src/PlayingInputHandler.cpp:274-378). Closing the (not-ported) loot
-		// UI grants + advanceTurn (src/LootingSystem.cpp:79-81).
+		// src/PlayingInputHandler.cpp:274-378). Entering ST_LOOTING pools and
+		// marks the faced tile in enterState_ (legacy setState -> poolLoot
+		// order, src/PlayingInputHandler.cpp:374-378); the grant fires on UI
+		// close (giveLootPool ran before stand-up,
+		// src/LootingSystem.cpp:89-103) and advanceTurn at stand-up expiry
+		// (:79-80) — looting costs its turn.
 		Entity* corpse = sys_.game->findLootableCorpseFacing(
 			p.viewX, p.viewY, p.viewStepX, p.viewStepY);
 		if (corpse != nullptr) {
-			sys_.game->lootCorpse(corpse, *sys_.loc, *sys_.hud, *sys_.player, sys_.tables);
-			sys_.game->advanceTurn();
+			setState(StateId::Looting);
 			break;
 		}
 		// Faced-tile TRIGGER event FIRST, before door use; a script that ran
@@ -858,6 +1012,10 @@ void GameContext::render(AppContext& app) {
 	// Dialog box overlay (legacy backPaint -> dialogState,
 	// src/Canvas.cpp:447-449).
 	if (state == StateId::Dialog) sys_.dialogs->draw(g);
+
+	// Loot list overlay during the dwell window — paints OVER world+HUD
+	// (src/Canvas.cpp:414-417,469-472).
+	if (state == StateId::Looting) drawLootingMenu(g);
 
 	renderer.endFrame(app.window());
 }
