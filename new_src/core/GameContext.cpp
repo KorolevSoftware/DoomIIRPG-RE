@@ -247,16 +247,19 @@ void GameContext::tickLoading() {
 
 	// phase 1 (src/LoadingManager.cpp:617-744)
 	sys_.vm->resetPool();                                  // 20 threads freed (src/Game.cpp:332-360)
+	// Difficulty stamped BEFORE loadEntities so the spawn-time +25% hp bump
+	// sees it (spec §1; Group-2 order fix pulled forward — Group 1's own
+	// acceptance checks hp=62 at difficulty 2).
+	sys_.vm->vars[12] = 2;                                 // difficulty default (:692)
 	sys_.game->loadEntities(*sys_.map, *sys_.defs);        // (:658); loadWorldState slot: fresh entry no-op (:670)
 	spawnPlayer();                                         // (:673)
-	sys_.vm->vars[12] = 2;                                 // difficulty default (:692)
 	std::fprintf(stderr, "[load] staticFunc(0)\n");
 	sys_.vm->executeStaticFunc(Enums::SCR_INIT_MAP);       // SCR_INIT_MAP (:691-693)
 	// staticFunc(1): completed-game only — no caller in the subset.
 	// prevX/Y = view snap: save-only fields, not ported.
 	sys_.vm->executeTile(sys_.player->viewX >> 6, sys_.player->viewY >> 6, 4081, true); // entrance event, ENTER|all-dirs (:700-706)
 	sys_.player->finishRotation();                         // finishRotation(false) analog (:707)
-	sys_.game->monstersTurn = 0;                           // endMonstersTurn (:708)
+	sys_.game->endMonstersTurn();                          // monstersTurn = 0 (:708)
 	// uncoverAutomap stub (:709).
 	// Enter ST_PLAYING only when no cinematic took over during staticFunc(0)
 	// (src/LoadingManager.cpp:715-717 gates on canvas->state == ST_LOADING);
@@ -310,9 +313,22 @@ void GameContext::tickPlaying() {
 		setState(StateId::Dying);
 		return;
 	}
-	// 4. monster phase placeholder at the legacy position (:181-183) —
-	//    updateMonsters has no rewrite counterpart yet (empty world).
-	if (sys_.game->monstersTurn != 0) sys_.game->monstersTurn = 0;
+	// 4. combat seq / monster phase at the legacy position (:181-183). While
+	//    a fire seq runs (ST_COMBAT analog, spec §0.C) it ticks and consumes
+	//    the turn on completion; otherwise the monster-phase stub closes the
+	//    monstersTurn window opened by advanceTurn.
+	//    Per-tick shotsFired reset (spec §C step 4): legacy clears the latch
+	//    once per rendered frame (src/Render.cpp:2351) so activate()'s
+	//    back-turned wake guard is bypassed only during shot frames.
+	sys_.game->combat.shotsFired = false;
+	if (sys_.game->combat.active) {
+		if (!sys_.game->combat.tick()) {          // runFrame analog (spec §5)
+			sys_.game->combat.active = false;
+			sys_.game->advanceTurn();             // turn consumed AFTER seq
+		}
+	} else {
+		sys_.game->updateMonsters();              // Stage-1 stub (spec §0.B)
+	}
 	// 5. door/sprite lerps tick in the globals section (legacy updateLerpSprites
 	//    here, src/GameStateRunner.cpp:184), still BEFORE updateView (:185).
 	// Help-popup dequeue while playing & monsters idle
@@ -789,6 +805,9 @@ void GameContext::flushParkedThreads(bool force) {
 
 void GameContext::handlePlayingAction(Action a) {
 	Player& p = *sys_.player;
+	// Input drops entirely while a combat seq runs — legacy is in ST_COMBAT
+	// so no playing input matches (spec §0.C.3, src/GameStateRunner state gate).
+	if (sys_.game->combat.active) return;
 	// Legacy gate: all playing input is ignored while any animation runs
 	// (src/PlayingInputHandler.cpp:25-27).
 	bool gateBlocked = (p.viewX != p.destX || p.viewY != p.destY || p.viewAngle != p.destAngle);

@@ -18,6 +18,8 @@
 #include "ui/Hud.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <map>
 #include <vector>
 
@@ -28,6 +30,9 @@
 // input arrives as queued actions via GameLoop.
 int main(int argc, char* argv[]) {
 	using namespace newcore;
+
+	// Combat rolls use std::rand like the RE port (src/App.cpp:506-512).
+	std::srand((unsigned)std::time(nullptr));
 
 	// Allow overriding the data archive via argv[1].
 	const char* archiveName = (argc > 1) ? argv[1] : "Doom 2 RPG.ipa";
@@ -226,6 +231,9 @@ int main(int argc, char* argv[]) {
 	vm.init({                  // Env: map, defs, game, player, loc, hud, ctx, dialogs, gameTime
 		&g_map, &g_entityDefs, &game, &player, &loc, &hud, &ctx, &dialogs, &ctx.gameTime });
 	game.setVM(&vm);
+	game.combat.init({         // Env: game, player, hud, loc, tables, map, gameTime (spec §2.2)
+		&game, &player, &hud, &loc, &tables, &g_map, &ctx.gameTime });
+	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges
 	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world, dialogs
 		&g_map, &g_entityDefs, &tables, &loc, &font, &g_media,
 		&game, &player, &vm, &hud, &world, &dialogs });

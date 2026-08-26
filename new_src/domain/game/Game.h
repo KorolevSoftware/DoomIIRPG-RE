@@ -2,10 +2,13 @@
 #define NEW_DOMAIN_GAME_GAME_H
 
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "domain/game/Combat.h"
 #include "domain/game/Entity.h"
+#include "domain/game/EntityMonster.h"
 #include "domain/game/Player.h"
 #include "io/EntityDefs.h"
 #include "domain/world/MapData.h"
@@ -14,10 +17,16 @@
 namespace newcore {
 
 class EntityDefs;
+class Hud;
 class Localization;
 class ScriptVM;
 struct ScriptThread;
 class Tables;
+
+// %NN argument substitution over Localization strings (decode rules of
+// Text::composeText, src/Text.cpp:281-326). Defined in Game.cpp; shared with
+// Combat.cpp / Player messaging so the pattern has exactly one copy.
+void composeArgs(std::string& text, const std::string* args, int numArgs);
 
 // World simulation: entity database (32x32 tiles), door open/close, item
 // pickup. Minimal modern port of the legacy Game focused on the interactive
@@ -242,6 +251,12 @@ public:
 	// here, included only in the .cpp (no header cycle). Set after construction.
 	void setVM(ScriptVM* vm) { vm_ = vm; }
 
+	// ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
+
+	// Kill-XP state/presentation bridges (spec deviation 14): Player owns the
+	// XP state, Game composes msg 103. Wired once from Main.cpp.
+	void setXPSystems(Player* player, const Localization* loc, Hud* hud);
+
 	// Turn/script coordination fields (legacy Game members).
 	int monstersTurn = 0;
 	bool queueAdvanceTurn = false;
@@ -251,10 +266,73 @@ public:
 	int spawnParam = -1;            // -1 = use the map header spawn
 	int eventFlags_[2] = { 0, 0 };
 
+	// Monster rings + combat-seq owner (legacy Game::activeMonsters /
+	// inactiveMonsters / combatMonsters / interpolatingMonsters,
+	// src/Game.cpp:884-939). combatMonsters is the Stage-2 pending-attack
+	// queue head — declared only. Nothing sets interpolatingMonsters in
+	// Stage 1, so its advanceTurn guard is a defensive log-only branch.
+	Entity* activeMonsters = nullptr;
+	Entity* inactiveMonsters = nullptr;
+	Entity* combatMonsters = nullptr;
+	bool interpolatingMonsters = false;
+	bool facingDirty = false;       // canvas updateFacingEntity latch analog (src/Entity.cpp:527)
+
+	Combat combat;                  // peer subsystem (ADR 0008)
+
+	// Faithful ring moves (src/Game.cpp:752-808, :825-855). activate ports:
+	// runStaticFunc fires SCR_MONSTER_ACTIVATE on MFLAG_TRIGGERONACTIVATE,
+	// rangeCheck gates at tileDistances[3], alertSound logs (no audio),
+	// b4 unused like legacy.
+	void activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4);
+	void deactivate(Entity* e);
+
+	// Per-frame monster phase (src/Game.cpp:2458-2474): Stage-1 stub whose
+	// only job is closing the monstersTurn window (no AI, no lerps — spec §B).
+	void updateMonsters();
+	void endMonstersTurn();         // src/Game.cpp:2452-2456
+	void snapMonsters(bool b);      // Stage-1 stub (spec §0.B)
+
+	// Difficulty source: ScriptVM vars[12], default 2 when no VM is wired
+	// (spec §1 difficulty note).
+	int difficulty() const;
+
+	// eSubType in [FIRSTBOSS..LASTBOSS] (src/Entity.cpp:1399 shape).
+	static bool isBossDef(const EntityDef* def);
+
+	// Chebyshev^2 distance from (x,y) to the entity's sprite position
+	// (src/Entity.cpp:1155-1158), reading mapSprites like traceEntityHits
+	// does (Game.cpp traceEntityHits S_X/S_Y reads).
+	int entityDistFrom(const Entity* e, int x, int y) const;
+
+	// Entity::pain ET_MONSTER non-boss subset (src/Entity.cpp:281-394):
+	// MFLAG_NOKILL floor, pain/death pose overlay + frameTime hold,
+	// resetGoal unless holy-water attacker. Boss phase staticFuncs deferred.
+	bool painMonster(Entity* e, int dmg, int attackerWeaponId);
+
+	// Entity::died ET_MONSTER subset (src/Entity.cpp:459-521): death pose,
+	// corpse info bits, def swap to ET_CORPSE, deactivate, optional XP.
+	void diedMonster(Entity* e, bool giveXP);
+
+	// checkMonsterDeath(b=true) XP half (src/Entity.cpp:407-413) with the
+	// message composition split out of Player::addXP (spec deviation 14).
+	void awardKillXP(const EntityMonster& m);
+
 private:
 	void updateDoors();
 	void freeLerpSprite(SpriteLerp* ls);       // completion snap + slot free (src/Game.cpp:3078-3243, subset)
 	int playerX_ = -1, playerY_ = -1;
+
+	// Fixed monster payload pool (legacy entityMonsters[80], Error 37 on
+	// overflow src/Game.cpp:430-436 — rewrite logs and skips). Lifetime is
+	// one map load; loadEntities resets numMonsters_.
+	static constexpr int kMaxMonsters = 80;
+	EntityMonster entityMonsters_[kMaxMonsters];
+	int numMonsters_ = 0;
+
+	// setXPSystems wiring targets.
+	Player* xpPlayer_ = nullptr;
+	const Localization* xpLoc_ = nullptr;
+	Hud* xpHud_ = nullptr;
 
 	// Script sprite lerp pool (legacy Game::lerpSprites[16]).
 	SpriteLerp spriteLerps_[kMaxLerpSprites];

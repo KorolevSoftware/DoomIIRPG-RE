@@ -6,6 +6,7 @@
 namespace newcore {
 
 class Entity;
+class Combat;
 
 // Battle statistics of an entity (player or monster). Mirrors the legacy
 // CombatEntity: 8 stats (HEALTH..IQ) and the active weapon index.
@@ -24,6 +25,16 @@ public:
 	int addStat(int i, int delta);
 	int setStat(int i, int value);
 	int calcXP() const;
+
+	// Verbatim stat-math trio (src/CombatEntity.cpp:130-378). The leading
+	// Combat& replaces legacy's implicit app->combat singleton; all math is
+	// integer/fixed-point with no float anywhere.
+	void calcCombat(Combat& c, CombatEntity& attackerCe, Entity* targetEnt,
+	                bool vsPlayer, int worldDist, int targetSubParm);
+	int calcHit(Combat& c, CombatEntity& attackerCe, CombatEntity& defenderCe,
+	            bool vsPlayer, int worldDist, bool zoomB2);
+	int calcDamage(Combat& c, CombatEntity& attackerCe, Entity* targetEnt,
+	               CombatEntity& defenderCe, bool vsPlayer, int parm);
 };
 
 } // namespace newcore

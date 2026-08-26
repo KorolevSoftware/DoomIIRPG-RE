@@ -1,6 +1,12 @@
 #include "domain/game/Player.h"
 
 #include <algorithm>
+#include <cstdio>
+
+#include "domain/game/Combat.h"
+#include "domain/game/Entity.h"
+#include "domain/game/EntityMonster.h"
+#include "domain/game/Enums.h"
 
 namespace newcore {
 
@@ -91,7 +97,10 @@ void Player::reset() {
 	for (auto& v : ammo) v = 0;
 	level = 1;
 	currentXP = 0;
-	nextLevelXP = 0;
+	nextLevelXP = calcLevelXP(level);
+	xpGained = 0;
+	disabledWeapons = 0;
+	facingEntity = nullptr;
 	god = false;
 	give(0, 18, 1); // journal
 }
@@ -158,6 +167,79 @@ bool Player::addHealth(int amount) {
 	}
 	ce.addStat(Enums::STAT_HEALTH, amount);
 	return true;
+}
+
+// ---- XP / leveling ----
+
+void Player::addXP(int xp) {
+	// src/Player.cpp:264-281 state half (message composition moved to
+	// Game::awardKillXP — spec deviation 14; counters[5] run-stat absent).
+	currentXP += xp;
+	xpGained += xp;
+	while (currentXP >= nextLevelXP) {
+		addLevel();
+	}
+}
+
+int Player::calcLevelXP(int n) const {
+	return 500 * n + 100 * ((n - 1) * (n - 1) * (n - 1) + (n - 1));   // src/Player.cpp:360-362
+}
+
+void Player::addLevel() {
+	// src/Player.cpp:283-307,:342 subset. Presentation (msgs 104-110), the
+	// level-up sound/dialog and the modifyStat DEF/STR/ACC/AGI bumps are
+	// deferred.
+	level++;
+	nextLevelXP = calcLevelXP(level);                          // :288-289
+	int n = 10;
+	int stat = baseCe.getStat(Enums::STAT_MAX_HEALTH);         // :297-298
+	if (stat + n > 999) n = 999 - stat;                        // :299-301
+	if (n != 0) baseCe.setStat(Enums::STAT_MAX_HEALTH, stat + n);   // :302-303
+	ce.setStat(Enums::STAT_HEALTH, ce.getStat(Enums::STAT_MAX_HEALTH)); // :342 refill
+	std::fprintf(stderr, "[player] level %d (stat bumps deferred)\n", level);
+}
+
+bool Player::fireWeapon(Combat& combat, Entity* target, int x, int y) {
+	// src/Player.cpp:754-799. The weaponDown / lower-raise lerp system is
+	// absent from the rewrite (:761-771 skipped with citation).
+	// Explicit unowned/no-weapon guard first — legacy reads 1 << -1 (UB).
+	if (weapon < 0 || (weapons & (1 << weapon)) == 0) return false;
+	if (weapon == 13 /*WP_SOUL_CUBE*/ &&
+	    (target == nullptr || target->monster == nullptr)) {
+		return false;                                          // :757-759
+	}
+	if (disabledWeapons != 0 && (weapons & (1 << weapon)) == 0) {
+		return false;                                          // :761-763 op-60 mask
+	}
+	// Target flag clear (:773-775): flags &= 0xfff7 clears bit 0x8 only,
+	// MFLAG_NOACTIVATE (src/Player.cpp:774, new_src/domain/game/Enums.h:279).
+	if (target != nullptr && target->monster != nullptr) {
+		target->monster->flags &= ~Enums::MFLAG_NOACTIVATE;
+	}
+	// Chainsaw gib branch (:777-779): WP_CHAINSAW is unreachable on the
+	// map00 route; log if ever seen instead of porting the gib path.
+	if (weapon == 1 && target != nullptr && target->isCorpse()) {
+		std::fprintf(stderr, "[combat] chainsaw gib path deferred\n");
+	}
+	const int ammoType = combat.weaponField(weapon, Combat::kFieldAmmoType);
+	const int usage = combat.weaponField(weapon, Combat::kFieldAmmoUsage);
+	if (ammoType != 0) {                                       // :782-796
+		const int have = ammo[ammoType];
+		if (usage > 0 && have - usage < 0) {                   // :784
+			combat.centerMessage(weapon == 13 ? 117 : (have == 0 ? 115 : 116));
+			return false;
+		}
+	}
+	// Projectile weapons are out of Stage-1 scope (research §6.3): refuse
+	// like the soul-cube guard rather than mis-firing instant hitscan damage.
+	const int proj = combat.weaponField(weapon, Combat::kFieldProjType);
+	if (proj != 0) {
+		std::fprintf(stderr, "[combat] projectile weapon %d unsupported (proj=%d)\n",
+			weapon, proj);
+		return false;
+	}
+	combat.performAttack(target, x, y, false);                 // :797
+	return true;                                               // :798
 }
 
 } // namespace newcore

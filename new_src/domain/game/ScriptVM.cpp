@@ -6,6 +6,7 @@
 #include "core/GameContext.h"
 #include "domain/game/DialogSystem.h"
 #include "domain/game/Entity.h"
+#include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
@@ -433,6 +434,13 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
+		case Enums::EV_WEAPON_EQUIPPED: {          // src/ScriptThread.cpp:477-482
+			int index = readUByte(t) & 0x7F;       // uint8_t & 0x7F stays in [0,127]
+			vars[index] = (short)env_.player->ce.weapon;
+			std::fprintf(stderr, "[script] WEAPON_EQUIPPED var%d=%d\n", index, vars[index]);
+			break;
+		}
+
 		case Enums::EV_DOOROP: {
 			int args = readUShort(t);
 			int op = args >> 10;
@@ -597,6 +605,72 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			// snap-monsters/endMonstersTurn parts are placeholders (no monsters).
 			env_.game->advanceTurn();
 			break;
+
+		case Enums::EV_AIGOAL: {                   // src/ScriptThread.cpp:1262-1274 + :2226-2247
+			int packed = readUShort(t);
+			int goalType = (packed >> 12) & 0xF;
+			int goalSprite = packed & 0xFFF;
+			int goalArg = readUByte(t);
+			Entity* ent = env_.game->findEntityBySprite(goalSprite);
+			if (ent == nullptr || ent->monster == nullptr) {
+				// Legacy Error(76) ERR_EV_AIGOAL (:1272); bring-up logs.
+				std::fprintf(stderr, "[script] AIGOAL sprite=%d Err76 (%s)\n",
+					goalSprite, ent == nullptr ? "no entity" : "no monster payload");
+				break;
+			}
+			// setAIGoal storage half (:2227-2233).
+			EntityMonster* m = ent->monster;
+			m->resetGoal();
+			m->goalType = (uint8_t)goalType;
+			if (goalType == 2 || goalType == 3) m->goalParam = 1;
+			else if (goalType == 4 || goalType == 6) m->goalParam = goalArg;
+			// noclip gate (:2235): no noclip in the rewrite.
+			if ((ent->info & Entity::kInfoOnActiveList) == 0) {
+				env_.game->activate(ent, true, false, false, true);   // :2236-2238 silent
+			}
+			std::fprintf(stderr, "[script] AIGOAL aiThink deferred (Stage 2)\n");
+			if (goalType == 3 && env_.game->combatMonsters != nullptr) {
+				// Queued-attack re-run (:2241-2246): combatMonsters is always
+				// empty in Stage 1 — unreachable; logged for safety.
+				std::fprintf(stderr, "[script] AIGOAL type-3 queued attack skipped\n");
+			}
+			break;
+		}
+
+		case Enums::EV_PLAYERATTACK: {             // src/ScriptThread.cpp:1361-1373
+			int packed = readUShort(t);
+			int weapon = (packed >> 12) & 0xF;
+			int sprite = packed & 0xFFF;
+			Entity* ent = env_.game->findEntityBySprite(sprite);
+			if (ent != nullptr) {
+				env_.player->ce.weapon = weapon;
+				env_.game->combat.performAttack(ent, 0, 0, true);
+			}
+			n = evWait(t, 1);      // park 1 ms — seq plays out via the Playing tick
+			break;
+		}
+
+		case Enums::EV_START_TARGETPRACTICE: {     // src/ScriptThread.cpp:1806-1813 +
+			                                       // src/Player.cpp:2521-2551 teleport subset
+			int v = readUShort(t);
+			int tx = (v >> 8) & 0x1F;
+			int ty = (v >> 3) & 0x1F;
+			int dir = v & 7;
+			Player& p = *env_.player;
+			// Angle map {4:W, 0:E, 2:N, else:S} << 7 (src/Player.cpp:2530-2543).
+			int angle = dir == 4 ? 512 : dir == 0 ? 0 : dir == 2 ? 256 : 768;
+			p.destX = p.viewX = (tx << 6) + 32;    // :2544-2545
+			p.destY = p.viewY = (ty << 6) + 32;
+			p.destZ = p.viewZ = env_.ctx->getHeight(p.viewX, p.viewY) + 36;   // :2546
+			p.destAngle = p.viewAngle = angle;     // :2543 snap
+			env_.ctx->finishRotationFired();       // step-vector refresh + FACE event
+			std::fprintf(stderr,
+				"[targetpractice] enter tile=%d,%d dir=%d (inventory strip/score deferred)\n",
+				tx, ty, dir);
+			t->unpauseTime = -1;                   // :1810 park; exit protocol deferred
+			n = 2;
+			break;
+		}
 
 		case Enums::EV_DEBUGPRINT: {
 			// Consecutive 66 ops chain into one message in legacy; printing
@@ -843,45 +917,59 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		case Enums::EV_MONSTERFLAGOP: {
 			int sprite = readUByte(t);
 			readUByte(t);                 // op/mask
-			std::fprintf(stderr, "[script] MONSTERFLAGOP sprite=%d skipped (no monsters)\n", sprite);
+			std::fprintf(stderr, "[script] MONSTERFLAGOP sprite=%d skipped (flag ops deferred)\n", sprite);
 			break;
 		}
 
-		case Enums::EV_WAKEMONSTER: {
+		case Enums::EV_WAKEMONSTER: {              // src/ScriptThread.cpp:876-892
 			int sprite = readUByte(t);
-			std::fprintf(stderr, "[script] WAKEMONSTER sprite=%d skipped (no monsters)\n", sprite);
+			Entity* ent = env_.game->findEntityBySprite(sprite);
+			if (ent == nullptr || ent->monster == nullptr) {
+				// Legacy Error(23) ERR_MISC_SCRIPT (:880-882); bring-up logs.
+				std::fprintf(stderr, "[script] WAKEMONSTER sprite=%d Err23 (no monster entity)\n", sprite);
+				break;
+			}
+			if (ent->isMonster()) {
+				ent->monster->frameTime = 0;                        // :886
+				env_.map->mapSpriteInfo[sprite] &= 0xFFFF00FF;      // :887 clear anim byte
+				env_.game->activate(ent, true, false, false, true); // :888 silent wake
+			}
 			break;
 		}
 
-		case Enums::EV_DAMAGEMONSTER: {          // src/ScriptThread.cpp:704-724
+		case Enums::EV_DAMAGEMONSTER: {            // src/ScriptThread.cpp:704-724
 			int sprite = readUByte(t);
 			int dmg = readByte(t);
 			std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d dmg=%d\n", sprite, dmg);
 			Entity* ent = env_.game->findEntityBySprite(sprite);
-			if (ent == nullptr || !ent->isMonster()) {
-				std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d skipped (%s)\n",
-					sprite, ent == nullptr ? "no entity" : "not a monster");
+			if (ent == nullptr) {
+				std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d skipped (no entity)\n", sprite);
 				break;
 			}
-			// Legacy pains then dies when lethal; died(false,nullptr) leaves the
-			// VISIBLE corpse in place (death frame 0x7000, src/Entity.cpp:1627).
-			// No health model yet, so every scripted hit is treated as lethal —
-			// map00's only site (IP 2831, imp 15, dmg 127) is lethal anyway.
-			const MapData& m = *env_.map;
-			env_.game->corpsifyMonster(ent, m.mapSprites[sprite + 0 * m.numSprites],
-				m.mapSprites[sprite + 1 * m.numSprites]);
+			if (ent->monster != nullptr) {
+				ent->info |= Entity::kInfoActive;   // force-active (:712)
+				env_.game->painMonster(ent, dmg, -1);
+				if (ent->monster->ce.getStat(Enums::STAT_HEALTH) <= 0) {
+					env_.game->diedMonster(ent, false);             // :714-716 no XP
+				}
+			} else {
+				// Non-monster entity: legacy dies it outright; our died path is
+				// monster-only (spec §7 op 19), so log and continue.
+				std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d non-monster died skipped\n",
+					sprite);
+			}
 			break;
 		}
 
-		case Enums::EV_DISABLED_WEAPONS: {
-			// Legacy stores the s16 bitmask into player->disabledWeapons and may
-			// switch away from a masked weapon (src/ScriptThread.cpp:1443-1451);
-			// combat/weapon UI has no rewrite counterpart yet, so consume the
-			// operand and continue. Unblocks the elevator-cinematic tail
-			// (map00 IP 2835 — the thread killer of research
-			// 2026-08-25-unhandled-script-events.md §1.1).
+		case Enums::EV_DISABLED_WEAPONS: {         // src/ScriptThread.cpp:1443-1451
 			int weaponMask = readShort(t);
-			std::fprintf(stderr, "[script] DISABLED_WEAPONS mask=%d consumed\n", weaponMask);
+			env_.player->disabledWeapons = weaponMask;
+			std::fprintf(stderr, "[script] DISABLED_WEAPONS mask=%d stored\n", weaponMask);
+			if ((env_.player->disabledWeapons & (1 << env_.player->ce.weapon)) != 0) {
+				// selectNextWeapon deferred (single weapon on the map00 route).
+				std::fprintf(stderr,
+					"[script] DISABLED_WEAPONS current weapon masked (selectNextWeapon deferred)\n");
+			}
 			break;
 		}
 

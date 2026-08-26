@@ -9,6 +9,9 @@
 
 namespace newcore {
 
+class Combat;
+class Entity;
+
 // The player character: stats, inventory, keys, position/heading. Modern
 // minimal port of the legacy Player. Inventory slots match legacy indices
 // (18 journal, 19 red key, 20 blue key, ...).
@@ -27,10 +30,17 @@ public:
 	// Active weapon index.
 	int weapon = -1;
 	const EntityDef* activeWeaponDef = nullptr;
+	// op 60 EV_DISABLED_WEAPONS mask (src/ScriptThread.cpp:1445); consumed
+	// by fireWeapon's guard.
+	int disabledWeapons = 0;
+	// Facing-probe result (src/MovementController.cpp:32-87); fed by the
+	// Group-2 facing probe, consumed by the HUD health-bar feed.
+	Entity* facingEntity = nullptr;
 
 	int level = 1;
 	int currentXP = 0;
 	int nextLevelXP = 0;
+	int xpGained = 0;
 	bool god = false;
 
 	// ---- Discrete movement (legacy Canvas) ----
@@ -88,6 +98,22 @@ public:
 
 	int getHealth() const { return ce.getStat(Enums::STAT_HEALTH); }
 	int getMaxHealth() const { return ce.getStat(Enums::STAT_MAX_HEALTH); }
+
+	// ---- XP / leveling (src/Player.cpp:264-362; spec deviation 14) ----
+
+	// State half of legacy addXP: counters + level-up loop. The msg-103
+	// composition lives in Game::awardKillXP.
+	void addXP(int xp);
+	// 500n + 100((n−1)^3 + (n−1)) (src/Player.cpp:360-362).
+	int calcLevelXP(int n) const;
+	// Subset: level++, nextLevelXP, baseCe MAX_HEALTH +10 clamp 999, health
+	// refill (src/Player.cpp:283-307,:342). modifyStat DEF/STR/ACC/AGI bumps
+	// are deferred and logged.
+	void addLevel();
+
+	// Fire-pipeline entry (src/Player.cpp:754-799): guard chain then
+	// combat.performAttack. Returns false when the shot is refused.
+	bool fireWeapon(Combat& combat, Entity* target, int x, int y);
 };
 
 } // namespace newcore

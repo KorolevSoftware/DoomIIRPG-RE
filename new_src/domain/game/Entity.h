@@ -20,6 +20,7 @@ class Entity {
 public:
 	// info flags.
 	static constexpr int kInfoActive = 0x20000;      // alive / takes damage
+	static constexpr int kInfoOnActiveList = 0x40000; // on activeMonsters ring (src/Game.cpp:798)
 	static constexpr int kInfoLinked = 0x100000;     // linked in entityDb
 	static constexpr int kInfoActivated = 0x400000;  // activated/changed
 	static constexpr int kInfoCorpse = 0x1000000;    // died corpse marker

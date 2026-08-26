@@ -9,6 +9,7 @@
 #include "domain/game/ScriptVM.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
+#include "ui/Hud.h"
 
 namespace newcore {
 
@@ -16,10 +17,12 @@ namespace newcore {
 // constants are not ported into new_src Enums yet).
 enum {
 	kMonZombie = 0,
+	kMonPinky = 5,
 	kMonCacodemon = 6,
 	kMonMancubus = 8,
 	kMonRevenant = 9,
 	kMonSentryBot = 11,
+	kBossMastermind = 14,
 };
 
 // Port of Entity::populateDefaultLootSet (src/Entity.cpp:1997-2048). The
@@ -86,6 +89,10 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	entities_.resize(kEntities);
 	monstersTurn = 0;
 	queueAdvanceTurn = false;
+	numMonsters_ = 0;                       // pool lifetime = one map load (spec §0.B)
+	activeMonsters = inactiveMonsters = nullptr;
+	combatMonsters = nullptr;
+	interpolatingMonsters = false;
 	for (auto& a : doorAnims_) { a.active = false; a.door = nullptr; a.ownerThread = nullptr; }
 	for (auto& d : openDoors_) d = nullptr;
 	for (auto& ls : spriteLerps_) ls.hSprite = 0;
@@ -151,6 +158,47 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		e.setSprite(i);
 		if (def->eType == Enums::ET_DOOR) {
 			e.info |= Entity::kInfoActive;
+		} else if (def->eType == Enums::ET_MONSTER) {
+			// Monster half (src/Game.cpp:430-447 + src/Entity.cpp:59-81):
+			// payload from the fixed pool, random art flip, shared-stat clone
+			// with the difficulty hp bump, z/scale snap, active marker.
+			if (numMonsters_ >= kMaxMonsters) {
+				// Legacy Error(37) ERR_MAX_MONSTERS (src/Game.cpp:431-434).
+				std::fprintf(stderr, "[monster] ERR_MAX_MONSTERS (37): pool exhausted\n");
+				--nextSlot;   // give the slot back and skip this sprite
+				continue;
+			}
+			e.monster = &entityMonsters_[numMonsters_++];    // :435
+			e.monster->reset();                              // :436
+			if ((std::rand() & 1) == 0 && !isBossDef(def)) { // :438-441 (nextByte analog)
+				map.mapSpriteInfo[i] |= Enums::SPRITE_FLAG_FLIP_HORIZONTAL;
+			}
+			const int tmplIdx = def->eSubType * 3 + (int8_t)def->parm;  // src/Entity.cpp:60
+			if (tmplIdx >= 0 && tmplIdx < (int)combat.monsterTemplates.size()) {
+				// NOTE direction: rewrite clone(&other) copies FROM the arg
+				// into this entity (legacy template.clone(dest) is reversed).
+				e.monster->ce.clone(combat.monsterTemplates[tmplIdx]);
+			} else {
+				std::fprintf(stderr, "[monster] template %d missing (sub=%d parm=%d)\n",
+					tmplIdx, def->eSubType, def->parm);
+			}
+			const int diff = difficulty();                   // :62-67 (+25% hp)
+			if (diff == 4 || (diff == 2 && !isBossDef(def))) {
+				const int stat = e.monster->ce.getStat(1);
+				const int n2 = stat + (stat >> 2);
+				e.monster->ce.setStat(1, n2);
+				e.monster->ce.setStat(0, n2);
+			}
+			// z snap: stored S_Z is raw-relative in this rewrite (renderer
+			// re-adds terrain), so write the bare +32 offset — legacy bakes
+			// getHeight+32 (src/Entity.cpp:70, corpsify note Game.cpp:637-640).
+			map.mapSprites[i + 2 * map.numSprites] = 32;
+			int scale = 64;                                  // :68-75
+			if ((def->eSubType == kBossMastermind || def->eSubType == kMonPinky) &&
+			    def->parm == 0) scale = 42;
+			map.mapSprites[i + 8 * map.numSprites] = (int16_t)scale;
+			e.info |= Entity::kInfoActive;                   // :77 (0x20000)
+			populateDefaultLootSet(e);                       // :109-111
 		} else {
 			// Placed corpse props spawn with info |= 0x420000
 			// (src/Entity.cpp:96-98); generalized to every monster/corpse.
@@ -166,6 +214,17 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		int x = map.mapSprites[i + 0 * map.numSprites];
 		int y = map.mapSprites[i + 1 * map.numSprites];
 		linkEntity(&e, x >> 6, y >> 6);
+		if (def->eType == Enums::ET_MONSTER) {
+			// :441 - legacy sets 0x40000 so spawn deactivate() links the monster onto the inactive ring (src/Game.cpp:441-443)
+			e.info |= Entity::kInfoOnActiveList;
+			deactivate(&e);          // every monster starts on the inactive ring
+			std::fprintf(stderr,
+				"[monster] spawn sprite=%d sub=%d parm=%d hp=%d/%d\n",
+				i, def->eSubType, def->parm,
+				e.monster ? e.monster->ce.getStat(0) : -1,
+				e.monster ? e.monster->ce.getStat(1) : -1);
+			continue;                // monster log replaces the generic one below
+		}
 		fprintf(stderr, "%s entity sprite=%d tile=%d (%d,%d) sub=%d loot=[%X %X %X]\n",
 			def->eType == Enums::ET_DOOR ? "DOOR" :
 			def->eType == Enums::ET_NPC ? "NPC" : "BODY",
@@ -594,7 +653,15 @@ void Game::setLineLocked(Entity* e, bool locked) {
 // placeholders until those systems exist.
 void Game::advanceTurn() {
 	queueAdvanceTurn = false;                  // (:1240)
-	// pushedWall = false — field not ported (no consumer).
+	if (interpolatingMonsters) {               // (:1241-1243) Error 95 guard:
+		// nothing sets interpolatingMonsters in Stage 1 (no lerps), so this
+		// is defensive only.
+		std::fprintf(stderr, "[turn] ERR_NONSNAPPEDMONSTERS (95)\n");
+		snapMonsters(true);
+	}
+	// haste-parity block (:1244-1262): statusEffects[2] absent ->
+	// monstersTurn = 1 always. Player-side ticks (poison/infection/combat
+	// decay) deferred with citation src/Player.cpp:51-92.
 	monstersTurn = 1;                          // arm the monster phase (:1257-1264); Playing tick step disarms
 	advanceTurnDoors();                        // auto-close sweep (:1271-1278)
 	if (vm_) vm_->executeStaticFunc(Enums::SCR_PER_TURN); // PER_TURN hook (:1279)
@@ -695,9 +762,225 @@ Entity* Game::findLootableCorpseFacing(int px, int py, int stepX, int stepY) {
 	return nullptr;
 }
 
+// ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
+
+void Game::setXPSystems(Player* player, const Localization* loc, Hud* hud) {
+	xpPlayer_ = player;
+	xpLoc_ = loc;
+	xpHud_ = hud;
+}
+
+int Game::difficulty() const {
+	return vm_ != nullptr ? vm_->vars[12] : 2;
+}
+
+bool Game::isBossDef(const EntityDef* def) {
+	// src/Entity.cpp:1399 shape: eSubType within [FIRSTBOSS..LASTBOSS].
+	return def != nullptr &&
+	       def->eSubType >= Enums::FIRSTBOSS && def->eSubType <= Enums::LASTBOSS;
+}
+
+int Game::entityDistFrom(const Entity* e, int x, int y) const {
+	// Chebyshev^2 distFrom (src/Entity.cpp:1155-1158); position read from
+	// mapSprites exactly like traceEntityHits (S_X/S_Y, src/Game.cpp:244-247).
+	if (e == nullptr || map_ == nullptr) return 0;
+	const int sprite = e->getSprite();
+	const int ex = (sprite >= 0) ? map_->mapSprites[sprite + 0 * map_->numSprites] : 0;
+	const int ey = (sprite >= 0) ? map_->mapSprites[sprite + 1 * map_->numSprites] : 0;
+	return std::max((x - ex) * (x - ex), (y - ey) * (y - ey));
+}
+
+// Faithful port of Game::activate (src/Game.cpp:752-808). The render-side
+// shotsFired latch lives on Combat now (same suppression window).
+void Game::activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4) {
+	(void)b4;                                  // legacy unused parameter
+	if (e == nullptr || e->monster == nullptr || map_ == nullptr) return;
+	EntityMonster* monster = e->monster;
+	const int sprite = e->getSprite();
+	if (((map_->mapSpriteInfo[sprite] & 0xFF00) >> 8 & 0xF0) == Enums::MANIM_IDLE_BACK &&
+	    !combat.shotsFired) {
+		return;                                // :760-762 back-turned wake guard
+	}
+	if (rangeCheck && entityDistFrom(e, playerX_, playerY_) > combat.tileDistances[3]) {
+		return;                                // :763-765 (> tileDistances[3] = 4 tiles)
+	}
+	e->info |= Entity::kInfoActivated;         // :766
+	// noclip early-out (:767-769): no noclip cheat in the rewrite.
+	if ((e->info & Entity::kInfoOnActiveList) != 0) {
+		return;                                // :770-772 already active
+	}
+	map_->mapSpriteInfo[sprite] &= 0xFFFF00FF; // :774 clear anim byte | 0x0
+	if (monster->nextOnList != nullptr) {      // :775-786 unhook from inactive ring
+		if (e == inactiveMonsters && monster->nextOnList == inactiveMonsters) {
+			inactiveMonsters = nullptr;
+		} else {
+			if (e == inactiveMonsters) inactiveMonsters = monster->nextOnList;
+			monster->nextOnList->monster->prevOnList = monster->prevOnList;
+			monster->prevOnList->monster->nextOnList = monster->nextOnList;
+		}
+	}
+	if (activeMonsters == nullptr) {           // :787-797 append to active ring
+		monster->nextOnList = e;
+		monster->prevOnList = e;
+		activeMonsters = e;
+	} else {
+		monster->prevOnList = activeMonsters->monster->prevOnList;
+		monster->nextOnList = activeMonsters;
+		activeMonsters->monster->prevOnList->monster->nextOnList = e;
+		activeMonsters->monster->prevOnList = e;
+	}
+	e->info |= Entity::kInfoOnActiveList;      // :798
+	monster->flags &= ~Enums::MFLAG_NOACTIVATE;               // :799
+	if (runStaticFunc && (monster->flags & Enums::MFLAG_TRIGGERONACTIVATE) != 0) {
+		if (vm_) vm_->executeStaticFunc(Enums::SCR_MONSTER_ACTIVATE);   // :800-802
+		monster->flags &= ~Enums::MFLAG_TRIGGERONACTIVATE;
+	}
+	if (alertSound) {                          // :804-807 MSOUND_ALERT1, no audio backend
+		std::fprintf(stderr, "[monster] alert sound sub=%d parm=%d\n",
+			e->def ? e->def->eSubType : -1, e->def ? e->def->parm : -1);
+	}
+	std::fprintf(stderr, "[monster] activate sprite=%d\n", sprite);
+}
+
+// Faithful port of Game::deactivate (src/Game.cpp:825-855).
+void Game::deactivate(Entity* e) {
+	if (e == nullptr || e->monster == nullptr) return;
+	EntityMonster* monster = e->monster;
+	if ((e->info & Entity::kInfoOnActiveList) == 0) {
+		return;                                // :827-829 not on any ring we manage
+	}
+	if (monster->nextOnList != nullptr) {      // :830-841 unhook from active ring
+		if (e == activeMonsters && monster->nextOnList == activeMonsters) {
+			activeMonsters = nullptr;
+		} else {
+			if (e == activeMonsters) activeMonsters = monster->nextOnList;
+			monster->nextOnList->monster->prevOnList = monster->prevOnList;
+			monster->prevOnList->monster->nextOnList = monster->nextOnList;
+		}
+	}
+	if (inactiveMonsters == nullptr) {         // :842-853 append to inactive ring
+		monster->nextOnList = e;
+		monster->prevOnList = e;
+		inactiveMonsters = e;
+	} else {
+		monster->prevOnList = inactiveMonsters->monster->prevOnList;
+		monster->nextOnList = inactiveMonsters;
+		inactiveMonsters->monster->prevOnList->monster->nextOnList = e;
+		inactiveMonsters->monster->prevOnList = e;
+	}
+	e->info &= ~Entity::kInfoOnActiveList;     // :854
+}
+
+// Stage-1 stub (spec §0.B): placed where legacy runs AI + lerps
+// (src/Game.cpp:2458-2474); monsters never move or attack, so the window
+// just closes.
+void Game::updateMonsters() {
+	if (monstersTurn != 0) endMonstersTurn();
+}
+
+// src/Game.cpp:2452-2456. canvas->startRotation(true) has no rewrite
+// counterpart (input gating is idle-based).
+void Game::endMonstersTurn() {
+	monstersTurn = 0;
+}
+
+// Stage-1 stub (spec §0.B): no lerps exist, so snapping degenerates to
+// driving/closing the turn — the only externally visible part of
+// src/Game.cpp:2411-2449.
+void Game::snapMonsters(bool b) {
+	(void)b;
+	if (monstersTurn != 0) endMonstersTurn();
+}
+
+// Non-boss ET_MONSTER subset of Entity::pain (src/Entity.cpp:281-394).
+bool Game::painMonster(Entity* e, int dmg, int attackerWeaponId) {
+	if (e == nullptr || e->monster == nullptr || !e->isMonster() || map_ == nullptr) return false;
+	EntityMonster* m = e->monster;
+	const int sprite = e->getSprite();
+	if (sprite < 0 || sprite >= map_->numSprites) return false;
+	if (!(e->info & Entity::kInfoActive)) return false;        // :286-288
+	// Boss phase hooks at 75/50/25% with staticFuncs 2/3/4 (:293-339):
+	// deferred (no bosses on the map00 route).
+	int n2 = m->ce.getStat(Enums::STAT_HEALTH) - dmg;          // :290-292
+	if ((m->flags & Enums::MFLAG_NOKILL) != 0 && n2 <= 0) {    // :341-343
+		n2 = 1;
+	}
+	m->ce.setStat(Enums::STAT_HEALTH, n2);                     // :344
+	if (n2 > 0) {
+		// MSOUND_PAIN (:347-348) logged — no audio backend.
+		std::fprintf(stderr, "[monster] pain sound sub=%d parm=%d hp=%d\n",
+			e->def->eSubType, e->def->parm, n2);
+		map_->mapSpriteInfo[sprite] =
+			(map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x6000;    // :350-353 MANIM_PAIN
+		m->frameTime = lerpClock_ + 250;       // nowMs() = lerpClock_ (deviation D-6)
+		if (attackerWeaponId != 2 /*holy water*/) m->resetGoal();   // :354-356
+	} else {
+		map_->mapSpriteInfo[sprite] =
+			(map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x6000;    // :358-359 lethal hold pose
+		m->frameTime = lerpClock_ + 450;       // :360-368 (250 + 200 lethal hold)
+	}
+	return false;                              // boss staticFunc return value; always false here
+}
+
+// ET_MONSTER subset of Entity::died (src/Entity.cpp:459-521).
+void Game::diedMonster(Entity* e, bool giveXP) {
+	if (e == nullptr || e->monster == nullptr || !e->isMonster() ||
+	    map_ == nullptr || defs_ == nullptr) return;
+	EntityMonster* m = e->monster;
+	const int sprite = e->getSprite();
+	if (sprite < 0 || sprite >= map_->numSprites) return;
+	if (!(e->info & Entity::kInfoActive)) return;              // :431 guard
+	e->info &= ~Entity::kInfoActive;                           // :434
+	e->info |= Entity::kInfoActivated;                         // :460
+	m->resetGoal();                                            // :461
+	// Snap script lerps of this sprite (corpsifyMonster pattern,
+	// src/Game.cpp:620-631) so a running lerp can't fight the death pose.
+	for (SpriteLerp& ls : spriteLerps_) {
+		if (ls.hSprite != sprite + 1) continue;
+		ls.startTime = 0;
+		ls.travelTime = 0;
+		updateLerpSprite(&ls);
+	}
+	int info = map_->mapSpriteInfo[sprite];
+	info = (info & 0xFFFF00FF) | 0x7000;                       // :463 death-frame overlay
+	m->frameTime = lerpClock_;                                 // :464
+	if ((map_->mapSpriteInfo[sprite] & 0x10000) != 0) {        // :465-471 hidden branch
+		info |= 0x17000;
+	} else {
+		e->info |= Entity::kInfoCorpse | Entity::kInfoActive;  // :469 (0x1020000); trimCorpsePile skipped
+	}
+	map_->mapSpriteInfo[sprite] = info;
+	// monsterEffects re-stamp (:472-484) and Lost Soul/Cacodemon poof
+	// (:491-495): deferred (absent on the map00 route).
+	deactivate(e);                                             // :485
+	if (giveXP) awardKillXP(*m);                               // :496 (+ :407-413)
+	const EntityDef* corpseDef =
+		defs_->find(Enums::ET_CORPSE, e->def ? e->def->eSubType : 0,
+		            e->def ? e->def->parm : -1);                    // :501 def swap
+	if (corpseDef != nullptr) e->def = corpseDef;
+	facingDirty = true;                        // :527 canvas updateFacingEntity analog
+	std::fprintf(stderr, "[monster] died sprite=%d xpGiven=%d\n", sprite, giveXP ? 1 : 0);
+}
+
+// checkMonsterDeath(b=true) XP half (src/Entity.cpp:407-413) plus the msg-103
+// composition split out of Player::addXP (spec deviation 14).
+void Game::awardKillXP(const EntityMonster& m) {
+	if (xpPlayer_ == nullptr) return;
+	int xp = m.ce.calcXP();                    // :408
+	// boss +130 (:409-411): unreachable while no boss is killable.
+	if (xpLoc_ != nullptr && xpHud_ != nullptr) {
+		std::string msg = xpLoc_->get(kTextMain, 103);
+		std::string args[1] = { std::to_string(xp) };
+		composeArgs(msg, args, 1);
+		xpHud_->showCenterMessage(msg, 0xAA000000, 3500);
+	}
+	xpPlayer_->addXP(xp);                      // :412
+}
+
 // %NN arg substitution, decode rules of Localization composeText
-// (src/Text.cpp:281-326; DialogSystem.cpp:85-115 in the rewrite).
-static void composeArgs(std::string& text, const std::string* args, int numArgs) {
+// (src/Text.cpp:281-326; DialogSystem.cpp:85-115 in the rewrite). Declared
+// in Game.h — Combat.cpp reuses it for the combat message feed.
+void composeArgs(std::string& text, const std::string* args, int numArgs) {
 	std::string out;
 	for (size_t i = 0; i < text.size(); ++i) {
 		char c = text[i];
@@ -1243,6 +1526,27 @@ void Game::update(int dtMs) {
 		a.t += dtMs;
 	}
 	updateDoors();
+
+	// Pain/dodge pose auto-revert (legacy render-side src/Render.cpp:1600-1604,
+	// moved into the simulation per spec deviation D-6): anim bytes 96/144
+	// fall back to IDLE once the monster's frameTime hold expired. Same
+	// guards as the walk writer: hidden sprites skipped, knockback-flagged
+	// monsters keep their pose (:1600).
+	if (map_ == nullptr) return;
+	for (Entity& ent : entities_) {
+		if (ent.monster == nullptr || ent.def == nullptr) continue;
+		const int s = ent.getSprite();
+		if (s < 0 || s >= map_->numSprites) continue;
+		const int info = map_->mapSpriteInfo[s];
+		if ((info & Enums::SPRITE_FLAG_HIDDEN) != 0) continue;
+		const int anim = (info >> 8) & Enums::MANIM_MASK;
+		if ((anim == Enums::MANIM_PAIN || anim == Enums::MANIM_DODGE) &&
+		    (ent.monster->flags & Enums::MFLAG_KNOCKBACK) == 0 &&
+		    lerpClock_ > ent.monster->frameTime) {
+			map_->mapSpriteInfo[s] = info & 0xFFFF00FF;   // back to IDLE (:1601-1602)
+			ent.monster->frameTime = 0;
+		}
+	}
 }
 
 } // namespace newcore
