@@ -411,3 +411,47 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
   (getNodeForPoint DOES return internal nodes); sprite-placement.md §6
   severity updated. Report + coder checklist:
   docs/research/2026-08-26-walk-flicker.md.
+
+## 2026-08-26 — Stage-1 combat package: fire pipeline, turn structure, monster loop
+
+- Read-only research for the combat port. Full report:
+  docs/research/2026-08-26-combat-stage1.md; new curated sections 5 (fire
+  pipeline & damage math) and 6 (turn structure) appended to
+  docs/original-code/combat.md.
+- Key extractions (all cited there): advanceTurn flow + Error-95 snap
+  invariant + monstersTurn window (src/Game.cpp:1238-1281,2458-2474);
+  ACTION_FIRE target-election ray vs damage math split
+  (src/PlayingInputHandler.cpp:189-378); exact calcHit/calcDamage formulas
+  incl. Chebyshev tileDistances, weakness nibble table, miss-streak caps
+  (src/CombatEntity.cpp:157-378); hitscan pain-in-stage-0 / death-in-stage-1
+  sequencing (src/Combat.cpp:1572-1576,1421-1430,382-386); monster wake
+  funnels + goal machine + combatMonsters queue (outline only).
+- tables.bin values dumped directly (tools run in temp dir): weapon rows,
+  monsterStats rows (imp(3,0)=50hp), weakness nibbles — recorded in report §2.4.
+- Rewrite audit: all combat tables already parsed; monsters spawn as entities
+  but Entity::monster is never allocated; no Combat state/fire path; ScriptVM
+  ops 10/51/56 still kill threads (default case). EXISTS/MISSING table in §5.
+- Recommended Stage-1 slice defined (view weapon quad → fire input → calcHit/
+  calcDamage → EntityMonster alloc → pain/died → health-bar feed → VM ops
+  10/51/56/84) with deferral rationale.
+
+## 2026-08-26 — cinematic jerk root cause: first ADV_CAMERAKEY skips key 0 (research)
+
+- User report: hard camera jerk exiting the elevator + "animations feel
+  accelerated". Verdict CONFIRMED, single primary cause: legacy setupCamera
+  starts activeCameraKey = -1 (src/ScriptThread.cpp:188) and the script's
+  FIRST EV_ADV_CAMERAKEY lands on key 0 with a fresh clock
+  (src/ScriptThread.cpp:695, src/MayaCamera.cpp:36-44); the rewrite starts
+  at activeCameraKey_ = 0 (GameContext.cpp:583) and advanceCameraKey
+  unconditionally nextKeys -> plays keys[1..].
+- Consequences at the elevator exit: cam7 plays 1500/2750 ms and opens with a
+  hard cut to key1 yaw instead of gliding from the -2 player-inherit sentinel;
+  cam10 (ev[56], tile (10,19) ENTER) has ms=0 last key + last-key branch ->
+  completes same-tick, doorway cutaway never renders; boot cams lose openers
+  (cam5 -1999 ms, cam0 -999 ms). Clock-rate divergence REFUTED (our clocks only
+  ever freeze more than legacy). Secondary: missing Snap-tail pitch reset +
+  startRotation(true) analog in finishCinematic; shake envelope linear decay
+  vs legacy flat-until-deadline.
+- Deliverables: docs/research/2026-08-26-cinematic-jerk.md (+ probe script);
+  curated op-18/lifecycle facts merged into docs/original-code/cutscenes-camera.md.
+  Journal entry by orchestrator (researcher lacked journal perms).
