@@ -103,9 +103,10 @@ public:
 	// completions (src/ScriptThread.cpp:690-702, src/MayaCamera.cpp:359-370).
 	void advanceCameraKey(ScriptThread* t, int resumeCount);
 
-	// Camera activity probe for the VM's ADV_CAMERAKEY state gate
-	// (isCameraActive analog, src/Game.cpp:3297-3299).
-	bool cameraActive() const { return activeCameraKey_ >= 0; }
+	// Camera activity probe ("cinematic bound"): true whenever the maya view
+	// is armed or playing, regardless of key index — the isCameraActive
+	// analog (src/Game.cpp:3297-3299). "Started" = activeCameraKey_ >= 0.
+	bool cameraActive() const { return cameraView_ && cameraCamIdx_ >= 0; }
 
 	// Script-driven movement handshake storage (cutscenes-camera.md §4):
 	// animated GOTO/TURN_PLAYER parks its thread in gotoThread_ and
@@ -174,11 +175,18 @@ private:
 	int64_t deathTimeMs_ = 0;
 	std::vector<Action> pendingActions_;
 
-	// Cinematic camera runtime (cutscenes-camera.md §1-§3).
-	// activeCameraKey_ doubles as the activity flag: -1 = no cinematic.
+	// Cinematic camera runtime (cutscenes-camera.md §1-§3). Two-field model
+	// restored from legacy (spec 2026-08-26-camera-key0 §1): cameraView_
+	// binds the maya view (legacy activeCameraView, src/ScriptThread.cpp:186;
+	// cleared by the Snap tail, src/MayaCamera.cpp:379), while
+	// activeCameraKey_ keeps its pure legacy meaning. Phases: idle
+	// (false/-1) -> armed post-STARTCINEMATIC (true/-1; static key-0 pose
+	// renders, boundary engine off) -> playing (true/>=0) -> finished or
+	// skipped (false/-1).
 	MayaCamera maya_;
 	int cameraCamIdx_ = -1;
-	int activeCameraKey_ = -1;
+	bool cameraView_ = false;           // legacy activeCameraView (src/ScriptThread.cpp:186)
+	int activeCameraKey_ = -1;          // -1 = bound-not-started (src/ScriptThread.cpp:188)
 	int64_t cameraStartTime_ = 0;      // legacy activeCameraTime (src/Canvas.cpp:1092)
 	int64_t cinUnpauseTime_ = 0;       // skip soft-key gate (src/ScriptThread.cpp:227-228)
 	bool skipCinematic_ = false;

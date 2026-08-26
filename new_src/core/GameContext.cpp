@@ -42,7 +42,7 @@ void GameContext::setState(StateId s) {
 	// priority. dialogPrevState_ latches the pre-dialog state at entry.
 	if (s == StateId::Playing && state == StateId::Dialog) {
 		if (dialogPrevState_ == StateId::InterCamera) s = StateId::InterCamera;
-		else if (activeCameraKey_ >= 0) s = StateId::Camera;
+		else if (cameraActive()) s = StateId::Camera;
 	}
 	stateChanged = true;                                   // src/Canvas.cpp:1024
 	for (int& v : stateVars) v = 0;                        // sub-state timelines rebuilt per entry (:1024-1026)
@@ -196,7 +196,7 @@ void GameContext::tick() {
 		// against the last rendered view — maya pose during a cinematic key,
 		// else the player view angle (same two sources render() uses,
 		// GameContext.cpp:724-769; legacy read app->render->viewAngle).
-		sys_.game->setLerpViewAngle(activeCameraKey_ >= 0
+		sys_.game->setLerpViewAngle(cameraActive()
 		                                ? maya_.pose().yaw
 		                                : sys_.player->viewAngle);
 		sys_.game->update(kTickMs);
@@ -342,7 +342,7 @@ void GameContext::tickPlaying() {
 	// driving the active camera whenever isCameraActive() regardless of the
 	// canvas state (src/MovementController.cpp:518-520) — e.g. a staticFunc
 	// STARTCINEMATIC that boot's ST_PLAYING transition overwrites.
-	if (activeCameraKey_ >= 0) tickCinematicClock();
+	if (cameraActive()) tickCinematicClock();
 	// 7. camera pull-back + scene draw happen in render().
 	// HUD message timers tick with the playing state (legacy hud->update,
 	// src/Hud.cpp:1365-1378 analog).
@@ -368,13 +368,13 @@ void GameContext::tickPlaying() {
 		bool idle = sys_.player->viewX == sys_.player->destX &&
 		            sys_.player->viewY == sys_.player->destY &&
 		            sys_.player->viewAngle == sys_.player->destAngle;
-		if (stepsLeft > 0 && idle && activeCameraKey_ < 0 && !inputBlocked() &&
+		if (stepsLeft > 0 && idle && !cameraActive() && !inputBlocked() &&
 		    --cooldown <= 0) {
 			--stepsLeft;
 			cooldown = 40; // ~600 ms between steps
 			std::fprintf(stderr, "[dbg] autotest queue Forward (%d left)\n", stepsLeft);
 			pendingActions_.push_back(Action::Forward);
-		} else if (usesLeft > 0 && activeCameraKey_ < 0 && !inputBlocked() &&
+		} else if (usesLeft > 0 && !cameraActive() && !inputBlocked() &&
 		           --cooldown <= 0) {
 			--usesLeft;
 			cooldown = 200; // ~3 s between uses
@@ -571,20 +571,26 @@ void GameContext::drawLootingMenu(Graphics2D& g) {
 void GameContext::startCinematic(int camIdx) {
 	Player& p = *sys_.player;
 	MayaPose pose;                     // map units; <<4 applied post-inherit
-	pose.x = p.viewX;
-	pose.y = p.viewY;
-	pose.z = p.viewZ;
-	pose.yaw = p.viewAngle & 0x3FF;    // viewPitch/viewRoll have no rewrite counterpart yet
+	// Dest-field capture like legacy setupCamera (src/ScriptThread.cpp:192-
+	// 196): equal to the view fields in every current flow (triggers fire
+	// from finishMovement after arrival) but faithful to a mid-walk start.
+	pose.x = p.destX;
+	pose.y = p.destY;
+	pose.z = p.destZ;
+	pose.yaw = p.destAngle & 0x3FF;    // viewPitch has no cinematic counterpart yet
 	if (!maya_.setup(*sys_.map, camIdx, pose)) {
 		std::fprintf(stderr, "[camera] bad camIdx %d\n", camIdx);
 		return;
 	}
 	cameraCamIdx_ = camIdx;
-	activeCameraKey_ = 0;
+	cameraView_ = true;                // legacy activeCameraView (src/ScriptThread.cpp:186)
+	activeCameraKey_ = -1;             // bound-not-started; first ADV_CAMERAKEY NextKeys onto key 0
 	cameraStartTime_ = gameTime;       // legacy activeCameraTime (src/Canvas.cpp:1092)
 	cinUnpauseTime_ = gameTime + 1000; // skip lockout (src/ScriptThread.cpp:227-228)
 	skipCinematic_ = false;
-	setState(StateId::Camera);         // src/ScriptThread.cpp:400-411
+	// State guard like legacy (:406-408): a chained STARTCINEMATIC must not
+	// re-clear subtitles/pending input via the enter hook.
+	if (state != StateId::Camera) setState(StateId::Camera);
 }
 
 void GameContext::nextKey() {
@@ -597,6 +603,10 @@ void GameContext::nextKey() {
 	// mid-dispatch (its IP still on the argument byte), desyncing the VM.
 	cameraStartTime_ = gameTime;
 	++activeCameraKey_;
+	// TEMP [cam] key0 acceptance probe (spec 2026-08-26-camera-key0 §3 edit 6;
+	// remove once accepted).
+	std::fprintf(stderr, "[cam] nextKey idx=%d elapsed=%ld\n",
+		activeCameraKey_, (long)(gameTime - cameraStartTime_));
 }
 
 void GameContext::advanceCameraKey(ScriptThread* t, int resumeCount) {
@@ -642,7 +652,10 @@ void GameContext::tickCamera() {
 }
 
 void GameContext::tickCinematicClock() {
-	if (activeCameraKey_ < 0 || cameraCamIdx_ < 0 ||
+	// Armed window (cameraView_ && key -1) runs no boundary engine and never
+	// auto-completes — legacy Update is skipped while activeCameraKey == -1
+	// (src/Canvas.cpp:949-952).
+	if (!cameraView_ || activeCameraKey_ < 0 || cameraCamIdx_ < 0 ||
 	    cameraCamIdx_ >= (int)sys_.map->mayaCameras.size()) return;
 	const MapData::MayaCamera& cam = sys_.map->mayaCameras[cameraCamIdx_];
 
@@ -719,9 +732,16 @@ void GameContext::finishCinematic() {
 	const MapData::MayaCamera& cam = sys_.map->mayaCameras[cameraCamIdx_];
 	maya_.snap(cam.numKeys - 1);   // hold the final-key pose
 	activeCameraKey_ = -1;
+	cameraView_ = false;           // Snap tail clears the flag (src/MayaCamera.cpp:379)
 	// Snap tail: ST_CAMERA -> ST_PLAYING, never a pre-camera restore
 	// (src/MayaCamera.cpp:380-384).
 	if (state == StateId::Camera) setState(StateId::Playing);
+	// Snap-tail view reset (src/MayaCamera.cpp:396-397). Guarded: an
+	// unsettled angle means a scripted rotation is in flight and arrival
+	// handling owns the refresh.
+	sys_.player->viewPitch = 0;                 // viewPitch = destPitch = 0 (:396)
+	if (sys_.player->viewAngle == sys_.player->destAngle)
+		sys_.player->startRotation();           // startRotation(true) step-vector refresh (:397)
 	flushParkedThreads(false);     // single run() per thread, like Snap's resume (:390-394)
 }
 
@@ -733,6 +753,7 @@ void GameContext::skipCinematicNow() {
 	const MapData::MayaCamera& cam = sys_.map->mayaCameras[cameraCamIdx_];
 	maya_.snap(cam.numKeys - 1);   // Snap the remaining keys' end pose
 	activeCameraKey_ = -1;
+	cameraView_ = false;           // skip force-ends the view (src/Game.cpp:2507-2544)
 	if (state == StateId::Camera) setState(StateId::Playing);   // Snap tail (:380-384)
 	flushParkedThreads(true);
 }
@@ -926,7 +947,7 @@ void GameContext::render(AppContext& app) {
 
 	// Camera from the player view + render pull-back (src/Render.cpp:2279-
 	// 2282; magnitude <= 2.5 map units). Gameplay keeps using player view coords.
-	if (activeCameraKey_ >= 0 && cameraCamIdx_ >= 0 &&
+	if (cameraActive() && cameraCamIdx_ >= 0 &&
 	    cameraCamIdx_ < (int)sys_.map->mayaCameras.size()) {
 		// Cinematic takeover (legacy MayaCamera::Render, src/MayaCamera.cpp:
 		// 302-310): the maya pose IS the view; FOV 315 (290 under a dialog).
@@ -939,7 +960,11 @@ void GameContext::render(AppContext& app) {
 		// current key at display rate. Past a key's duration the pose HOLDS
 		// (no update) exactly like the tick path.
 		int64_t camElapsed = gameTime - cameraStartTime_;
-		if (activeCameraKey_ < (int)sys_.map->mayaCameras[cameraCamIdx_].numKeys &&
+		// Armed window must NOT resample: key -1 has no duration channel and
+		// would overwrite the setup pose legacy renders statically
+		// (src/Canvas.cpp:950 skips Update at -1).
+		if (activeCameraKey_ >= 0 &&
+		    activeCameraKey_ < (int)sys_.map->mayaCameras[cameraCamIdx_].numKeys &&
 		    camElapsed < cameraKeyDuration(activeCameraKey_))
 			maya_.update(activeCameraKey_, (int)camElapsed);
 		const MayaPose& mp = maya_.pose();
