@@ -144,6 +144,7 @@ private:
 
 	bool inputBlocked() const;
 	void handlePlayingAction(Action a);
+	void updateFacingProbe();            // health-bar feed probe (src/MovementController.cpp:28-93 subset)
 	void handleLootingAction(Action a);  // src/LoothingSystem.cpp:85-117
 	void closeLootSession();             // grant + stand-up restart (:89-103)
 	void drawLootingMenu(Graphics2D& g); // src/LoothingSystem.cpp:121-150

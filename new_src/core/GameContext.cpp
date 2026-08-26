@@ -66,6 +66,7 @@ void GameContext::enterState_(StateId s) {
 		// (src/Canvas.cpp:1101-1106 analog).
 		pendingActions_.clear();
 		lastTurnTime_ = upTimeMs;
+		sys_.game->facingDirty = true;         // ST_PLAYING entry latch (src/Canvas.cpp:1075)
 		break;
 	case StateId::InterCamera:
 		break; // no entry side effects (no dedicated ST_INTER_CAMERA handler exists)
@@ -329,6 +330,14 @@ void GameContext::tickPlaying() {
 	} else {
 		sys_.game->updateMonsters();              // Stage-1 stub (spec §0.B)
 	}
+	// 4.5 Facing probe for the health-bar feed (spec §0.F): one one-tile
+	//     trace per dirty latch (legacy ran it from the HUD top bar,
+	//     src/Hud.cpp:737-739, clearing the latch in updateView's tail,
+	//     src/MovementController.cpp:157).
+	if (sys_.game->facingDirty) {
+		sys_.game->facingDirty = false;
+		updateFacingProbe();
+	}
 	// 5. door/sprite lerps tick in the globals section (legacy updateLerpSprites
 	//    here, src/GameStateRunner.cpp:184), still BEFORE updateView (:185).
 	// Help-popup dequeue while playing & monsters idle
@@ -368,16 +377,20 @@ void GameContext::tickPlaying() {
 	// fixed): D2R_AUTOTEST=N queues N Forward steps while fully idle and
 	// unblocked, so tile-event arrival can be verified headlessly;
 	// D2R_AUTOUSE=N likewise queues N Use presses afterwards;
+	// D2R_AUTOPASS=N queues N Passturn presses (fire-path acceptance);
 	// D2R_AUTOKEYS=1 grants the debug keycards first.
 	{
 		static int stepsLeft = -1;
 		static int usesLeft = -1;
+		static int passesLeft = -1;
 		static int cooldown = 0;
 		if (stepsLeft < 0) {
 			const char* env = std::getenv("D2R_AUTOTEST");
 			stepsLeft = env != nullptr ? std::atoi(env) : 0;
 			env = std::getenv("D2R_AUTOUSE");
 			usesLeft = env != nullptr ? std::atoi(env) : 0;
+			env = std::getenv("D2R_AUTOPASS");
+			passesLeft = env != nullptr ? std::atoi(env) : 0;
 			env = std::getenv("D2R_AUTOKEYS");
 			if (env != nullptr && std::atoi(env) != 0) debugGiveKeycards();
 		}
@@ -396,6 +409,12 @@ void GameContext::tickPlaying() {
 			cooldown = 200; // ~3 s between uses
 			std::fprintf(stderr, "[dbg] autotest queue Use (%d left)\n", usesLeft);
 			pendingActions_.push_back(Action::Use);
+		} else if (passesLeft > 0 && idle && !cameraActive() && !inputBlocked() &&
+		           --cooldown <= 0) {
+			--passesLeft;
+			cooldown = 100; // ~1.5 s between passes
+			std::fprintf(stderr, "[dbg] autotest queue Passturn (%d left)\n", passesLeft);
+			pendingActions_.push_back(Action::Passturn);
 		}
 	}
 }
@@ -434,6 +453,7 @@ void GameContext::finishRotationFired() {
 	// (src/MovementController.cpp:284-310, :307). Safe to snap here: input is
 	// gated on full idle, so a turn never overlaps a move in the subset.
 	sys_.player->finishRotation();
+	sys_.game->facingDirty = true;             // rotation arrival re-probe (src/MovementController.cpp:304-308)
 	// Same handshake as finishMovement: the rotation was the last leg of a
 	// scripted GOTO/TURN_PLAYER (src/MovementController.cpp:298-302).
 	if (gotoThread_ != nullptr &&
@@ -891,21 +911,165 @@ void GameContext::handlePlayingAction(Action a) {
 		int tx = (p.destX + p.viewStepX) >> 6;
 		int ty = (p.destY + p.viewStepY) >> 6;
 		int ran = sys_.vm->executeTile(tx, ty, mask, true);
+		bool consumed = false;
 		if (ran != 0) {
+			consumed = true;                           // script ran -> legacy return true (:395-404)
 			if (!sys_.game->skipAdvanceTurn) sys_.game->advanceTurn();
 		} else {
 			Game::DoorUseResult dr = sys_.game->useDoorFacing(*sys_.map, p.viewX, p.viewY, p.viewStepX, p.viewStepY);
 			if (dr == Game::DoorUseResult::Opened) {
 				sys_.game->advanceTurn();                  // opened doors consume the turn (:451-452)
+				consumed = true;
 			} else if (dr == Game::DoorUseResult::Locked) {
 				std::fprintf(stderr, "[use] door locked\n"); // hud->addMessage(44) analog (:447-449)
+				consumed = true;                       // legacy door branch return true consumes the press (:445-457)
+			}
+		}
+		if (consumed) break;   // fire election only when nothing consumed the press
+		// ---- fire (legacy probe src/PlayingInputHandler.cpp:189-548) ----
+		// Order preserved: loot -> tile event -> door -> fire; reached ONLY
+		// when nothing above consumed the press (legacy return-true chain).
+		// Election ray:
+		// DEVIATION (research open question 1) — legacy probes ~6 units along
+		// the TinyGL view-matrix rows (:218-221); we sweep ONE TILE along the
+		// discrete view step with mask CONTENTS_WEAPONSOLID (13997), radius 2,
+		// skipping the player. Behavior-equivalent for adjacent-target
+		// election; stacked candidates may differ (spec deviation 1).
+		// Holy-water pistol extra bits (:206 n5 |= 0x4100) and the chainsaw
+		// shrink (:210-213 n7=1, |= 0x10) are dead on the map00 route.
+		const int weapon2 = p.ce.weapon;   // legacy reads ce->weapon (:197)
+		if (weapon2 >= 0 && !sys_.game->combat.active) {
+			const int endX = p.viewX + p.viewStepX;
+			const int endY = p.viewY + p.viewStepY;
+			Entity* hit = nullptr;
+			int frac = 16384;
+			sys_.game->traceMove(*sys_.map, p.viewX, p.viewY, endX, endY,
+				sys_.game->playerEntity(), Enums::CONTENTS_WEAPONSOLID, 2,
+				&hit, &frac);
+			const int dist2 = (hit != nullptr)
+				? sys_.game->entityDistFrom(hit, p.viewX, p.viewY) : 0;
+			// Classify the closest hit per the legacy candidate scan
+			// (:224-368 reduced to the single-hit ray). Corpses (eType 9)
+			// reach the ray via WEAPONSOLID bit 9 but only elected a loot
+			// session in legacy — already preempted above; barrels (10),
+			// decor etc. fall through to the air-shot tail like legacy's
+			// unhandled types (:361-364).
+			enum Outcome { kAirShot, kElected, kWallPush };
+			Outcome outcome = kAirShot;
+			const int hitType =
+				(hit != nullptr && hit->def != nullptr) ? hit->def->eType : -1;
+			if (hitType == Enums::ET_MONSTER) {                            // :264-269
+				outcome = kElected;
+			} else if (hitType == Enums::ET_NPC && dist2 >= 8192) {        // :253-262
+				outcome = kElected;
+			} else if ((hitType == Enums::ET_WORLD || hitType == Enums::ET_SPRITEWALL) &&
+			           dist2 <= sys_.game->combat.tileDistances[0]) {      // :229-235 + :467 gate
+				outcome = kWallPush;
+			}
+			// TEMP [dbg] election-ray audit (remove after fire-path acceptance)
+			std::fprintf(stderr, "[fire] election spr=%d type=%d frac=%d dist2=%d -> %s\n",
+				hit ? hit->getSprite() : -1, hitType, frac, dist2,
+				outcome == kElected ? "elect" :
+				outcome == kWallPush ? "wallpush" : "air");
+			if (outcome == kWallPush) {
+				// Within 1 tile of a wall: legacy shiftWeapon(true)+rockView
+				// and NO turn consumed (:467-487). The lower/raise lerp system
+				// is absent -> log only.
+				std::fprintf(stderr, "[combat] wall push (shiftWeapon/rockView deferred)\n");
+			} else {
+				// Zoom entry (mask 512 -> initZoom): consumes the input like
+				// legacy (:504-507); deferred here, log once.
+				static bool zoomLogged = false;
+				if (((1 << weapon2) & 512) != 0 && !zoomLogged) {
+					zoomLogged = true;
+					std::fprintf(stderr, "[combat] zoom-entry weapons deferred (initZoom)\n");
+					break;
+				}
+				// Air/world shots target the WORLD slot at the player position;
+				// elected targets pass their sprite coords (legacy passes
+				// calcPosition/traceCollision coords, :509-536).
+				Entity* target = outcome == kElected ? hit : sys_.game->worldEntity();
+				int ax = p.viewX, ay = p.viewY;
+				if (outcome == kElected) {
+					const int s = target->getSprite();
+					if (s >= 0) {
+						ax = sys_.map->mapSprites[s];
+						ay = sys_.map->mapSprites[sys_.map->numSprites + s];
+					}
+				}
+				p.fireWeapon(sys_.game->combat, target, ax, ay);
+				// NO advanceTurn here — the seq completion in tickPlaying
+				// consumes the turn (spec §0.C).
 			}
 		}
 		break;
 	}
+	case Action::Passturn:
+		// src/PlayingInputHandler.cpp:550-555: msg 45 (+ touchTile stub) +
+		// advanceTurn. showCenterMessage is the rewrite's message-log stand-in.
+		if (sys_.loc != nullptr && sys_.hud != nullptr) {
+			std::string pass = sys_.loc->get(kTextMain, 45);
+			// TEMP [dbg] passturn audit (remove with the fire-path acceptance)
+			std::fprintf(stderr, "[turn] passturn msg45=\"%s\"\n", pass.c_str());
+			sys_.hud->showCenterMessage(pass, 0xAA000000, 3500);
+		}
+		sys_.game->advanceTurn();
+		break;
 	default:
 		break;
 	}
+}
+
+// Facing probe feeding the future health-bar readout (spec §0.F; subset of
+// src/MovementController.cpp:28-93). One swept tile from dest along the
+// discrete view step — DEVIATION: legacy rays along the TinyGL view-matrix
+// rows (:38-40). Mask 21741 = CONTENTS_WEAPONSOLID minus corpse(512)/
+// nonobstructing-spritewall(8192) plus item(64)/decor_noclip(16384),
+// radius 2.
+void GameContext::updateFacingProbe() {
+	Player& p = *sys_.player;
+	constexpr int kFacingMask = 21741;         // src/MovementController.cpp:38 decomposed
+	const int endX = p.destX + p.viewStepX;
+	const int endY = p.destY + p.viewStepY;
+	Entity* hit = nullptr;
+	sys_.game->traceMove(*sys_.map, p.destX, p.destY, endX, endY,
+		sys_.game->playerEntity(), kFacingMask, 2, &hit, nullptr);
+	// Monster-preference rescan over the sorted hit list (:43-86 subset): a
+	// monster further along the ray replaces a closer item/spritewall-family
+	// hit; hard blockers stop the scan. The spritewall mapFlags gate and the
+	// decor/type-10 promotions (:61-81) feed showHelp only — absent Stage 1.
+	if (hit != nullptr && hit->def != nullptr) {
+		const int t0 = hit->def->eType;
+		if (t0 == Enums::ET_ITEM || t0 == Enums::ET_MONSTERBLOCK_ITEM ||
+		    t0 == Enums::ET_SPRITEWALL || t0 == Enums::ET_ATTACK_INTERACTIVE ||
+		    t0 == Enums::ET_DECOR_NOCLIP) {
+			for (const auto& h : sys_.game->lastTraceHits()) {
+				Entity* ent = h.second;
+				if (ent == nullptr || ent->def == nullptr || ent == hit) continue;
+				const int et = ent->def->eType;
+				if (et == Enums::ET_MONSTER) {                         // :47-51
+					if (t0 != Enums::ET_SPRITEWALL) hit = ent;
+					break;
+				}
+				if (et == Enums::ET_DOOR || et == Enums::ET_PLAYERCLIP ||
+				    et == Enums::ET_WORLD) break;                      // :55-60
+			}
+		}
+	}
+	p.facingEntity = hit;
+	if (p.facingEntity != nullptr && p.facingEntity->def != nullptr) {
+		// Distance gates (:88-93): non-monsters beyond Chebyshev^2 36864
+		// drop; monsters always kept. showHelp branches absent.
+		const int dist = sys_.game->entityDistFrom(p.facingEntity, p.viewX, p.viewY);
+		if (p.facingEntity->def->eType != Enums::ET_MONSTER &&
+		    dist > sys_.game->combat.tileDistances[2]) {
+			p.facingEntity = nullptr;
+		}
+	}
+	// TEMP [dbg] probe audit (remove with the Group-3 feed acceptance)
+	std::fprintf(stderr, "[face] probe spr=%d type=%d\n",
+		p.facingEntity ? p.facingEntity->getSprite() : -1,
+		(p.facingEntity && p.facingEntity->def) ? p.facingEntity->def->eType : -1);
 }
 
 void GameContext::debugGiveKeycards() {

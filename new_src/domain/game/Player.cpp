@@ -91,6 +91,7 @@ void Player::reset() {
 	baseCe.setStat(Enums::STAT_HEALTH, 100);
 	ce.clone(baseCe);
 	weapon = -1;
+	ce.weapon = -1;                    // legacy single active-weapon field mirror
 	activeWeaponDef = nullptr;
 	weapons = 0;
 	for (auto& v : inventory) v = 0;
@@ -112,12 +113,18 @@ bool Player::give(int kind, int slot, int amount) {
 		int bit = 1 << (slot & 0xFF);
 		if (amount < 0) {
 			weapons &= ~bit;
-			if (slot == weapon) weapon = -1;
+			if (slot == weapon) {              // legacy has ONE active-weapon
+				weapon = -1;                   // field, player->ce->weapon; the
+				ce.weapon = -1;                // rewrite mirrors it in both
+			}
 			return true;
 		}
 		bool had = (weapons & bit) != 0;
 		weapons |= bit;
-		if (!had && weapon == -1) weapon = slot;
+		if (!had && weapon == -1) {
+			weapon = slot;                     // auto-equip keeps ce.weapon in
+			ce.weapon = slot;                  // lockstep (Combat.cpp:126 reads it)
+		}
 		return true;
 	}
 	case 0: { // inventory slot

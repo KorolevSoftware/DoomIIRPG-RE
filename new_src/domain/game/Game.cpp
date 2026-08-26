@@ -614,9 +614,14 @@ bool Game::traceMove(const MapData& map, int x0, int y0, int x1, int y1,
 	traceEntityHits(map, skipEnt, mask, radius);                                // :216-296
 	if (mask & 0x1) {                                                           // :297 ET_WORLD gate
 		const int wf = traceWorldFrac(map, mask, radius * radius);              // :298
-		if (wf < 16384) traceHits_.push_back({ wf, &entities_[0] });            // :299-301 (entities_[0] = world slot)
-		// World contact point traceCollisionX/Y/Z (src/Game.cpp:302-304):
-		// not ported — no consumer in the rewrite yet.
+		if (wf < 16384) {
+			traceHits_.push_back({ wf, &entities_[0] });                        // :299-301 (entities_[0] = world slot)
+			traceCollisionX_ = x0 + ((wf * (x1 - x0)) >> 14);                   // :302-304 contact point
+			traceCollisionY_ = y0 + ((wf * (y1 - y0)) >> 14);
+		} else {
+			traceCollisionX_ = x1;                                              // :306-308 a miss keeps the ray end
+			traceCollisionY_ = y1;
+		}
 	}
 	if (traceHits_.empty()) {                                                   // commit gate :332-333
 		if (outEntity) *outEntity = nullptr;
@@ -663,6 +668,7 @@ void Game::advanceTurn() {
 	// monstersTurn = 1 always. Player-side ticks (poison/infection/combat
 	// decay) deferred with citation src/Player.cpp:51-92.
 	monstersTurn = 1;                          // arm the monster phase (:1257-1264); Playing tick step disarms
+	facingDirty = true;                        // updateFacingEntity latch (src/Game.cpp:1269; no haste -> b always true)
 	advanceTurnDoors();                        // auto-close sweep (:1271-1278)
 	if (vm_) vm_->executeStaticFunc(Enums::SCR_PER_TURN); // PER_TURN hook (:1279)
 }
@@ -742,6 +748,7 @@ void Game::removeEntity(Entity* e) {
 	if ((e->info & Entity::kInfoLinked) != 0) {                        // :189-191
 		unlinkEntity(e);
 	}
+	if (xpPlayer_ != nullptr) xpPlayer_->facingEntity = nullptr;       // :192
 }
 
 // See Game.h. Adjacent-tile stand-in for the legacy one-tile trace distance
@@ -784,6 +791,13 @@ int Game::entityDistFrom(const Entity* e, int x, int y) const {
 	// Chebyshev^2 distFrom (src/Entity.cpp:1155-1158); position read from
 	// mapSprites exactly like traceEntityHits (S_X/S_Y, src/Game.cpp:244-247).
 	if (e == nullptr || map_ == nullptr) return 0;
+	if (e->def == nullptr || e->def->eType == Enums::ET_WORLD) {
+		// calcPosition's ET_WORLD branch reads the last trace's collision
+		// point (src/Entity.cpp:1375-1378); def == nullptr is the rewrite's
+		// world slot.
+		return std::max((x - traceCollisionX_) * (x - traceCollisionX_),
+		                (y - traceCollisionY_) * (y - traceCollisionY_));
+	}
 	const int sprite = e->getSprite();
 	const int ex = (sprite >= 0) ? map_->mapSprites[sprite + 0 * map_->numSprites] : 0;
 	const int ey = (sprite >= 0) ? map_->mapSprites[sprite + 1 * map_->numSprites] : 0;

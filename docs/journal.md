@@ -455,3 +455,52 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
 - Deliverables: docs/research/2026-08-26-cinematic-jerk.md (+ probe script);
   curated op-18/lifecycle facts merged into docs/original-code/cutscenes-camera.md.
   Journal entry by orchestrator (researcher lacked journal perms).
+
+## 2026-08-26 — combat stage 1 GROUP 1 (domain core) implemented
+
+- Files: NEW new_src/domain/game/EntityMonster.h (58), Combat.h (130),
+  Combat.cpp (391); EDIT CombatEntity.{h,cpp} (verbatim calcCombat/calcHit/
+  calcDamage trio, src/CombatEntity.cpp:130-378), Game.{h,cpp} (pool[80] +
+  active/inactive rings + activate/deactivate ports, painMonster/diedMonster/
+  awardKillXP, updateMonsters/endMonstersTurn/snapMonsters stubs, advanceTurn
+  Err-95 guard, pain auto-revert sweep in update()), Player.{h,cpp}
+  (disabledWeapons/facingEntity/xpGained, addXP/addLevel/calcLevelXP,
+  fireWeapon guard chain), ScriptVM.cpp (ops 10/19/28/51/56/60/84),
+  Main.cpp (combat.init(Env) wiring + std::srand seed), GameContext.cpp
+  (tickPlaying step-4 combat.tick/updateMonsters split, combat.active input
+  drop, tickLoading endMonstersTurn swap).
+- Gotcha: rewrite CombatEntity::clone(other) copies FROM the arg — the legacy
+  template.clone(dest) direction is reversed; first spawn run produced
+  hp=0/0 until the call was flipped.
+- Verify: build green (0 warnings); boot -> intro cinematic -> ST_PLAYING
+  (D2R_AUTOTEST=1 reaches autotest Forward queue); [monster] spawn hp=62/62
+  for imps (difficulty bump verified); op 19 DAMAGEMONSTER sprite=15 dmg=127
+  now goes pain->died->corpse; PER_TURN corpsify of imps 41/42 intact;
+  zero UNIMPLEMENTED/ERR_ lines on the boot route.
+
+## 2026-08-26 — combat stage 1 GROUP 2 (fire path + facing feed) implemented
+
+- Files: EDIT core/GameContext.{h,cpp} (Action::Use fire election after the
+  door branch — one swept tile, CONTENTS_WEAPONSOLID 13997 radius 2, closest-hit
+  classification monster-wins / NPC dist>=8192 / wall-push-log-no-turn / else
+  air-shot into Player::fireWeapon -> Combat::performAttack; Action::Passturn
+  msg45 + advanceTurn; facing probe updateFacingProbe() on the Game::facingDirty
+  latch with tickPlaying step 4.5; D2R_AUTOPASS=N TEMP driver knob),
+  domain/game/Game.{h,cpp} (lastTraceHits() accessor, worldEntity() air-shot
+  slot, traceMove world contact-point capture = legacy traceCollisionX/Y,
+  entityDistFrom ET_WORLD/def==nullptr resolves through it per calcPosition's
+  ET_WORLD branch src/Entity.cpp:1375-1378, advanceTurn sets facingDirty per
+  src/Game.cpp:1269, removeEntity clears player->facingEntity per src/
+  Game.cpp:192), domain/game/Player.cpp (auto-equip now syncs ce.weapon —
+  G1 gap surfaced by the fire path: give() set only the rewrite-era mirror).
+- Pre-landed in G1 (no-op here): difficulty-order fix (vars[12]=2 before
+  loadEntities, GameContext.cpp:250-253), diedMonster facingDirty latch.
+- Deviations kept from spec §9: single-closest-hit election (stacked candidates
+  differ), probe rescan subset skips the spritewall mapFlags gate + showHelp
+  promotions, zoom-entry/initZoom logged once and consumes the input.
+- Verify: build green; headless D2R_AUTOTEST=0 D2R_AUTOUSE=4 D2R_AUTODIALOG=1:
+  after EVT 617 each Use prints [fire] election ... -> air + [combat]
+  performAttack sprite=-1 type=0 dist=4096 tileDist=1 shots=2 + fire sound 1014;
+  D2R_AUTOPASS=1 prints [turn] passturn msg45="Turn Passed"; [face] probe lines
+  re-fire on Playing entry / advanceTurn / rotation arrival (spr=19 type=3 NPC
+  tracked at spawn); doors/walk/loot flows unchanged; zero UNIMPLEMENTED.

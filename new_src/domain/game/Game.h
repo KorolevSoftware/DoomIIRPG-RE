@@ -120,6 +120,17 @@ public:
 
 	const std::vector<Entity>& entities() const { return entities_; }
 
+	// Air-shot/world-slot entity (legacy app->game->entities[0],
+	// src/PlayingInputHandler.cpp:515,:536): def == nullptr so combat math
+	// reads it as eType 0 (spec 2026-08-26-combat-stage1 deviation 13).
+	Entity* worldEntity() { return entities_.empty() ? nullptr : &entities_[0]; }
+
+	// Sorted (frac asc) hit list of the most recent traceMove — the legacy
+	// traceEntities/traceFracs pair (src/Game.cpp:312-326). Consumed by the
+	// facing probe's monster-preference rescan
+	// (src/MovementController.cpp:43-86 subset).
+	const std::vector<std::pair<int, Entity*>>& lastTraceHits() const { return traceHits_; }
+
 	// Open/close a door entity (n=0 open, n=1 close). n2 is the legacy snap
 	// selector (src/Game.cpp:1153-1155): 0 = finish the animation instantly,
 	// 1 = animate fully, 2 = snap only when offscreen (turn auto-close passes
@@ -350,6 +361,11 @@ private:
 	int tracePoints_[4] = { 0, 0, 0, 0 };              // x0,y0,x1,y1 (src/Game.cpp:208-211)
 	int traceBBox_[4]   = { 0, 0, 0, 0 };              // clamped bbox (src/Game.cpp:212-215)
 	std::vector<std::pair<int, Entity*>> traceHits_;   // (frac 14.14, entity)
+	// World contact point of the last traceMove (legacy Game::
+	// traceCollisionX/Y fields, src/Game.cpp:302-310): lerp at the hit frac,
+	// else the ray end. ET_WORLD distance queries resolve through it
+	// (Entity::calcPosition src/Entity.cpp:1375-1378 analog).
+	int traceCollisionX_ = 0, traceCollisionY_ = 0;
 
 	void traceEntityHits(const MapData& map, Entity* skipEnt, int mask, int radius); // src/Game.cpp:216-296
 	int  traceWorldFrac(const MapData& map, int mask, int radius2);                  // src/Render.cpp:1212-1283 (flat)
