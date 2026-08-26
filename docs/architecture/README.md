@@ -19,7 +19,9 @@ Namespace for everything: `newcore`._
 |---|---|
 | `Entity.h` | World entity record: `EntityDef*`, monster ptr, tile linked-list ptrs, packed sprite index in `info` low bits (:39-40), flag bits (:22-26). |
 | `Enums.h` | Legacy constants: entity types (:10-25), trace masks (:28-37), stat slots (:40-48), doors (:51-56), sprite flags (:63-72), monster anim/flags (:75-106); phase-5 additions: EV_* opcode ids, EVAL_* terms, EVFL_* trigger masks, SCR_* static-func indices. |
-| `CombatEntity.h/.cpp` | Battle-stat block (8 slots + weapon); clamped set/add, XP calc (:52-54). No calcHit/calcDamage yet. |
+| `CombatEntity.h/.cpp` | Battle-stat block (8 slots + weapon); clamped set/add, XP calc (:52-54); Stage-1 combat adds verbatim `calcCombat/calcHit/calcDamage` taking `Combat&` (spec `specs/2026-08-26-combat-stage1.md`). |
+| `Combat.h/.cpp` | Combat subsystem instance on `Game::combat` (ADR 0008): weapon-field constants + `tileDistances`, monsterTemplates[51], `performAttack` → two-stage hitscan `playerSeq` timer (`tick()`), `explodeOnMonster` subset, `getWeaponTileNum`; Env wired from Main. |
+| `EntityMonster.h` | Monster payload struct (ce, ring links, nextAttacker/target, frameTime, flags, goal fields) pooled [80] on Game with active/inactive circular rings via `Game::activate/deactivate` (ADR 0008). |
 | `Player.h/.cpp` | Player state: stats, inventory[26]/ammo[9]/weapon bitmask, XP; discrete grid movement via `kViewStepValues` 8-dir table (:8-11). |
 | `Game.h/.cpp` | Simulation subset: 32x32 entityDb lists (Game.h:69), door anims (6 slots), faced-door use `useDoorFacing` (ADR 0001), faithful swept-capsule move trace `traceMove` per ADR 0002 / spec `specs/2026-08-23-faithful-player-collision.md`, turn-advance auto-close with tile-granular occupancy, linked-state door solidity. Phase-5 additions: `setLineLocked` (tileNum bit0 flip + def re-lookup by tileNum+257), `advanceTurn` subset, eventFlags movement masks, `findEntityBySprite`, blocking-door-open thread resume via `DoorAnim::ownerThread`. Corpse loot (ADR 0006): `poolLootCorpse` marks + pools all eType-9 entities on a tile and composes the display lines (`Game::LootPool`: entries/credits/`Text` + line table), `giveLootPool` grants on UI close (replaced the interim auto-grant `lootCorpse`). |
 | `ScriptVM.h/.cpp` | Faithful tileEvents interpreter (phase 5, ADR 0003 / spec `specs/2026-08-23-phase5-skeleton.md` §7): 20-thread pool (`ScriptThread`: IP/FP/stackPtr/unpauseTime/type/flags/state), big-endian dispatch with the legacy post-opcode `++IP` contract, trigger filter, `executeTile`/`executeStaticFunc`/`runScriptThreads`, `scriptStateVars[128]`; TIER-A opcodes functional (EVAL/JUMP/CALL/RETURN/ITEM_COUNT/DOOROP/EVENTOP/GIVEITEM/WAIT/ABORT_MOVE/MESSAGE/TILE_EMPTY…), TIER-B logged no-ops (incl. parse-only EV_CHANGE_MAP, non-pausing EV_DIALOG). |
@@ -128,6 +130,7 @@ _See [adr/](adr/):_
 - [0005 — Character detection & stacked-billboard rendering boundary](adr/0005-character-detection-stacked-billboards.md) (2026-08-25)
 - [0006 — Loot dwell UI without a LootingSystem module](adr/0006-loot-ui.md) (2026-08-25)
 - [0007 — Monsters join the entity-driven stacked-character path](adr/0007-monsters-stacked-character-path.md) (2026-08-26; amends 0005)
+- [0008 — Combat module placement and monster payload structs](adr/0008-combat-module-and-monster-payload.md) (2026-08-26)
 
 ## Specs
 
@@ -138,3 +141,5 @@ _See [adr/](adr/):_
 - [2026-08-25 — Character animation (stacked-billboard humans, walk cycles, squad)](specs/2026-08-25-character-animation.md)
 - [2026-08-25 — Interactive loot dwell + loot menu UI (ST_LOOTING)](specs/2026-08-25-loot-dwell-ui.md)
 - [2026-08-26 — Monsters join the stacked path + walk-flicker fix (delta on 2026-08-25 character animation)](specs/2026-08-26-monsters-stack-flicker.md)
+- [2026-08-26 — Combat Stage 1 (fire pipeline, damage math, monster payload, HUD feed)](specs/2026-08-26-combat-stage1.md)
+- [2026-08-26 — Cinematic camera key-0 fix: legacy tri-state startup (delta on 2026-08-24 intro sequence)](specs/2026-08-26-camera-key0.md)

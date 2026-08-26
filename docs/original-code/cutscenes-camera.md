@@ -81,7 +81,7 @@ Cinematic-relevant opcodes:
 | Op | Name | Encoding | Behavior |
 |----|------|----------|----------|
 | 5 | EV_STARTCINEMATIC | u8 camId | `setupCamera(camId)`; `activeCamera->cameraThread=this`; `setState(ST_CAMERA)`; `skipAdvanceTurn=true` (`src/ScriptThread.cpp:400-411`) |
-| 18 | EV_ADV_CAMERAKEY | u8 resumeCount | If in ST_CAMERA/ST_INTER_CAMERA: `keyThreadResumeCount=arg`, `keyThread=this`, `NextKey()`, wait (`unpauseTime=-1, return 2`) (`src/ScriptThread.cpp:690-702`). The thread is resumed by `MayaCamera::Snap` after N more key completions (`src/MayaCamera.cpp:359-370`) |
+| 18 | EV_ADV_CAMERAKEY | u8 resumeCount | If in ST_CAMERA/ST_INTER_CAMERA: `keyThreadResumeCount=arg`, `keyThread=this`, `NextKey()`, wait (`unpauseTime=-1, return 2`) (`src/ScriptThread.cpp:690-702`). The thread is resumed by `MayaCamera::Snap` after N more key completions (`src/MayaCamera.cpp:359-370`). Because `setupCamera` left `activeCameraKey = -1`, the FIRST ADV_CAMERAKEY in a cinematic lands on **key index 0** and starts it with a fresh clock — key0 always plays (its only "truncation" is zero lead-in when the ADV follows STARTCINEMATIC synchronously). Outside those states the arg is consumed with no effect (`:700-701`) |
 | 12 | EV_CAMERA_STR | u16 packed, u16 ms | packed: bits0-13 stringID, bit14 showCinPlayer, bit15 title-flag. bit15=0 → subtitle (`hud->subTitleID/Time`), bit15=1 → big title (`cinTitleID/Time`), both shown for `ms` ms (`src/ScriptThread.cpp:519-543`) |
 | 14 | EV_WAIT | u8 n | wait `n*100` ms via `evWait` (`src/ScriptThread.cpp:587-591`); skipped entirely while `skippingCinematic` (`:120-123`) |
 | 15 | EV_GOTO | u16 packed | player teleport/walk, see §4 |
@@ -141,7 +141,16 @@ Interpolation math (`src/MayaCamera.cpp:104-131`, `:234-241`):
 Selection/lifecycle: a script picks the camera id (`EV_STARTCINEMATIC`);
 `setupCamera` initializes from key 0 and stamps `cinUnpauseTime = now + 1000`
 (input locked for ~1 s so a skip can't be instant-skipped)
-(`src/ScriptThread.cpp:183-228`). Rendering goes through
+(`src/ScriptThread.cpp:183-228`). **`setupCamera` sets `activeCameraKey = -1`**
+(`src/ScriptThread.cpp:188`) and only writes the STATIC key0 pose into the camera;
+while the key is −1 the ST_CAMERA tick skips `Update` entirely
+(`src/Canvas.cpp:950`), so any pre-first-ADV lead-in (WAITs, blocking lerps)
+displays the frozen key0 pose. Playback of key0 proper begins at the first
+`EV_ADV_CAMERAKEY`, whose `NextKey()` restarts `activeCameraTime = gameTime` and
+moves −1 → 0 (`src/MayaCamera.cpp:36-44`). Keys with `ms == 0` complete instantly:
+the boundary test `elapsed >= 0` is true on the first Update after they become
+active (`src/MayaCamera.cpp:72-77`), so cameras authored to end on an ms=0 key cut
+away in the same frame the last segment starts. Rendering goes through
 `activeCamera->Render()` → `render(x,y,z,yaw,pitch,roll, fov=315 (or 290 during
 dialogs))` (`src/MayaCamera.cpp:302-324`). `activeCameraView && activeCamera != nullptr`
 = `isCameraActive()` (`src/Game.cpp:3297-3299`).
@@ -155,6 +164,26 @@ weapon anim, shake, frees particles, forces a 500 ms fade-in
 Table cameras: `Game::loadTableCamera` builds a single always-looping camera
 (`isTableCam=true`, `NextKey` forever) used for menus/backgrounds
 (`src/Game.cpp:511-574`, `src/MayaCamera.cpp:371-373`).
+
+### map00 elevator-exit cameras (tmp_map00.bin; decoder docs/research/assets/probe_cam_jitter.py)
+
+All 14 cameras use sampleRate=125. The exit-from-the-docking-elevator beats:
+
+* **cam 7** (evt[54], tile (9,19) TRIGGER, IP 2993): `WAIT500 @3248 → STARTCINEMATIC
+  cam=7 @3250 → GOTO 4308 @3252 → ADV_CAMERAKEY resumes=4 @3255`. GOTO 4308 is an
+  instant teleport to tile (6,20) center (416,1312) facing angle 512 with pitch/roll
+  zeroed (`src/ScriptThread.cpp:602-653`) — exactly cam7's final key spot. Keys:
+  key0 (544,1248,484) **yaw −2 (inherit player)** 1250 ms → key1 same pos yaw 512
+  1000 ms → key2 (416,1248,484) yaw 640 500 ms (authored data cut) → key3 (416,1312,484)
+  yaw 512 **ms=0**. Total 2750 ms; opens seamlessly on the player's facing.
+* **cam 10** (ev[56], tile (10,19) ENTER-all-dirs, IP 4223): self-disable, then
+  `STARTCINEMATIC cam=10 @4226 → ADV_CAMERAKEY resumes=1 @4228` synchronously, then
+  ~13 s of doorway pantomime choreography, final `ADV_CAMERAKEY resumes=1 @4487`.
+  Keys: key0 (672,1248,484) yaw −2, 500 ms; key1 same pos yaw 0, ms=0. The single
+  static shot holds for the whole choreography and ends instantly.
+* Boot-chain first-ADV gaps: cam0 `OP5@1946→OP18@1954` and cam1 `OP5@2098→OP18@2103`
+  are same-frame; cam5 `OP5@2422→first OP18@2517` has a ~1–3 s lead-in that shows the
+  frozen key0 high shot. Every boot camera's last key has ms=0.
 
 ### map00 camera data (from tmp_map00.bin)
 

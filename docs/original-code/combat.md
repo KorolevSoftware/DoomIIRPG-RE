@@ -100,3 +100,61 @@ draw (tile fn, wpinfo read, 176×176 blit after `drawBSP` in
 `new_src/core/GameContext.cpp:994-1011`), and `Hud::weapon_` is hardcoded 3
 (`new_src/ui/Hud.h:159`). Scope list:
 `docs/research/2026-08-26-hero-choice-and-weapon.md` §B.3.
+
+## 5. Fire pipeline & damage math (added 2026-08-26; full evidence in
+`docs/research/2026-08-26-combat-stage1.md` §2)
+
+* ACTION_FIRE probe (`src/PlayingInputHandler.cpp:189-378`) is a ~6-unit ray along
+  −view[2]/−view[6]/−view[10], mask 13997 CONTENTS_WEAPONSOLID radius 2; chainsaw
+  shrinks it to 1 unit (+PLAYERCLIP bit), holy-water pistol adds 0x4100
+  (`:200-221`). It only ELECTS the target (ET_MONSTER wins immediately `:264-269`;
+  corpses only at Chebyshev distance² == tileDistances[0] with loot rules
+  `:279-337`); loot preempts everything at `:374-378`.
+* `Player::fireWeapon` guards (`src/Player.cpp:754-799`): soul cube needs monster
+  target; `weaponDown` or `(disabledWeapons & 1<<weapon)` refuse; ammo short →
+  msgs 115/116/117.
+* Distance is **Chebyshev**: `Entity::distFrom = max(dx²,dy²)` (`src/Entity.cpp:
+  1155-1158`); `tileDistances[j] = (64(j+1))²` (`src/Combat.cpp:41-44`);
+  `WorldDistToTileDist` = first j with dist < threshold (`src/Combat.cpp:1235-1242`).
+* Hit roll `CombatEntity::calcHit` (`src/CombatEntity.cpp:157-298`):
+  chance = ((acc − agi·96>>8)<<8)/100 − 16·(tiles outside RANGEMIN..RANGEMAX),
+  floor 1; fixed-range weapons out of range → CR 0x400 hard miss; shotgun/pistol
+  far shots cap via CR 0x4; miss streaks capped (player 1, monster 2);
+  crit = chance/20 → CR 0x2; sniper-zoom (wp 9) uses pixel body-part bboxes instead
+  (`:173-216`).
+* Damage `CombatEntity::calcDamage` (`src/CombatEntity.cpp:300-378`): base
+  STRMIN..STRMAX of `weapons[w*9+{0,1}]`; crit → ×2 STRMAX, far → STRMAX/2;
+  difficulty 4 −25% first; strength bonus gated by CR 0x20 (set when hitting a
+  MONSTER with non-chainsaw, `src/Combat.cpp:223-226`); weakness =
+  `(monsterWeakness[(sub·3+parm)·8+w/2] nibble + 1)<<5` then `damage = weak·base>>8`
+  (`src/Combat.cpp:29-31`); final `−(def%·damage)>>8`. Monster→player splits armor:
+  `armorDmg = min(((171·base>>8)+1)/2, armor); damage −= 2·armorDmg` (`:357-359`).
+* Sequencing: hitscan (PROJTYPE 0) allocates no missile and applies
+  `explodeOnMonster()` → `Entity::pain(totalDamage,…)` in stage 0
+  (`src/Combat.cpp:1572-1576`, `:1421-1430`, `:904-910`); death `died(true,
+  playerEnt)` lands one SHOTHOLD animation later in stage 1 (`:382-386`).
+  animTime = SHOTHOLD×10 ms (×5 haste [2]) — same fields the view weapon reads
+  (§1). Ammo deducted at stage 0 (`:355-358`), repaintFlags |= 0x4 (`:353`).
+* Weapon data (tables.bin table 2, verified by direct parse): rifle(0) 8–10 dmg,
+  range 0–5, bullets×1, 2 shots, SHOTHOLD 50; shotgun(7) 25–30, shells×2;
+  chaingun(8) 12–15 ×4, SHOTHOLD 15. monsterStats table 3 row index
+  `subType*3+parm`, hp stored as byte×5 (`src/Combat.cpp:37-39`): imp(3,0)=50hp/
+  def 5/acc 95/agi 0. Spawn-time difficulty bump +25% hp on difficulty 4 (all)
+  and 2 (non-boss) (`src/Entity.cpp:62-67`).
+
+## 6. Turn structure (added 2026-08-26)
+
+`Game::advanceTurn` (`src/Game.cpp:1238-1281`): Error 95 if
+`interpolatingMonsters`; haste parity picks monstersTurn 1 vs 2 (only
+haste-resistant act on 2, `:890`); `player->advanceTurn` status ticks
+(`src/Player.cpp:51-92`); door auto-close sweep; PER_TURN static func 6 =
+SCR_PER_TURN (`src/Enums.h:498-510`; map00 staticFuncs[6]=253). Monster phase runs
+per frame via `updateMonsters` (`src/Game.cpp:2458-2474`, driven from
+`src/GameStateRunner.cpp:181-183`): `monsterAI` walks the circular
+`activeMonsters` list calling `aiThink(false)` and collecting queued attackers on
+`combatMonsters` (`src/Game.cpp:874-913`); when lerps settle an attacker fires
+`performAttack`, else `endMonstersTurn` clears the window (`:2452-2456`). Input
+during the window drops unless monsters are snappable (which itself advances their
+lerps/attacks) except turn/weapon-switch (`src/PlayingInputHandler.cpp:71-74`).
+A player attack consumes its turn only after the combat seq finishes
+(`src/GameStateRunner.cpp:26-38`).
