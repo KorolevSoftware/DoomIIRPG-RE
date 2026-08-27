@@ -24,16 +24,76 @@ static constexpr int ET_NONOBSTRUCTING_SPRITEWALL = 13;
 static constexpr int ET_DECOR_NOCLIP = 14;
 static constexpr int ET_MAX = 15;
 
-// Trace content masks.
+} // namespace Enums
+
+// Trace content masks, composed from per-eType bits instead of the bare legacy
+// numbers (ADR 0011 §5). Decode table: docs/original-code/player-collision.md
+// §2.2; legacy values at src/Enums.h:26-40. Each composed mask is pinned with a
+// static_assert on that legacy value — the numbers go straight into a trace, so
+// an edit that changes one must fail to compile.
+namespace Contents {
+
+constexpr int bit(int eType) { return 1 << eType; }
+
+constexpr int WORLD = bit(Enums::ET_WORLD);
+constexpr int PLAYER = bit(Enums::ET_PLAYER);
+constexpr int MONSTER = bit(Enums::ET_MONSTER);
+constexpr int NPC = bit(Enums::ET_NPC);
+constexpr int PLAYERCLIP = bit(Enums::ET_PLAYERCLIP);
+constexpr int DOOR = bit(Enums::ET_DOOR);
+constexpr int ITEM = bit(Enums::ET_ITEM);
+constexpr int DECOR = bit(Enums::ET_DECOR);
+constexpr int ENV_DAMAGE = bit(Enums::ET_ENV_DAMAGE);
+constexpr int CORPSE = bit(Enums::ET_CORPSE);
+constexpr int ATTACK_INTERACTIVE = bit(Enums::ET_ATTACK_INTERACTIVE);
+constexpr int MONSTERBLOCK_ITEM = bit(Enums::ET_MONSTERBLOCK_ITEM);
+constexpr int SPRITEWALL = bit(Enums::ET_SPRITEWALL);
+constexpr int NONOBSTRUCTING_SPRITEWALL = bit(Enums::ET_NONOBSTRUCTING_SPRITEWALL);
+constexpr int DECOR_NOCLIP = bit(Enums::ET_DECOR_NOCLIP);
+
+// Player move mask (src/MovementController.cpp:326) — NONOBSTRUCTING_SPRITEWALL
+// does block moves.
+constexpr int PLAYERSOLID = WORLD | MONSTER | NPC | PLAYERCLIP | DOOR | DECOR |
+                            ATTACK_INTERACTIVE | SPRITEWALL | NONOBSTRUCTING_SPRITEWALL;
+// Fire ray (src/PlayingInputHandler.cpp:200) = playersolid - PLAYERCLIP + CORPSE.
+constexpr int WEAPONSOLID = (PLAYERSOLID & ~PLAYERCLIP) | CORPSE;
+// The facing / health-bar probe (src/MovementController.cpp:38).
+constexpr int FACING_PROBE = WORLD | MONSTER | NPC | DOOR | ITEM | DECOR |
+                             ATTACK_INTERACTIVE | SPRITEWALL | DECOR_NOCLIP;
+// Monster move mask (src/Entity.cpp:1078).
+constexpr int MONSTERSOLID = WORLD | PLAYER | MONSTER | NPC | DOOR | DECOR |
+                             ATTACK_INTERACTIVE | MONSTERBLOCK_ITEM | SPRITEWALL |
+                             NONOBSTRUCTING_SPRITEWALL;
+// Splash / line-of-sight solidity (src/Combat.cpp:1070).
+constexpr int SPLASH_SOLID = WORLD | DOOR | SPRITEWALL;
+
+// Per-weapon modifiers of the fire ray (src/PlayingInputHandler.cpp:203-215).
+constexpr int HOLY_WATER_EXTRA = ENV_DAMAGE | DECOR_NOCLIP;   // was | 0x4100
+constexpr int MELEE_EXTRA      = PLAYERCLIP;                  // was | 0x10
+
+static_assert(PLAYERSOLID  == 13501, "src/Enums.h CONTENTS_PLAYERSOLID");
+static_assert(WEAPONSOLID  == 13997, "src/Enums.h CONTENTS_WEAPONSOLID");
+static_assert(FACING_PROBE == 21741, "src/MovementController.cpp:38");
+static_assert(MONSTERSOLID == 15535, "src/Enums.h CONTENTS_MONSTERSOLID");
+static_assert(SPLASH_SOLID == 4129,  "src/Enums.h CONTENTS_SPLASH_SOLID");
+static_assert(HOLY_WATER_EXTRA == 0x4100 && MELEE_EXTRA == 0x10,
+	"src/PlayingInputHandler.cpp:203-215");
+
+} // namespace Contents
+
+namespace Enums {
+
+// Legacy CONTENTS_* names kept as aliases of the composed values so call sites
+// are not forced to churn; new code uses Contents:: directly.
 static constexpr int CONTENTS_ANY = -1;
 static constexpr int CONTENTS_PICKUP = 64;
 static constexpr int CONTENTS_INTERACTIVE = 1068;
-static constexpr int CONTENTS_PLAYERSOLID = 13501;
-static constexpr int CONTENTS_MONSTERSOLID = 15535;
-static constexpr int CONTENTS_WEAPONSOLID = 13997;
+static constexpr int CONTENTS_PLAYERSOLID = Contents::PLAYERSOLID;
+static constexpr int CONTENTS_MONSTERSOLID = Contents::MONSTERSOLID;
+static constexpr int CONTENTS_WEAPONSOLID = Contents::WEAPONSOLID;
 static constexpr int CONTENTS_VIEWSOLID = 5293;
 static constexpr int CONTENTS_MONSTERWPSOLID = 5295;
-static constexpr int CONTENTS_WORLD = 1;
+static constexpr int CONTENTS_WORLD = Contents::WORLD;
 static constexpr int CONTENTS_SPRITEWALL = 12288;
 
 // CombatEntity stat slots.

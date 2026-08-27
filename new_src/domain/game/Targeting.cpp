@@ -38,9 +38,9 @@ TraceHit Targeting::electFireTarget(int weapon) {
 	Player& p = *env_.player;
 	Combat& combat = env_.game->combat;
 	const bool melee = Combat::checkWeaponMask(weapon, 2);  // WP_MELEEMASK = chainsaw only (src/Enums.h:155)
-	int mask = 13997;                                       // CONTENTS_WEAPONSOLID (src/Enums.h:31)
-	if (weapon == 2) mask |= 0x4100;                        // holy water: ENV_DAMAGE + DECOR_NOCLIP (:203-205)
-	if (melee) mask |= 0x10;                                // chainsaw: PLAYERCLIP (:212-215)
+	int mask = Contents::WEAPONSOLID;                       // src/Enums.h:31
+	if (weapon == 2) mask |= Contents::HOLY_WATER_EXTRA;    // holy water: ENV_DAMAGE + DECOR_NOCLIP (:203-205)
+	if (melee) mask |= Contents::MELEE_EXTRA;               // chainsaw: PLAYERCLIP (:212-215)
 	const int tiles = melee ? 1 : 6;                        // :208-215
 	int fwdX = 0, fwdY = 0;
 	viewForward(fwdX, fwdY);
@@ -147,12 +147,11 @@ TraceHit Targeting::electFireTarget(int weapon) {
 // Facing probe feeding the health-bar readout — port of
 // MovementController::checkFacingEntity (src/MovementController.cpp:28-93,
 // docs/original-code/combat.md §7.1). Single 6-tile ray from the logical tile
-// centre pushed 28 units forward, mask 21741 (WORLD/MONSTER/NPC/DOOR/ITEM/
-// DECOR/ATTACK_INTERACTIVE/SPRITEWALL/DECOR_NOCLIP), radius 2. No Z check:
-// legacy tests Z only when zoomed in and there is no zoom system.
+// centre pushed 28 units forward, mask Contents::FACING_PROBE, radius 2. No Z
+// check: legacy tests Z only when zoomed in and there is no zoom system.
 void Targeting::updateFacingProbe() {
 	Player& p = *env_.player;
-	constexpr int kFacingMask = 21741;         // src/MovementController.cpp:38
+	constexpr int kFacingMask = Contents::FACING_PROBE;   // src/MovementController.cpp:38
 	int fwdX = 0, fwdY = 0;
 	viewForward(fwdX, fwdY);
 	const int startX = p.destX + ((28 * fwdX) >> 16);   // :38 -view[2]*28 >> 14

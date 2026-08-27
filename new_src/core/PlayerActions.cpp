@@ -130,7 +130,7 @@ void PlayerActions::handleAction(Action a) {
 		if (env_.game->abortMove) break;
 		TraceSystem& trace = env_.game->trace;
 		TraceHit h = trace.trace(p.viewX, p.viewY, tx, ty,
-			env_.game->db.playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16);
+			env_.game->db.playerEntity(), Contents::PLAYERSOLID, 16);
 		// DEVIATION (blue-door block bug): an ET_NPC whose circle contains
 		// the trace START (startsInside) is the scripted-greeter overlap state;
 		// legacy dissolves it through the per-turn NPC AI that ADR 0005 has
@@ -143,7 +143,7 @@ void PlayerActions::handleAction(Action a) {
 			std::fprintf(stderr, "[dbg] start-inside NPC spr=%d stepped past\n",
 				h.entity->getSprite()); // TEMP [dbg]
 			h = trace.trace(p.viewX, p.viewY, tx, ty,
-				h.entity, Enums::CONTENTS_PLAYERSOLID, 16);
+				h.entity, Contents::PLAYERSOLID, 16);
 		}
 		if (!h.blocks()) {
 			p.attemptMove(tx, ty);

@@ -293,7 +293,7 @@ bool Combat::tick() {
 		if (targetKilled ||
 		    (targetType == Enums::ET_MONSTER &&
 		     targetMonster->ce.getStat(Enums::STAT_HEALTH) <= 0)) {
-			env_.game->diedMonster(curTarget, true);             // :382-386
+			env_.game->monsters.diedMonster(curTarget, true);    // :382-386
 			targetKilled = true;
 		} else if (--animLoopCount > 0 &&
 		           ((1 << targetType) & 4385) == 0 &&           // :387 n6 mask
@@ -363,7 +363,7 @@ void Combat::explodeOnMonster() {
 	    curTarget->def != nullptr &&
 	    curTarget->def->eType == Enums::ET_MONSTER &&
 	    (curTarget->info & Entity::kInfoOnActiveList) == 0) {
-		env_.game->activate(curTarget, true, false, true, true);   // :895-897
+		env_.game->monsters.activate(curTarget, true, false, true, true);   // :895-897
 	}
 	if (hitType == 0) {
 		// rocket-splash radiusHurtEntities tail (:899-901): projectiles deferred.
@@ -372,7 +372,7 @@ void Combat::explodeOnMonster() {
 	if (targetType == Enums::ET_MONSTER) {               // :904-931
 		if (totalDamage > 0) {
 			// checkMonsterFX skipped: status effects absent (:168-176,:906).
-			env_.game->painMonster(curTarget, totalDamage, attackerWeaponId); // :907
+			env_.game->monsters.painMonster(curTarget, totalDamage, attackerWeaponId); // :907
 			// blood particles (:908-910), knockback (:911-921), splash radius
 			// (:922-924) and negative-damage healing cap (:926-931) skipped:
 			// systems absent.

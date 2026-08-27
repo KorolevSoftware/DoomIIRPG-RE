@@ -81,7 +81,7 @@ void GameContext::init(const Init& sys) {
 	actEnv.host = this;
 	actions_.init(actEnv);
 	if (sys_.tables) {
-		sys_.game->setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (Game.h)
+		sys_.game->lerps.setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (SpriteLerps.h)
 	}
 }
 
@@ -212,7 +212,7 @@ void GameContext::tick() {
 	// (src/Canvas.cpp:791-796); gsprite_update has no counterpart.
 	// Threads tick in PLAYING and CAMERA only (src/Game.cpp:3259): during a
 	// cinematic the scripts keep running — input is what's parked.
-	sys_.game->setPlayerPos(sys_.player->viewX, sys_.player->viewY);
+	sys_.game->trace.setPlayerPos(sys_.player->viewX, sys_.player->viewY);
 	if (state_ == StateId::Playing || state_ == StateId::Camera) sys_.vm->runScriptThreads(gameTime);
 
 	// SpriteLerp pool + door anims tick in every state legacy covers with
@@ -231,9 +231,9 @@ void GameContext::tick() {
 		// against the last rendered view — maya pose during a cinematic key,
 		// else the player view angle (same two sources render() uses,
 		// GameContext.cpp:724-769; legacy read app->render->viewAngle).
-		sys_.game->setLerpViewAngle(cinematic_.active()
-		                                ? cinematic_.pose().yaw
-		                                : sys_.player->viewAngle);
+		sys_.game->lerps.setLerpViewAngle(cinematic_.active()
+		                                      ? cinematic_.pose().yaw
+		                                      : sys_.player->viewAngle);
 		sys_.game->update(kTickMs);
 	}
 
@@ -295,7 +295,7 @@ void GameContext::tickLoading() {
 	// prevX/Y = view snap: save-only fields, not ported.
 	sys_.vm->executeTile(sys_.player->viewX >> 6, sys_.player->viewY >> 6, 4081, true); // entrance event, ENTER|all-dirs (:700-706)
 	sys_.player->finishRotation();                         // finishRotation(false) analog (:707)
-	sys_.game->endMonstersTurn();                          // monstersTurn = 0 (:708)
+	sys_.game->monsters.endMonstersTurn();                 // monstersTurn = 0 (:708)
 	// uncoverAutomap stub (:709).
 	// Enter ST_PLAYING only when no cinematic took over during staticFunc(0)
 	// (src/LoadingManager.cpp:715-717 gates on canvas->state == ST_LOADING);
@@ -336,7 +336,7 @@ void GameContext::tickPlaying() {
 			sys_.game->advanceTurn();             // turn consumed AFTER seq
 		}
 	} else {
-		sys_.game->updateMonsters();              // Stage-1 stub (spec §0.B)
+		sys_.game->monsters.updateMonsters();      // Stage-1 stub (spec §0.B)
 	}
 	// 4.5 The facing probe no longer runs here: legacy recomputes it from the
 	//     HUD top bar on every rendered frame (src/Hud.cpp:735-742), see

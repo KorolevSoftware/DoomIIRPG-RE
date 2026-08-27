@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "core/GameStates.h"
+#include "domain/game/CorpseLoot.h"
 #include "domain/game/Game.h"
 
 namespace newcore {
@@ -52,7 +53,7 @@ private:
 	// anchors the cached player pose the two 500 ms phases lerp away from and
 	// back to (docs/research/2026-08-25-camera-pitch-loot.md).
 	bool lootSettleSfx_ = false;              // field_0xac5_: sound 1055 once per session
-	Game::LootPool lootPool_;                 // pooled entries + lootText + lineIndex + lootLineNum
+	CorpseLoot::Pool lootPool_;               // pooled entries + lootText + lineIndex + lootLineNum
 	bool lootCrouch_ = false;             // crouchingForLoot (phase selector)
 	int64_t lootTime_ = 0;                // lootingTime (app->time latch)
 	int lootDestX_ = 0, lootDestY_ = 0, lootDestZ_ = 0, lootDestPitch_ = 0;

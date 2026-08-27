@@ -10,6 +10,7 @@
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
+#include "domain/game/SpriteLerps.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
@@ -462,7 +463,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (ent == nullptr) break;             // silent, src/ScriptThread.cpp:753-779
 			if (act == 0 || act == 1) {
 				if (act == 1 && ent->isDoor()) env_.game->setLineLocked(ent, false);
-				bool doorOk = env_.game->performDoorEvent(act, ent, snapMode, interactive ? t : nullptr);
+				bool doorOk = env_.game->doors.performDoorEvent(act, ent, snapMode, interactive ? t : nullptr);
 				// Door family flips to media frame 1 while open/animating
 				// (src/Game.cpp:1150-1152); updateDoors restores frame 0 on
 				// close completion.
@@ -523,7 +524,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 						// are expected (legacy quirk, kept verbatim), then
 						// removeEntity re-hides the sprite and unlinks — net
 						// effect: the monster VANISHES (no visible corpse).
-						env_.game->corpsifyMonster(ent, ent->linkIndex % 32, ent->linkIndex / 32);
+						env_.game->monsters.corpsifyMonster(ent, ent->linkIndex % 32, ent->linkIndex / 32);
 						env_.game->db.removeEntity(ent);
 						ent->info |= Entity::kInfoActivated;           // :839 (0x400000)
 						std::fprintf(stderr, "[script] HIDE sprite=%d corpsify+remove\n", sprite);
@@ -626,7 +627,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			else if (goalType == 4 || goalType == 6) m->goalParam = goalArg;
 			// noclip gate (:2235): no noclip in the rewrite.
 			if ((ent->info & Entity::kInfoOnActiveList) == 0) {
-				env_.game->activate(ent, true, false, false, true);   // :2236-2238 silent
+				env_.game->monsters.activate(ent, true, false, false, true);   // :2236-2238 silent
 			}
 			std::fprintf(stderr, "[script] AIGOAL aiThink deferred (Stage 2)\n");
 			if (goalType == 3 && env_.game->monsters.combatMonsters != nullptr) {
@@ -702,7 +703,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (time != 0 && (lsFlags & Enums::SCRIPT_LS_FLAG_BLOCK) != 0) {
 				evWait(t, time);                   // up-front (:353-355)
 			}
-			Game::SpriteLerp* ls = env_.game->allocLerpSprite(
+			SpriteLerps::SpriteLerp* ls = env_.game->lerps.allocLerpSprite(
 				t, sprite, (lsFlags & Enums::SCRIPT_LS_FLAG_BLOCK) != 0);
 			if (ls == nullptr) break;
 			ls->dstX = 32 + (dstTileX << 6);       // tile centers (:361-362)
@@ -715,10 +716,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
 			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).
 			ls->srcZ = m.mapSprites[sprite + 2 * m.numSprites]
-				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
+				+ env_.game->lerps.spriteZBias(sprite, ls->srcX, ls->srcY);
 			ls->srcScale = ls->dstScale =
 				m.mapSprites[sprite + 8 * m.numSprites];   // scale held constant
-			ls->startTime = env_.game->clockMs();
+			ls->startTime = env_.game->lerps.clockMs();
 			ls->travelTime = time;
 			ls->flags = lsFlags & Enums::SCRIPT_LS_FLAG_ASYNC_BLOCK;   // scriptBits&3 (:377)
 			ls->calcDist();                        // walk-phase distance (src/ScriptThread.cpp:378)
@@ -726,7 +727,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			std::fprintf(stderr, "[dbg] LERPSPRITE spr=%d src=%d,%d,%d dst=%d,%d,%d t=%dms flags=%d\n",
 				sprite, ls->srcX, ls->srcY, ls->srcZ, ls->dstX, ls->dstY, ls->dstZ, time, lsFlags);
 			if (time == 0) {
-				env_.game->updateLerpSprite(ls);   // single tick completes (:379-386)
+				env_.game->lerps.updateLerpSprite(ls);   // single tick completes (:379-386)
 			} else if ((lsFlags & Enums::SCRIPT_LS_FLAG_ASYNC) == 0) {
 				env_.game->skipAdvanceTurn = true; // thread parks until completion (:388-394)
 				env_.game->queueAdvanceTurn = false;
@@ -744,7 +745,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int dstX = (packed >> 11) & 0x7FF;     // X in bits 11-21, Y in bits 0-10
 			int lsFlags = (packed >> 22) & 0x3;
 			int dstZrel = ((packed >> 24) & 0xFF) - 48;
-			Game::SpriteLerp* ls = env_.game->allocLerpSprite(
+			SpriteLerps::SpriteLerp* ls = env_.game->lerps.allocLerpSprite(
 				t, sprite, (lsFlags & 0x2) != 0);
 			if (ls == nullptr) break;
 			ls->dstX = dstX;
@@ -757,10 +758,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
 			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).
 			ls->srcZ = m.mapSprites[sprite + 2 * m.numSprites]
-				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
+				+ env_.game->lerps.spriteZBias(sprite, ls->srcX, ls->srcY);
 			ls->srcScale = ls->dstScale =
 				m.mapSprites[sprite + 8 * m.numSprites];
-			ls->startTime = env_.game->clockMs();
+			ls->startTime = env_.game->lerps.clockMs();
 			ls->travelTime = time;
 			ls->flags = lsFlags & 0x3;
 			ls->calcDist();                        // walk-phase distance (src/ScriptThread.cpp:1417)
@@ -768,10 +769,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			std::fprintf(stderr, "[dbg] LERPOFFSET spr=%d src=%d,%d,%d dst=%d,%d,%d t=%dms flags=%d\n",
 				sprite, ls->srcX, ls->srcY, ls->srcZ, ls->dstX, ls->dstY, ls->dstZ, time, lsFlags);
 			if (time == 0) {
-				env_.game->updateLerpSprite(ls);
+				env_.game->lerps.updateLerpSprite(ls);
 			} else {
 				if ((lsFlags & 0x2) != 0) evWait(t, time);   // BLOCK after alloc (:1428-1429)
-				if ((ls->flags & Game::SpriteLerp::kFlagAsync) == 0) {
+				if ((ls->flags & SpriteLerps::SpriteLerp::kFlagAsync) == 0) {
 					env_.game->skipAdvanceTurn = true;
 					env_.game->queueAdvanceTurn = false;
 					t->unpauseTime = -1;
@@ -932,7 +933,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (ent->isMonster()) {
 				ent->monster->frameTime = 0;                        // :886
 				env_.map->mapSpriteInfo[sprite] &= 0xFFFF00FF;      // :887 clear anim byte
-				env_.game->activate(ent, true, false, false, true); // :888 silent wake
+				env_.game->monsters.activate(ent, true, false, false, true); // :888 silent wake
 			}
 			break;
 		}
@@ -948,9 +949,9 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			}
 			if (ent->monster != nullptr) {
 				ent->info |= Entity::kInfoActive;   // force-active (:712)
-				env_.game->painMonster(ent, dmg, -1);
+				env_.game->monsters.painMonster(ent, dmg, -1);
 				if (ent->monster->ce.getStat(Enums::STAT_HEALTH) <= 0) {
-					env_.game->diedMonster(ent, false);             // :714-716 no XP
+					env_.game->monsters.diedMonster(ent, false);    // :714-716 no XP
 				}
 			} else {
 				// Non-monster entity: legacy dies it outright; our died path is
@@ -985,7 +986,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				std::fprintf(stderr, "[script] MAKE_CORPSE sprite=%d skipped (no monster entity)\n", sprite);
 				break;
 			}
-			env_.game->corpsifyMonster(ent, (dstX << 6) + 32, (dstY << 6) + 32); // pixel tile-centers
+			env_.game->monsters.corpsifyMonster(ent, (dstX << 6) + 32, (dstY << 6) + 32); // pixel tile-centers
 			std::fprintf(stderr, "[script] MAKE_CORPSE sprite=%d -> corpse @ tile %d,%d\n",
 				sprite, dstX, dstY);
 			break;
@@ -1213,7 +1214,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int lsFlags = packed & 0xF;
 			int timeMs = readUShort(t);            // ms directly, no *100
 			int scaleByte = readUByte(t);
-			Game::SpriteLerp* ls = env_.game->allocLerpSprite(
+			SpriteLerps::SpriteLerp* ls = env_.game->lerps.allocLerpSprite(
 				t, sprite, (lsFlags & 0x2) != 0);
 			if (ls == nullptr) break;
 			const MapData& m = *env_.map;
@@ -1221,22 +1222,22 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->srcY = ls->dstY = m.mapSprites[sprite + 1 * m.numSprites];
 			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).
 			ls->srcZ = ls->dstZ = m.mapSprites[sprite + 2 * m.numSprites]
-				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
+				+ env_.game->lerps.spriteZBias(sprite, ls->srcX, ls->srcY);
 			ls->srcScale = m.mapSprites[sprite + 8 * m.numSprites];
 			ls->dstScale = scaleByte << 1;         // 64 = 1.0 (:1468)
 			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			if (ent != nullptr) ent->info |= 0x400000;   // (:1469-1472)
-			ls->startTime = env_.game->clockMs();
+			ls->startTime = env_.game->lerps.clockMs();
 			ls->travelTime = timeMs;
 			ls->flags = lsFlags & 0x3;
 			ls->calcDist();                        // position held => dist 0 (src/ScriptThread.cpp:1683)
 			std::fprintf(stderr, "[script] LERPSCALE sprite=%d dstScale=%d t=%dms flags=%d\n",
 				sprite, ls->dstScale, timeMs, lsFlags);
 			if (timeMs == 0) {
-				env_.game->updateLerpSprite(ls);
+				env_.game->lerps.updateLerpSprite(ls);
 			} else {
 				if ((lsFlags & 0x2) != 0) evWait(t, timeMs);
-				if ((ls->flags & Game::SpriteLerp::kFlagAsync) == 0) {
+				if ((ls->flags & SpriteLerps::SpriteLerp::kFlagAsync) == 0) {
 					env_.game->skipAdvanceTurn = true;
 					env_.game->queueAdvanceTurn = false;
 					t->unpauseTime = -1;
@@ -1260,7 +1261,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (op == Enums::EV_LERPSPRITEPARABOLA_SCALE) {
 				scaleByte = readUByte(t);
 			}
-			Game::SpriteLerp* ls = env_.game->allocLerpSprite(
+			SpriteLerps::SpriteLerp* ls = env_.game->lerps.allocLerpSprite(
 				t, sprite, (lsFlags & 0x2) != 0);
 			if (ls == nullptr) break;
 			const MapData& m = *env_.map;
@@ -1272,7 +1273,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
 			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).
 			ls->srcZ = m.mapSprites[sprite + 2 * m.numSprites]
-				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
+				+ env_.game->lerps.spriteZBias(sprite, ls->srcX, ls->srcY);
 			// Relative landing height preserved (:1678): dstZ = h(dst)+srcZ-h(src).
 			ls->dstZ = env_.map->heightAt(ls->dstX, ls->dstY)
 				+ (ls->srcZ - env_.map->heightAt(ls->srcX, ls->srcY));
@@ -1280,19 +1281,19 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				m.mapSprites[sprite + 8 * m.numSprites];
 			ls->dstScale = (scaleByte >= 0) ? scaleByte << 1 : ls->srcScale;
 			ls->height = arcHeight;
-			ls->startTime = env_.game->clockMs();
+			ls->startTime = env_.game->lerps.clockMs();
 			ls->travelTime = timeMs;
-			ls->flags = (lsFlags & 0x3) | Game::SpriteLerp::kFlagParabola;   // (:1684-1685)
+			ls->flags = (lsFlags & 0x3) | SpriteLerps::SpriteLerp::kFlagParabola;   // (:1684-1685)
 			ls->calcDist();                        // walk-phase distance (src/ScriptThread.cpp:1994)
 			std::fprintf(stderr, "[script] %s sprite=%d tile=%d,%d h=%d t=%dms flags=%d\n",
 				op == Enums::EV_LERPSPRITEPARABOLA ? "LERPSPRITEPARABOLA"
 				                                   : "LERPSPRITEPARABOLA_SCALE",
 				sprite, dstTileX, dstTileY, arcHeight, timeMs, lsFlags);
 			if (timeMs == 0) {
-				env_.game->updateLerpSprite(ls);
+				env_.game->lerps.updateLerpSprite(ls);
 			} else {
 				if ((lsFlags & 0x2) != 0) evWait(t, timeMs);
-				if ((ls->flags & Game::SpriteLerp::kFlagAsync) == 0) {
+				if ((ls->flags & SpriteLerps::SpriteLerp::kFlagAsync) == 0) {
 					env_.game->skipAdvanceTurn = true;
 					env_.game->queueAdvanceTurn = false;
 					t->unpauseTime = -1;

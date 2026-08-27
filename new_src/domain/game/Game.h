@@ -3,7 +3,6 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 #include "domain/game/Combat.h"
 #include "domain/game/CorpseLoot.h"
@@ -24,8 +23,6 @@ class EntityDefs;
 class Hud;
 class Localization;
 class ScriptVM;
-struct ScriptThread;
-class Tables;
 
 // %NN argument substitution over Localization strings (decode rules of
 // Text::composeText, src/Text.cpp:281-326). Defined in Game.cpp; shared with
@@ -47,36 +44,13 @@ public:
 	// script sprite lerps (LERP* opcodes).
 	void update(int dtMs);
 
-	// ---- Script sprite lerps (spec 2026-08-26-decomposition §P2-GD) ----
-
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F4.
-	// The lerp pool, its clock and the walk-state writer live in SpriteLerps
-	// now (see SpriteLerps.h for the contracts); these keep the pre-P2-GD
-	// call sites (ScriptVM LERP* opcodes, GameContext wiring) compiling.
-	using SpriteLerp = SpriteLerps::SpriteLerp;
-	SpriteLerp* allocLerpSprite(ScriptThread* thread, int sprite, bool block) {
-		return lerps.allocLerpSprite(thread, sprite, block);
-	}
-	int updateLerpSprite(SpriteLerp* ls) { return lerps.updateLerpSprite(ls); }
-	int spriteZBias(int sprite, int x, int y) const { return lerps.spriteZBias(sprite, x, y); }
-	int clockMs() const { return lerps.clockMs(); }
-	void setSinTable(const std::vector<int32_t>* sinTable) { lerps.setSinTable(sinTable); }
-	void setLerpViewAngle(int a) { lerps.setLerpViewAngle(a); }
-	static int vecToDir(int dx, int dy) { return SpriteLerps::vecToDir(dx, dy); }
-
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F2.
-	// Door open/close now lives in DoorSystem (see DoorSystem.h for the
-	// contracts); these keep the pre-P2-GB call sites compiling.
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F2 once
+	// core/PlayerActions.cpp is free (that file is the only caller left, and
+	// it is being edited by another group).
 	using DoorUseResult = DoorSystem::DoorUseResult;
-	bool performDoorEvent(int n, Entity* door, int n2, ScriptThread* ownerThread = nullptr) {
-		return doors.performDoorEvent(n, door, n2, ownerThread);
-	}
 	DoorUseResult useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY) {
 		return doors.useDoorFacing(map, px, py, stepX, stepY);
 	}
-
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F1.
-	void setPlayerPos(int x, int y) { trace.setPlayerPos(x, y); }
 
 	// ---- Phase 5 additions ----
 
@@ -91,21 +65,12 @@ public:
 
 	// ---- Corpse looting (docs/original-code/loot-inventory.md) ----
 
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F5.
-	// The loot sets, the faced-corpse lookup, the pooling and the grant pass
-	// live in CorpseLoot now (see CorpseLoot.h for the contracts); these keep
-	// the pre-P2-GE call sites (GameContext use chain, LootSession) compiling.
-	using LootPool = CorpseLoot::Pool;
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F5 once
+	// core/PlayerActions.cpp is free (that file is the only caller left, and
+	// it is being edited by another group).
 	Entity* findLootableCorpseFacing(int px, int py, int stepX, int stepY) {
 		return loot.findLootableCorpseFacing(px, py, stepX, stepY);
 	}
-	void poolLootCorpse(int tx, int ty, const Localization& loc, LootPool& out) {
-		loot.poolLootCorpse(tx, ty, loc, out);
-	}
-	void giveLootPool(LootPool& pool, Player& player, const Tables* tables) {
-		loot.giveLootPool(pool, player, tables);
-	}
-
 
 	// Arrival tile hook (legacy touchTile -> automap uncover/pickups);
 	// stub this phase.
@@ -123,9 +88,10 @@ public:
 
 	// ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
 
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3.
-	// Kill-XP bridges live on MonsterSystem now; the same Player feeds
-	// EntityDb::removeEntity's facingEntity clear (spec §P2-GF).
+	// Cross-subsystem wiring, not a forwarder: kill-XP bridges live on
+	// MonsterSystem, and the same Player feeds EntityDb::removeEntity's
+	// facingEntity clear (spec §P2-GF). Game owns both peers, so it owns the
+	// pairing.
 	void setXPSystems(Player* player, const Localization* loc, Hud* hud) {
 		monsters.setXPSystems(player, loc, hud);
 		db.setPlayer(player);
@@ -150,20 +116,9 @@ public:
 	SpriteLerps lerps;              // peer subsystem (spec §P2-GD); wired in loadEntities
 	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
 
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3.
-	// Monster wake/turn/pain/death live in MonsterSystem now (see
-	// MonsterSystem.h for the contracts); these keep the pre-P2-GC call
-	// sites compiling.
-	void activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4) {
-		monsters.activate(e, runStaticFunc, rangeCheck, alertSound, b4);
-	}
-	void updateMonsters() { monsters.updateMonsters(); }
-	void endMonstersTurn() { monsters.endMonstersTurn(); }
-	bool painMonster(Entity* e, int dmg, int attackerWeaponId) {
-		return monsters.painMonster(e, dmg, attackerWeaponId);
-	}
-	void diedMonster(Entity* e, bool giveXP) { monsters.diedMonster(e, giveXP); }
-	void corpsifyMonster(Entity* e, int x, int y) { monsters.corpsifyMonster(e, x, y); }
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3 once
+	// domain/game/Targeting.cpp is free (that file and Game.cpp's own
+	// difficulty roll are the only callers left).
 	static bool isBossDef(const EntityDef* def) { return MonsterSystem::isBossDef(def); }
 
 	// Difficulty source: ScriptVM vars[12], default 2 when no VM is wired

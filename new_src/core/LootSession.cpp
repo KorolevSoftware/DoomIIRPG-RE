@@ -37,7 +37,7 @@ void LootSession::begin() {
 	{
 		int tx = (lootDestX_ + lootStepX_ * 64) >> 6;
 		int ty = (lootDestY_ + lootStepY_ * 64) >> 6;
-		env_.game->poolLootCorpse(tx, ty, *env_.loc, lootPool_);
+		env_.game->loot.poolLootCorpse(tx, ty, *env_.loc, lootPool_);
 	}
 }
 
@@ -103,7 +103,7 @@ void LootSession::tick() {
 
 void LootSession::handleAction(Action a) {
 	if (!lootCrouch_ || *env_.upTimeMs <= lootTime_ + kLootPhaseMs) return;  // (:87)
-	int maxLine = std::max(Game::LootPool::lineCount(lootPool_) - 3, 0);
+	int maxLine = std::max(CorpseLoot::Pool::lineCount(lootPool_) - 3, 0);
 	switch (a) {
 	case Action::Use:                                   // ACTION_FIRE
 		if (lootPool_.topLine >= maxLine) close();
@@ -120,7 +120,7 @@ void LootSession::handleAction(Action a) {
 }
 
 void LootSession::close() {
-	env_.game->giveLootPool(lootPool_, *env_.player, env_.tables);
+	env_.game->loot.giveLootPool(lootPool_, *env_.player, env_.tables);
 	lootCrouch_ = false;
 	lootTime_ = *env_.upTimeMs;            // stand-up starts now, zero extra delay
 }
@@ -153,12 +153,12 @@ void LootSession::draw(Graphics2D& g) {
 	g.drawString(*env_.font, title, kScrCx, dy - 16, Graphics2D::kAnchorHCenter, 16);
 	for (int i = 0; i < 3; ++i) {                                // (:140-144)
 		int line = i + lootPool_.topLine;
-		if (line < 0 || line >= Game::LootPool::kMaxLines) continue;
+		if (line < 0 || line >= CorpseLoot::Pool::kMaxLines) continue;
 		g.drawString(*env_.font, lootPool_.text, dx + 5, dy + 1 + i * 16,
 		    Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft, 16,
 		    lootPool_.lineIndex[line * 2], lootPool_.lineIndex[line * 2 + 1]);
 	}
-	int total = Game::LootPool::lineCount(lootPool_);
+	int total = CorpseLoot::Pool::lineCount(lootPool_);
 	if (total > 3)                                               // (:145-150)
 		env_.dialogs->drawScrollBar(g, dx + dw, dy + 1, dh - 1, lootPool_.topLine,
 		    std::min(lootPool_.topLine + 3, total), total, 3);

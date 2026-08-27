@@ -130,7 +130,7 @@ void TraceSystem::traceEntityHits(const MapData& map, Entity* skipEnt, int mask,
 				if (ent->def->eType == Enums::ET_PLAYER) {                      // :239-243
 					// Deviation (spec Conflict-2 note): legacy uses canvas DEST
 					// coords; rewrite tracks view coords. Unreachable for
-					// walking: the player is skipEnt and bit 1 ∉ 13501.
+					// walking: the player is skipEnt and PLAYER ∉ PLAYERSOLID.
 					cx = playerX_; cy = playerY_;
 				} else {                                                        // :244-247
 					cx = (sprite >= 0) ? map.mapSprites[sprite + 0 * map.numSprites] : 0; // S_X
@@ -176,7 +176,9 @@ int TraceSystem::traceWorldFrac(const MapData& map, int mask, int radius2) {
 		line[3] = (map.lineYs[(i << 1) + 1] & 0xFF) << 3;
 		if (flag == 4) continue;                                                // never blocks :1238
 		if (flag == 6) continue;                                                // never blocks :1239-1241
-		if (flag == 5 && (mask & 0x10) == 0 && (mask & 0x800) == 0) continue;   // PLAYERCLIP/MONSTERBLOCK_ITEM gates :1242-1244
+		// PLAYERCLIP/MONSTERBLOCK_ITEM gates :1242-1244 (was 0x10 / 0x800).
+		if (flag == 5 && (mask & Contents::PLAYERCLIP) == 0 &&
+		    (mask & Contents::MONSTERBLOCK_ITEM) == 0) continue;
 		if (flag == 7) {  // ONE-SIDED: blocks only from the FRONT (cross > 0)  // :1245-1247
 			// Verbatim legacy expression; trace START point is P0.
 			if ((line[0] - tracePoints_[0]) * (line[3] - line[1]) +
