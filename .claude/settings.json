@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Edit(src/**)",
+      "Write(src/**)",
+      "Edit(./src/**)",
+      "Write(./src/**)",
+      "Edit(Doom 2 RPG Java/**)",
+      "Write(Doom 2 RPG Java/**)"
+    ],
+    "allow": [
+      "Bash(cmake -S . -B build_new*)",
+      "Bash(cmake --build build_new*)",
+      "Bash(python3 tools/*)",
+      "Bash(git diff*)",
+      "Bash(git status*)",
+      "Bash(git log*)"
+    ]
+  }
+}

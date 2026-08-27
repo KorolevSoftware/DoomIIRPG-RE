@@ -5,3 +5,6 @@ build
 /build_new
 /tmp_*
 __pycache__/
+
+# Claude Code: personal, machine-local permissions
+.claude/settings.local.json
