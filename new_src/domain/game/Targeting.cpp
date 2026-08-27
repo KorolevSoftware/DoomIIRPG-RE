@@ -5,6 +5,7 @@
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
+#include "domain/game/TraceSystem.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Tables.h"
@@ -33,7 +34,7 @@ void Targeting::viewForward(int& fwdX, int& fwdY) const {
 // walk only elects attack targets. Deliberately NOT ported (silent legacy
 // special cases): barricade unlink (:387-393), sentry-bot pickup (:405-431),
 // water-spout refill (:433-447).
-Entity* Targeting::electFireTarget(int weapon, int* outFrac) {
+TraceHit Targeting::electFireTarget(int weapon) {
 	Player& p = *env_.player;
 	Combat& combat = env_.game->combat;
 	const bool melee = Combat::checkWeaponMask(weapon, 2);  // WP_MELEEMASK = chainsaw only (src/Enums.h:155)
@@ -45,46 +46,43 @@ Entity* Targeting::electFireTarget(int weapon, int* outFrac) {
 	viewForward(fwdX, fwdY);
 	const int endX = p.viewX + ((tiles * 64 * fwdX) >> 16); // :218 n7*-view[2]>>8 = n7 tiles
 	const int endY = p.viewY + ((tiles * 64 * fwdY) >> 16);
-	env_.game->traceMove(*env_.map, p.viewX, p.viewY, endX, endY,
-		env_.game->db.playerEntity(), mask, 2, nullptr, nullptr);
+	TraceSystem& trace = env_.game->trace;
+	trace.trace(p.viewX, p.viewY, endX, endY,
+		env_.game->db.playerEntity(), mask, 2);
 
-	Entity* entity = nullptr;
-	Entity* melee13 = nullptr;   // legacy entity2 (:249-254)
-	int frac = 16384;            // legacy n4
-	for (const auto& h : env_.game->lastTraceHits()) {
-		Entity* ent = h.second;
-		if (ent == nullptr) continue;
-		const int f = h.first;
-		const int dist = env_.game->entityDistFrom(ent, p.viewX, p.viewY);
-		// World slot carries no def and reads as eType 0 (Game.h:122).
-		const int et = (ent->def != nullptr) ? ent->def->eType : Enums::ET_WORLD;
-		const int sub = (ent->def != nullptr) ? ent->def->eSubType : 0;
+	TraceHit elected;            // legacy entity (kind None = nothing elected)
+	TraceHit melee13;            // legacy entity2 (:249-254)
+	for (const TraceHit& h : trace.hits()) {
+		Entity* ent = h.entity;
+		const int dist = trace.distFrom(h, p.viewX, p.viewY);
+		const int et = h.eType;   // resolved once by TraceSystem (ADR 0011)
+		const int sub = h.eSubType;
 		if (et == Enums::ET_WORLD || et == Enums::ET_SPRITEWALL ||
 		    et == Enums::ET_PLAYERCLIP) {                       // :229-236
-			if (entity == nullptr) { entity = ent; frac = f; }
+			if (!elected.blocks()) { elected = h; }
 			break;                                              // blocking: always ends the walk
 		}
 		if (et == Enums::ET_ATTACK_INTERACTIVE) {               // :238-247
 			if (((1 << sub) & 0x1) == 0 || weapon == 1) {        // eSubType != 0 FURNITURE, or chainsaw
-				entity = ent; frac = f;
+				elected = h;
 				break;
 			}
 			continue;
 		}
 		if (et == Enums::ET_NONOBSTRUCTING_SPRITEWALL) {        // :248-254
-			if (melee) melee13 = ent;
+			if (melee) melee13 = h;
 			continue;
 		}
 		if (et == Enums::ET_NPC) {                              // :255-263
-			if (dist >= 8192) { entity = ent; frac = f; break; }// adjacent NPCs are transparent
+			if (dist >= 8192) { elected = h; break; }           // adjacent NPCs are transparent
 			continue;
 		}
 		if (et == Enums::ET_MONSTER) {                          // :264-269
-			entity = ent; frac = f;
+			elected = h;
 			break;                                              // wins over anything collected
 		}
 		if (et == Enums::ET_DOOR) {                             // :270-277
-			if (entity == nullptr) { entity = ent; frac = f; }
+			if (!elected.blocks()) { elected = h; }
 			break;
 		}
 		if (et == Enums::ET_CORPSE) {                           // :278-334
@@ -94,53 +92,56 @@ Entity* Targeting::electFireTarget(int weapon, int* outFrac) {
 			// (:318-334), already handled by findLootableCorpseFacing before
 			// the fire branch, so only the chainsaw attack pick lives here.
 			if (dist == combat.tileDistances[0] && weapon == 1) {
-				if (entity == nullptr || entity->def == nullptr ||
-				    entity->def->eType != Enums::ET_CORPSE ||
-				    entity->linkIndex < ent->linkIndex) {       // :306-311 highest linkIndex of the pile
-					entity = ent; frac = f;
+				// isWorld() is the transfer of the old null-def test on the
+				// elected entity; it is provably redundant here (the world
+				// branch always breaks above) but kept so the condition still
+				// matches :306-311 term by term.
+				if (!elected.blocks() || elected.isWorld() ||
+				    elected.eType != Enums::ET_CORPSE ||
+				    elected.entity->linkIndex < ent->linkIndex) { // :306-311 highest linkIndex of the pile
+					elected = h;
 				}
 			}
 			continue;
 		}
 		if (et == Enums::ET_ENV_DAMAGE) {                       // :335-338
-			if (sub == 1 && weapon == 2 && p.ammo[3] >= 2) { entity = ent; frac = f; break; }
+			if (sub == 1 && weapon == 2 && p.ammo[3] >= 2) { elected = h; break; }
 			continue;
 		}
 		if (et == Enums::ET_DECOR) {                            // :339-343
 			const int si = ent->getSprite();
 			if (si >= 0 && si < env_.map->numSprites &&
 			    (env_.map->mapSpriteInfo[si] & 0xFF) == 0x95) { // TILENUM_PRACTICE_TARGET
-				entity = ent; frac = f;
+				elected = h;
 				break;
 			}
 			continue;
 		}
 		if (et == Enums::ET_DECOR_NOCLIP) {                     // :344-348
-			if (sub == 7 && dist == combat.tileDistances[0]) { entity = ent; frac = f; break; }
+			if (sub == 7 && dist == combat.tileDistances[0]) { elected = h; break; }
 			continue;
 		}
-		if (et != Enums::ET_ITEM && entity == nullptr) {        // :350 fallback (ITEM never elected)
-			entity = ent; frac = f;
+		if (et != Enums::ET_ITEM && !elected.blocks()) {        // :350 fallback (ITEM never elected)
+			elected = h;
 		}
 	}
 
 	int dist2 = combat.tileDistances[9];                        // :356-359
-	if (entity != nullptr) dist2 = env_.game->entityDistFrom(entity, p.viewX, p.viewY);
+	if (elected.blocks()) dist2 = trace.distFrom(elected, p.viewX, p.viewY);
 	// eType 10 out of weapon range (:379-381).
-	if (entity != nullptr && entity->def != nullptr &&
-	    entity->def->eType == Enums::ET_ATTACK_INTERACTIVE &&
-	    ((1 << entity->def->eSubType) & 0x1) == 0 &&
+	if (elected.isEntity() &&                                   // was: entity != nullptr && entity->def != nullptr
+	    elected.eType == Enums::ET_ATTACK_INTERACTIVE &&
+	    ((1 << elected.eSubType) & 0x1) == 0 &&
 	    combat.worldDistToTileDist(dist2) > combat.weaponDef(weapon).rangeMax) {
-		entity = nullptr;
+		elected = TraceHit();
 	}
 	// Melee promotion of the remembered eType 13 (:383-385).
-	if (melee13 != nullptr && (entity == nullptr || entity->def == nullptr ||
-	    (entity->def->eType != Enums::ET_MONSTER &&
-	     entity->def->eType != Enums::ET_CORPSE))) {
-		entity = melee13;
+	if (melee13.blocks() && (!elected.blocks() || elected.isWorld() ||
+	    (elected.eType != Enums::ET_MONSTER &&
+	     elected.eType != Enums::ET_CORPSE))) {
+		elected = melee13;
 	}
-	if (outFrac != nullptr) *outFrac = frac;
-	return entity;
+	return elected;
 }
 
 // Facing probe feeding the health-bar readout — port of
@@ -158,28 +159,26 @@ void Targeting::updateFacingProbe() {
 	const int startY = p.destY + ((28 * fwdY) >> 16);
 	const int endX = p.destX + ((384 * fwdX) >> 16);    // :38 6*-view[2] >> 8 = 6 tiles
 	const int endY = p.destY + ((384 * fwdY) >> 16);
-	Entity* hit = nullptr;
-	env_.game->traceMove(*env_.map, startX, startY, endX, endY,
-		env_.game->db.playerEntity(), kFacingMask, 2, &hit, nullptr);
+	TraceSystem& trace = env_.game->trace;
+	TraceHit hit = trace.trace(startX, startY, endX, endY,
+		env_.game->db.playerEntity(), kFacingMask, 2);
 	// Monster promotion re-scan (:41-86): entered only when the nearest hit is
 	// ITEM / MONSTERBLOCK_ITEM / SPRITEWALL / ATTACK_INTERACTIVE / DECOR_NOCLIP,
 	// then the sorted hit list is walked from index 0 (the nearest hit itself
 	// included) and the pick may move further along the ray. eType 11 is
 	// unreachable with this mask (legacy dead branch) but kept for fidelity.
-	if (hit != nullptr && hit->def != nullptr) {
-		const int t0 = hit->def->eType;
-		const int t0Sub = hit->def->eSubType;
+	if (hit.isEntity()) {                     // was: hit != nullptr && hit->def != nullptr
+		const int t0 = hit.eType;
+		const int t0Sub = hit.eSubType;
 		if (t0 == Enums::ET_ITEM || t0 == Enums::ET_MONSTERBLOCK_ITEM ||
 		    t0 == Enums::ET_SPRITEWALL || t0 == Enums::ET_ATTACK_INTERACTIVE ||
 		    t0 == Enums::ET_DECOR_NOCLIP) {
-			for (const auto& h : env_.game->lastTraceHits()) {
-				Entity* ent = h.second;
-				if (ent == nullptr) continue;
-				// World slot carries no def and reads as eType 0 (Game.h:122).
-				const int et = (ent->def != nullptr) ? ent->def->eType : Enums::ET_WORLD;
-				const int sub = (ent->def != nullptr) ? ent->def->eSubType : 0;
+			for (const TraceHit& h : trace.hits()) {
+				Entity* ent = h.entity;
+				const int et = h.eType;   // resolved once by TraceSystem (ADR 0011)
+				const int sub = h.eSubType;
 				if (et == Enums::ET_MONSTER) {                          // :47-53
-					if (t0 != Enums::ET_SPRITEWALL) hit = ent;
+					if (t0 != Enums::ET_SPRITEWALL) hit = h;
 					break;
 				}
 				if (et == Enums::ET_DOOR || et == Enums::ET_PLAYERCLIP ||
@@ -191,29 +190,31 @@ void Targeting::updateFacingProbe() {
 					continue;
 				}
 				if (et == Enums::ET_DECOR) {                            // :66-72
-					if (t0 == Enums::ET_SPRITEWALL) hit = ent;
+					if (t0 == Enums::ET_SPRITEWALL) hit = h;
 					break;
 				}
 				if (et == Enums::ET_DECOR_NOCLIP) {                     // :74-79
-					if (t0Sub != 6) { hit = ent; break; }
+					if (t0Sub != 6) { hit = h; break; }
 					continue;
 				}
 				if (et == Enums::ET_ATTACK_INTERACTIVE &&
 				    (sub == 1 || sub == 2 || sub == 3)) {               // :80-83
-					if (t0 != Enums::ET_ITEM) { hit = ent; break; }
+					if (t0 != Enums::ET_ITEM) { hit = h; break; }
 					continue;
 				}
 			}
 		}
 	}
-	p.facingEntity = hit;
-	if (p.facingEntity != nullptr && p.facingEntity->def != nullptr) {
+	// The HUD contract is unchanged: facingEntity stays an Entity* (a world hit
+	// still parks the world slot here, exactly as before).
+	p.facingEntity = hit.entity;
+	if (hit.isEntity()) {          // was: facingEntity != nullptr && ->def != nullptr
 		// Distance gate (:88-93): non-monsters beyond Chebyshev^2 36864 (3 tiles)
 		// drop; monsters are never distance-gated. showHelp branches absent.
 		// DEVIATION: legacy measures from destX/destY, we use the interpolated
 		// eye (identical while idle, <=1 tile apart mid-lerp).
-		const int dist = env_.game->entityDistFrom(p.facingEntity, p.viewX, p.viewY);
-		if (p.facingEntity->def->eType != Enums::ET_MONSTER &&
+		const int dist = trace.distFrom(hit, p.viewX, p.viewY);
+		if (hit.eType != Enums::ET_MONSTER &&
 		    dist > env_.game->combat.tileDistances[2]) {
 			p.facingEntity = nullptr;
 		}

@@ -7,6 +7,7 @@
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/game/Targeting.h"
+#include "domain/game/TraceSystem.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
@@ -127,25 +128,24 @@ void PlayerActions::handleAction(Action a) {
 		env_.game->abortMove = false;
 		env_.vm->executeTile(p.viewX >> 6, p.viewY >> 6, env_.game->eventFlags_[0], true);
 		if (env_.game->abortMove) break;
-		Entity* hitEnt = nullptr; int hitFrac = 0;
-		bool clear = env_.game->traceMove(*env_.map, p.viewX, p.viewY, tx, ty,
-			env_.game->db.playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16,
-			&hitEnt, &hitFrac);
+		TraceSystem& trace = env_.game->trace;
+		TraceHit h = trace.trace(p.viewX, p.viewY, tx, ty,
+			env_.game->db.playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16);
 		// DEVIATION (blue-door block bug): an ET_NPC whose circle contains
-		// the trace START (frac < 0) is the scripted-greeter overlap state;
+		// the trace START (startsInside) is the scripted-greeter overlap state;
 		// legacy dissolves it through the per-turn NPC AI that ADR 0005 has
 		// not ported yet, so until then a start-inside NPC hit never blocks.
 		// Re-trace past that entity so real blockers BEHIND it (a shut door)
 		// still apply.
-		for (int pass = 0; !clear && pass < 4 &&
-		     hitFrac < 0 && hitEnt != nullptr &&
-		     hitEnt->def != nullptr && hitEnt->def->eType == Enums::ET_NPC; ++pass) {
+		for (int pass = 0; h.blocks() && pass < 4 &&
+		     h.startsInside() && h.isEntity() &&
+		     h.eType == Enums::ET_NPC; ++pass) {
 			std::fprintf(stderr, "[dbg] start-inside NPC spr=%d stepped past\n",
-				hitEnt->getSprite()); // TEMP [dbg]
-			clear = env_.game->traceMove(*env_.map, p.viewX, p.viewY, tx, ty,
-				hitEnt, Enums::CONTENTS_PLAYERSOLID, 16, &hitEnt, &hitFrac);
+				h.entity->getSprite()); // TEMP [dbg]
+			h = trace.trace(p.viewX, p.viewY, tx, ty,
+				h.entity, Enums::CONTENTS_PLAYERSOLID, 16);
 		}
-		if (clear) {
+		if (!h.blocks()) {
 			p.attemptMove(tx, ty);
 			p.setDestHeight(env_.map->heightAt(tx, ty));
 			p.setZStep(p.destZ - p.viewZ);
@@ -154,10 +154,10 @@ void PlayerActions::handleAction(Action a) {
 			std::fprintf(stderr,
 				"[dbg] moveBlocked to %d,%d by spr=%d type=%d linked=%d frac=%d\n",
 				tx >> 6, ty >> 6,
-				hitEnt ? (hitEnt->getSprite()) : -1,
-				(hitEnt && hitEnt->def) ? hitEnt->def->eType : -1,
-				(hitEnt && (hitEnt->info & Entity::kInfoLinked)) != 0 ? 1 : 0,
-				hitFrac);
+				h.entity ? (h.entity->getSprite()) : -1,
+				h.isEntity() ? h.eType : -1,       // world hit logged as -1, as before
+				(h.entity && (h.entity->info & Entity::kInfoLinked)) != 0 ? 1 : 0,
+				h.frac);
 		}
 		break;
 	}
@@ -208,28 +208,24 @@ void PlayerActions::handleAction(Action a) {
 		// when nothing above consumed the press (legacy return-true chain).
 		const int weapon2 = p.ce.weapon;   // legacy reads ce->weapon (:197)
 		if (weapon2 >= 0 && !env_.game->combat.active) {
-			int frac = 16384;
-			Entity* hit = env_.targeting->electFireTarget(weapon2, &frac);
-			const int dist2 = (hit != nullptr)
-				? env_.game->entityDistFrom(hit, p.viewX, p.viewY) : 0;
-			// World slot carries no def and reads as eType 0 - same convention
-			// as electFireTarget (Targeting.cpp); a plain nullptr means nothing was
-			// elected at all.
-			const int hitType = (hit == nullptr) ? -1
-				: (hit->def != nullptr ? hit->def->eType : Enums::ET_WORLD);
+			TraceSystem& trace = env_.game->trace;
+			const TraceHit elected = env_.targeting->electFireTarget(weapon2);
+			const int dist2 = elected.blocks()
+				? trace.distFrom(elected, p.viewX, p.viewY) : 0;
 			// Outcome mapping of the legacy shot commit (:496-540): attackable
 			// types fire at the entity, a wall within one tile is a push, and
 			// everything else (nothing elected, far geometry) is an air shot
-			// into the WORLD slot.
+			// into the WORLD slot. eType is the one resolved by TraceSystem
+			// (ADR 0011): -1 when nothing was elected, ET_WORLD for a world hit.
 			enum Outcome { kAirShot, kElected, kWallPush };
 			Outcome outcome = kAirShot;
-			if (hitType == Enums::ET_MONSTER || hitType == Enums::ET_NPC ||
-			    hitType == Enums::ET_DECOR || hitType == Enums::ET_ENV_DAMAGE ||
-			    hitType == Enums::ET_CORPSE ||
-			    hitType == Enums::ET_ATTACK_INTERACTIVE ||
-			    hitType == Enums::ET_NONOBSTRUCTING_SPRITEWALL) {
+			if (elected.eType == Enums::ET_MONSTER || elected.eType == Enums::ET_NPC ||
+			    elected.eType == Enums::ET_DECOR || elected.eType == Enums::ET_ENV_DAMAGE ||
+			    elected.eType == Enums::ET_CORPSE ||
+			    elected.eType == Enums::ET_ATTACK_INTERACTIVE ||
+			    elected.eType == Enums::ET_NONOBSTRUCTING_SPRITEWALL) {
 				outcome = kElected;
-			} else if ((hitType == Enums::ET_WORLD || hitType == Enums::ET_SPRITEWALL) &&
+			} else if ((elected.eType == Enums::ET_WORLD || elected.eType == Enums::ET_SPRITEWALL) &&
 			           dist2 <= env_.game->combat.tileDistances[0]) {      // :467 gate
 				outcome = kWallPush;
 			}
@@ -251,9 +247,9 @@ void PlayerActions::handleAction(Action a) {
 				// their sprite coords (legacy passes calcPosition/
 				// traceCollision coords, :509-536). The air-shot impact point is
 				// the trace contact point, not the player (:532-536).
-				Entity* target = outcome == kElected ? hit : env_.game->db.worldEntity();
-				int ax = env_.game->traceCollisionX();
-				int ay = env_.game->traceCollisionY();
+				Entity* target = outcome == kElected ? elected.entity : env_.game->db.worldEntity();
+				int ax = trace.collisionX();
+				int ay = trace.collisionY();
 				if (outcome == kElected) {
 					const int s = target->getSprite();
 					if (s >= 0) {

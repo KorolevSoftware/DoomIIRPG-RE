@@ -3,7 +3,6 @@
 
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "domain/game/Combat.h"
@@ -65,19 +64,6 @@ public:
 	void setLerpViewAngle(int a) { lerps.setLerpViewAngle(a); }
 	static int vecToDir(int dx, int dy) { return SpriteLerps::vecToDir(dx, dy); }
 
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
-	// Rebuilds the legacy pair view over trace.hits() for the consumers that
-	// still walk pairs (Targeting::electFireTarget + updateFacingProbe). The
-	// returned reference is valid only until the next call (mutable rebuild in
-	// place).
-	const std::vector<std::pair<int, Entity*>>& lastTraceHits() const;
-
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2
-	// (retagged in P3-B1: the sole consumer is the PlayerActions fire commit,
-	// PlayerActions.cpp:255-256, which P3-B2 owns).
-	int traceCollisionX() const { return trace.collisionX(); }
-	int traceCollisionY() const { return trace.collisionY(); }
-
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F2.
 	// Door open/close now lives in DoorSystem (see DoorSystem.h for the
 	// contracts); these keep the pre-P2-GB call sites compiling.
@@ -88,14 +74,6 @@ public:
 	DoorUseResult useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY) {
 		return doors.useDoorFacing(map, px, py, stepX, stepY);
 	}
-
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
-	// Old bool + out-param shape of TraceSystem::trace; see TraceSystem.h for
-	// the contract. map is ignored: requires loadEntities() first, which is what
-	// sets the map TraceSystem::trace dereferences.
-	bool traceMove(const MapData& map, int x0, int y0, int x1, int y1,
-	               Entity* skipEnt, int mask, int radius,
-	               Entity** outEntity = nullptr, int* outFrac = nullptr);
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F1.
 	void setPlayerPos(int x, int y) { trace.setPlayerPos(x, y); }
@@ -192,18 +170,10 @@ public:
 	// (spec §1 difficulty note).
 	int difficulty() const;
 
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete after BOTH
-	// P3-B2 (Targeting/PlayerActions) and P3-C2 (Combat.cpp:147,338) have moved
-	// to trace.distFrom(); noted in P3-B1.
-	int entityDistFrom(const Entity* e, int x, int y) const { return trace.distFrom(e, x, y); }
-
 private:
 	MapData* map_ = nullptr;
 	const EntityDefs* defs_ = nullptr;     // set in loadEntities
 	ScriptVM* vm_ = nullptr;
-
-	// FORWARDER scratch (spec §3.1): pair view rebuilt by lastTraceHits().
-	mutable std::vector<std::pair<int, Entity*>> legacyTraceHits_;
 };
 
 } // namespace newcore

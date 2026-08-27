@@ -140,7 +140,7 @@ void Combat::performAttack(Entity* target, int attackX, int attackY, bool script
 	attackerWeaponProj = row.projType;                 // :121
 	// Melee lunge for monster weapon 18 omitted (src/Combat.cpp:131-164):
 	// unreachable while only the player attacks.
-	worldDist = env_.game->entityDistFrom(curTarget,
+	worldDist = env_.game->trace.distFrom(curTarget,
 		env_.player->viewX, env_.player->viewY);       // :127 Chebyshev^2
 	tileDist = worldDistToTileDist(worldDist);         // :128
 	shotsFired = false;    // fresh shot batch (render->shotsFired analog :891)
@@ -331,7 +331,7 @@ int Combat::calcHitEntity(Entity* e) {
 	}
 	const WeaponDef& row = weaponDef(env_.player->ce.weapon);        // :866
 	const int td = worldDistToTileDist(
-		env_.game->entityDistFrom(e, env_.player->destX, env_.player->destY)); // :867
+		env_.game->trace.distFrom(e, env_.player->destX, env_.player->destY)); // :867
 	const int8_t rangeLo = row.rangeMin;
 	const int8_t rangeHi = row.rangeMax;                             // :868
 	if (td < rangeLo || td > rangeHi) {                              // :869-872

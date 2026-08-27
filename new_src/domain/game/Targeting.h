@@ -1,6 +1,8 @@
 #ifndef NEW_DOMAIN_GAME_TARGETING_H
 #define NEW_DOMAIN_GAME_TARGETING_H
 
+#include "domain/game/TraceHit.h"
+
 namespace newcore {
 
 class Entity;
@@ -38,9 +40,9 @@ public:
 
 	// Ordered target election over the sorted fire-trace hit list — port of
 	// src/PlayingInputHandler.cpp:218-385 (docs/original-code/combat.md §8).
-	// Returns the elected entity (nullptr = air shot) and writes its hit
-	// fraction to outFrac.
-	Entity* electFireTarget(int weapon, int* outFrac);
+	// Returns the elected hit; kind None (!blocks()) means nothing was elected
+	// = air shot (ADR 0011; the old Entity*/int* outFrac pair is gone).
+	TraceHit electFireTarget(int weapon);
 
 	// Resolve the facing probe into the HUD monster-health-bar inputs
 	// (legacy gates src/Hud.cpp:825-835,866-874).

@@ -71,7 +71,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	// targets (legacy loadMapEntities gives every sprite an entity,
 	// src/Game.cpp:374-452; the rewrite limits itself to the families that
 	// participate in gameplay this phase — items/decor would change
-	// traceMove blocking).
+	// TraceSystem::trace blocking).
 	int nextSlot = 2; // entities[0]=world, entities[1]=player (reserved)
 	for (int i = 0; i < map.numSprites; ++i) {
 		if (nextSlot >= EntityDb::kEntities) break;
@@ -165,24 +165,6 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 			i, tileNum, x >> 6, y >> 6, def->eSubType,
 			e.lootSet[0], e.lootSet[1], e.lootSet[2]);
 	}
-}
-
-// FORWARDER bodies (spec 2026-08-26-decomposition §3.1) — the trace itself
-// lives in TraceSystem now; these keep the pre-P2-GA call sites compiling.
-bool Game::traceMove(const MapData& map, int x0, int y0, int x1, int y1,
-                     Entity* skipEnt, int mask, int radius,
-                     Entity** outEntity, int* outFrac) {
-	(void)map;                                 // TraceSystem holds the same MapData
-	const TraceHit hit = trace.trace(x0, y0, x1, y1, skipEnt, mask, radius);
-	if (outEntity) *outEntity = hit.entity;
-	if (outFrac)   *outFrac   = hit.frac;
-	return !hit.blocks();                      // clear -> commit allowed
-}
-
-const std::vector<std::pair<int, Entity*>>& Game::lastTraceHits() const {
-	legacyTraceHits_.clear();
-	for (const TraceHit& h : trace.hits()) legacyTraceHits_.push_back({ h.frac, h.entity });
-	return legacyTraceHits_;
 }
 
 // ---- Phase 5: script-facing services ----
