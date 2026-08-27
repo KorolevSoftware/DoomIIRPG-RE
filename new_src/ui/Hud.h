@@ -104,11 +104,18 @@ public:
 	// drawn here — drawMessages owns them.
 	void drawTopBar(Graphics2D& g, const Font& font, int canvasWidth);
 
+	// Bottom panel background: gameMenu_Panel_bottom.bmp (480x64) at y=256,
+	// the legacy band below the 3D viewport (src/TouchController.cpp:544-545,
+	// rendering.md 6.1). Background only, no widgets.
+	void drawBottomPanel(Graphics2D& g);
+
 	// Health-bar feed (replaces the demo setter; legacy state half of
 	// src/Hud.cpp:822-899): id = faced entity sprite index, -1 clears.
 	// A target change snaps display HP; an hp change on the same target
 	// restarts the 250 ms drain window that update() advances.
-	void feedMonsterHealth(int id, int hp, int maxHp);
+	// lowBar = PINKY (eSubType 5) with parm 0 -> bar drops to n3 = 50
+	// (src/Hud.cpp:866-868); boss = Entity::isBoss() -> ++n4 (:874).
+	void feedMonsterHealth(int id, int hp, int maxHp, bool lowBar = false, bool boss = false);
 
 	// Bottom-bar sub-elements.
 	void drawWeapon(Graphics2D& g, int x, int y, int weapon, bool highlighted);
@@ -122,6 +129,7 @@ private:
 	void drawCenterMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
 
 	Texture imgPanelTop_;
+	Texture imgPanelBottom_;
 	Texture imgWeaponNormal_;
 	Texture imgWeaponActive_;
 	Texture imgShieldNormal_;
@@ -183,6 +191,8 @@ private:
 	int monsterHp_ = 0;
 	int monsterMaxHp_ = 0;
 	int monsterChangeTime_ = 0;
+	bool monsterLowBar_ = false;
+	bool monsterBoss_ = false;
 
 	// Demo weapon select screen.
 	bool weaponSelect_ = false;

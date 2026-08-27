@@ -1,5 +1,7 @@
 #include "core/MayaCamera.h"
 
+#include <cstdio>
+
 namespace newcore {
 namespace {
 constexpr int kInheritSentinel = -2; // cutscenes-camera.md §3 (src/MayaCamera.cpp:85-102)
@@ -17,18 +19,11 @@ bool MayaCamera::setup(const MapData& map, int camIdx, const MayaPose& playerPos
 	for (int i = 0; i < camIdx; ++i) {
 		m_keyOffset += map.mayaCameras[i].numKeys;
 	}
-	// Tween byte addressing: each camera's blob is [ch0 bytes][ch1 bytes]..,
-	// and stream-relative indices are rebased by the byte counts of all
-	// previous cameras per channel (running sum in src/Game.cpp:615-621, :635).
-	for (int j = 0; j < 6; ++j) {
-		m_chanOfs[j] = 0;
-		m_basePrev[j] = 0;
-	}
-	for (int i = 0; i < camIdx; ++i) {
-		for (int j = 0; j < 6; ++j) {
-			m_basePrev[j] += map.mayaCameras[i].tweenCounts[j];
-		}
-	}
+	// DEVIATION from src/Game.cpp:612-620: the loader hands each camera its
+	// own tween blob laid out [ch0 bytes][ch1 bytes].. with camera-local tween
+	// indices, so a plain per-channel prefix sum is all the addressing needed.
+	// The legacy per-channel cross-camera rebase (src/Game.cpp:615-621, :635)
+	// exists solely because the original keeps ONE global array per channel.
 	int ofs = 0;
 	for (int j = 0; j < 6; ++j) {
 		m_chanOfs[j] = ofs;
@@ -235,14 +230,21 @@ int MayaCamera::estNumTweens(int absKey) const {
 }
 
 int MayaCamera::tweenSample(int k, int ch, int step) const {
-	// getTweenData byte fetch (src/MayaCamera.cpp:181-195), rebased into this
-	// camera's tween blob via chanOfs + cross-camera base (src/Game.cpp:636).
+	// getTweenData byte fetch (src/MayaCamera.cpp:181-195) into this camera's
+	// own tween blob: indices are camera-local, only chanOfs applies.
 	int indx = m_cam->tweenIndices[k * 6 + ch];
 	if (indx < 0) {
 		return 0;
 	}
-	size_t pos = static_cast<size_t>(m_chanOfs[ch] + m_basePrev[ch] + indx + step);
+	size_t pos = static_cast<size_t>(m_chanOfs[ch] + indx + step);
 	if (pos >= m_cam->tweens.size()) {
+		// One-shot: up to 6 channels x N steps per frame would spam otherwise.
+		static bool warned = false;
+		if (!warned) {
+			warned = true;
+			std::fprintf(stderr, "[cam] tween out of range: cam=%d key=%d ch=%d indx=%d step=%d pos=%zu size=%zu\n",
+				m_camIdx, k, ch, indx, step, pos, m_cam->tweens.size());
+		}
 		return 0;
 	}
 	return static_cast<int8_t>(m_cam->tweens[pos]);

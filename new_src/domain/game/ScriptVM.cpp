@@ -788,7 +788,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			// (src/ScriptThread.cpp:400-411).
 			int cam = readUByte(t);
 			std::fprintf(stderr, "[script] STARTCINEMATIC camera=%d\n", cam);
-			env_.ctx->startCinematic(cam);
+			env_.ctx->cinematic().startCinematic(cam);
 			env_.game->skipAdvanceTurn = true;                 // (:409-410)
 			env_.game->queueAdvanceTurn = false;
 			break;
@@ -798,9 +798,9 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			// Park until `count` more camera keys completed; the context's
 			// Snap analog resumes the thread (src/ScriptThread.cpp:690-702).
 			int count = readUByte(t);
-			if (!env_.ctx->cameraActive()) break;   // non-camera states consume the arg (:700-701)
+			if (!env_.ctx->cinematic().active()) break;   // non-camera states consume the arg (:700-701)
 			std::fprintf(stderr, "[script] ADV_CAMERAKEY resumes=%d\n", count);
-			env_.ctx->advanceCameraKey(t, count);  // parks via unpauseTime=-1
+			env_.ctx->cinematic().advanceCameraKey(t, count);  // parks via unpauseTime=-1
 			n = 2;
 			break;
 		}
@@ -1162,7 +1162,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 					env_.ctx->finishRotationFired();           // finishRotation(true) FACE events
 				}
 				if ((v & 0x8000) != 0) env_.game->advanceTurn(); // (:643-645)
-				if (env_.ctx->state != StateId::Camera) p.startRotation(); // (:646-649)
+				if (env_.ctx->state() != StateId::Camera) p.startRotation(); // (:646-649)
 				env_.ctx->gotoTriggered_ = true;   // destination events next tick (:653)
 			}
 			// relink()/clearEvents(1)/updateFacingEntity/invalidateRect

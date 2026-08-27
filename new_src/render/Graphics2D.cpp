@@ -10,6 +10,10 @@ namespace newcore {
 
 static constexpr int kHardSpace = 0xA0; // hard space (non-breaking)
 
+void Graphics2D::setBlendMode(int mode) {
+	if (batch_) batch_->setBlendMode(mode);
+}
+
 void Graphics2D::setClip(int x, int y, int w, int h) {
 	clipX_ = x;
 	clipY_ = y;

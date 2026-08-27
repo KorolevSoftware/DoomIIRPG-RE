@@ -504,3 +504,194 @@ Append-only. One entry per completed unit of work. Newest at the bottom.
   D2R_AUTOPASS=1 prints [turn] passturn msg45="Turn Passed"; [face] probe lines
   re-fire on Playing entry / advanceTurn / rotation arrival (spr=19 type=3 NPC
   tracked at spawn); doors/walk/loot flows unchanged; zero UNIMPLEMENTED.
+
+## 2026-08-26 — playtest fixes: lift ride cutscenes + combat stage 1 corrections
+
+User playtest of combat stage 1 + camera key-0 produced four defects. Camera key-0
+itself CONFIRMED good by the user (intro flight, hangar door, lift ride, exit visible,
+background room-explosion cutscene now at proper speed). Regression list clean:
+doors, loot, dialogs, TAB "Turn Passed".
+
+### Research (4 researchers in parallel)
+
+- Facing/health bar: original bar target is `player->facingEntity`, produced by a
+  **6-tile ray** (`src/MovementController.cpp:28-158`, mask 21741, radius 2, origin =
+  tile centre + 28 units), nearest-hit + promotion post-filter; non-monsters dropped
+  beyond `tileDistances[2]` (3 tiles), **monsters never distance-gated**; recomputed
+  every rendered frame via `src/Hud.cpp:735-742`. Bar geometry for 480x320: 25 segments
+  7x14, frame 202x17 at x=139, y = viewRect[1] + n3 (6 / 50 pinky / +20 zoomed),
+  250 ms linear drain. Our spec's "one tile toward viewStep" was the defect source.
+  → `docs/original-code/combat.md` §7, `docs/research/2026-08-26-facing-entity-health-bar.md`.
+- Fire targeting: **separate** trace from `viewX/viewY/viewZ`, mask 13997
+  (`CONTENTS_WEAPONSOLID` = PLAYERSOLID − 16 + 512: guns see corpses, the player walks
+  through them), fixed 6-tile line (1 for chainsaw via `WP_MELEEMASK`). An own-tile
+  entity gets frac −1 and sorts FIRST, so "nearest hit wins" was wrong: the original
+  walks the sorted list with per-type accept/skip/break rules, and the corpse branch
+  (`src/PlayingInputHandler.cpp:279`) accepts only at `dist == tileDistances[0]` (exact
+  equality) and **never breaks** — hence the own-tile corpse is skipped.
+  Refuted: `tileDistances[0]` at `src/Hud.cpp:981` is the dialog-bubble offset, not range.
+  → `docs/original-code/combat.md` §8, `docs/research/2026-08-26-fire-target-acquisition-corpse-tile.md`.
+- View weapon: `draw2DSprite` always samples only the top-left **176x176** texels of the
+  256x256 media (`src/GLES.cpp:539-542`) — we passed 256x256 into a 176x176 quad (0.6875x
+  shrink, which also lifted the gun); and the original's anchors are **viewport-relative**
+  (`glViewport(1, 65, 478, 248)` → canvas band (1,7,478,248), centre (240,131)).
+  → `docs/original-code/rendering.md` §6, `combat.md` §1/§4.1,
+  `docs/research/2026-08-26-view-weapon-placement-audit.md`.
+- Lift rides: NOT a timing bug. Durations were already right (cam 11 = 600/200/0 ms,
+  cam 12 = 800/0 ms, probed from `tmp_map00.bin`). Tween indices are **camera-local**;
+  legacy rebases them because it keeps one global per-channel array (`src/Game.cpp:612-620`),
+  our per-camera blob must not. Also documented: instant `EV_GOTO` defers the destination's
+  ENTER events past the cinematic — load-bearing, it prevents a recursive ride.
+  → `docs/original-code/cutscenes-camera.md` §3, `docs/research/2026-08-26-lift-ride-cutscene-timing.md`,
+  probe `docs/research/assets/probe_lift_cams.py`.
+
+### Implementation
+
+- Camera tween addressing (minimal mechanical fix, no spec): `pos = m_chanOfs[ch] + indx + step`,
+  `m_basePrev` deleted, silent out-of-range `return 0` replaced by a loud `[cam]` diagnostic.
+  Files: `new_src/core/MayaCamera.{cpp,h}`. **Reviewed PASS** — reviewer replayed both address
+  schemes over `tmp_map00.bin`: 14/14 cameras byte-identical to legacy, 0 out-of-range.
+  **User-confirmed: "фикс для кат сцен работает идеально"**, zero `[cam] tween out of range`
+  in a full playthrough log.
+- Spec for the other three: `docs/architecture/specs/2026-08-26-combat-stage1-fixes.md`
+  (6 groups) + `docs/architecture/adr/0009-legacy-world-viewport.md`;
+  `2026-08-26-combat-stage1.md` marked partially superseded (§0.F :157-160, §9).
+- G1 facing probe (`core/GameContext.{h,cpp}`): 6-tile ray via new `viewForward()`, mask 21741,
+  full promotion table incl. the `mapFlags & 0x2` gate, monsters ungated, probe moved from the
+  `facingDirty` latch to the legacy per-frame render site. Coder followed `src/` over the spec
+  where the promotion table's "(no break)" annotation contradicted `src/MovementController.cpp:74-83`.
+- G2 bar geometry (`ui/Hud.{h,cpp}`): pinky `n3 = 50`, boss `++n4`, feed extended with
+  `lowBar`/`boss`. Rest of the bar verified already correct.
+- G3 fire election (`core/GameContext.{h,cpp}`): `electFireTarget(weapon, &frac)` — ordered walk
+  over sorted hits with the per-type table, corpse branch never breaks. Loot preemption gated on
+  `weapon != 1` (deviation, follows `src/PlayingInputHandler.cpp:280-334` over the spec, else the
+  chainsaw could not gib). Plus the G2 feed flags wired.
+- G4 bottom HUD panel (`ui/Hud.{h,cpp}`): `gameMenu_Panel_bottom.bmp` 480x64 at y=256 — required
+  before G5 or the legacy band leaves a 65 px black strip. Deviation: call sits at the end of
+  `drawTopBar` (same single call site/states) because `GameContext.cpp` was locked by G1.
+- G5 viewport + weapon: in flight at time of writing.
+
+Build green after every group (verified by the orchestrator, not only by coder reports).
+
+### Open / follow-up
+
+- Bottom panel currently draws background only: the widgets (shield, health, portrait, weapon
+  icon, keys) live in `Hud::draw`, which has no caller in the gameplay render path.
+- Non-blocking review notes on the camera fix: unthrottled tween diagnostic, a comment now
+  sitting above the wrong loop, and the TEMP `[cam] nextKey` print at
+  `new_src/core/GameContext.cpp:735` (kept deliberately until the rides were eye-confirmed —
+  they now are, so it can go).
+- Untested paths from the research: `estNumTweens == 0` for the map's last global key;
+  map-placed non-skeleton corpses may be un-gibbable (`info & 0x20000`).
+
+### 2026-08-26 (cont.) — playtest round 2: review FAIL fixed, weapon geometry re-derived
+
+User eye-confirmed after groups 1-5: shooting while standing on a corpse works, health bar
+shows at range, shots land beyond one tile, muzzle flash present, bottom panel present
+(widgets still missing — known). Two defects remained: cutscene viewport "slides down",
+rifle still too high (and, from a side-by-side with the legacy binary, too small).
+
+Reviewer verdict **FAIL**, 2 blocking items, both fixed:
+
+1. **Wall shots fired and burned the turn** (regression introduced by our own 6-tile ray).
+   `Game::traceMove` pushes the world hit as `entities_[0]` with `def == nullptr`, so
+   `hitType` resolved to −1 and the `ET_WORLD` wall-push branch was dead code. Legacy
+   (`src/PlayingInputHandler.cpp:467-487`) does shiftWeapon+rockView and returns without
+   firing or advancing the turn. Fixed with the `electFireTarget` convention
+   (`def == nullptr → ET_WORLD`).
+2. **Cinematic viewport.** NOT a y-flip bug (`RenderBackend::setCanvasViewport` is correct:
+   GL y = 320−7−248 = 65, matching legacy). The original renders cinematics into the SAME
+   GL rect as gameplay: `cinRect (0,42,480,250)` (`src/Canvas.cpp:1215`) → `(1,23,478,248)`
+   (`src/TinyGL.cpp:149-167`) → `BeginFrame` → **y discarded**, `posY = 65`
+   (`src/GLES.cpp:119-127`). The letterbox is the 2D cockpit overlay at y=42
+   (`src/Hud.cpp:620-625`); `cinRect` is not a viewport rect. Fixed: one `kWorldRect` for
+   both paths. ADR 0009 D1 refuted and amended (history kept).
+   Root cause of the mistake: `docs/original-code/rendering.md` §6 documented only the
+   gameplay chain — now fixed (§6.3).
+   Also fixed: air-shot impact point now uses the trace collision point instead of
+   `(viewX, viewY)` (invisible with a 1-tile ray, at the player's feet with 6 tiles);
+   `Graphics2D.h` comment placement; one-shot latch on the tween diagnostic.
+
+**View weapon — our whole model was wrong** (`docs/research/2026-08-26-legacy-draw-path-and-bands.md`):
+`Render::draw2DSprite` on the GL path is NOT a screen-space blit. It builds a **world-space
+billboard 400 units in front of the eye** (`src/Render.cpp:343-421`) that the world projection
+magnifies (`src/GLES.cpp:483-547`): `Kx = m[0]/12800 = 1.33578`, `Ky = m[5]*248/(478*12800) =
+1.33973`. That is also why the software fallback hard-codes `scaleFactor *= 1.35f` — an
+approximation of the same factor. So the rifle is 235x236 on canvas, quad (165,22)-(400,258),
+visible art (273,162)-(399,261) clipped at y=255 (it TOUCHES the bottom panel), flash 117 px.
+Implemented via a `drawWeaponQuad` helper that scales about the viewport centre and trims the
+quad + source sub-rect by hand.
+Corrected two earlier claims: the "1:1 pixel mapping" in the view-weapon audit, and the
+"software-TinyGL variant is not the port target" dismissal — both paths agree within 2 px,
+so no path switch is needed.
+Legacy-binary caveat: `build/src/DoomIIRPG` runs in **software** mode (`isInit = 0` in its
+CONFIGFILENAME) and is not reproducible from this `src/` (it has a Video Options menu that
+does not exist here) — fine for comparison given the 2 px agreement.
+
+**FOV conflict resolved** (researcher's first answer was wrong, corrected on a second pass):
+there is no fov field; `MayaCamera::Render` passes literals — **290** for `ST_DIALOG` with an
+active camera, **315** for cinematics (`src/MayaCamera.cpp:301-323`). Full inventory of every
+fov in the game now in `docs/original-code/rendering.md` §6.3. No per-camera/per-key fov exists
+in map data (maya keys carry exactly X/Y/Z/PITCH/YAW/ROLL/MS). So cinematic aspect 163 is right.
+
+### Debts recorded
+
+- Weapon magnification is hard-coded for the GAMEPLAY projection; cinematics use Kx 1.221 /
+  Ky 1.224 (fov 315). Harmless today because `cinematicWeapon` is not implemented in the
+  rewrite at all, but wrong by construction — derive K from the active projection instead
+  (needs an accessor for `Camera3D::projection_`, `new_src/render/Camera3D.h:63`).
+- `Graphics2D::setClip` is a **no-op for the sprite batch** (`new_src/render/Graphics2D.cpp:17-29`
+  records the region, never scissors) — a trap for anyone who relies on it.
+- The fix spec contained four errors found by coders/reviewer while checking against `src/`
+  (facing "one tile", the promotion table's "(no break)", loot preemption vs chainsaw, and a
+  claimed `Game.h:364` accessor that did not exist). Worth a spec-vs-original review pass.
+- Bottom HUD panel draws background only; the widgets live in `Hud::draw`, which has no caller
+  in the gameplay render path.
+
+**Round 2 eye-check — user-confirmed ALL of it (2026-08-26):** rifle renders correctly,
+cutscene entry no longer jumps the viewport, a point-blank wall shot consumes no ammo and no
+turn, impact position and muzzle flash correct. Together with the round-1 confirmations
+(lift rides, health bar at range, shooting from a corpse tile) every defect from the playtest
+is closed, including the wall-shot regression our own 6-tile ray introduced.
+
+### 2026-08-26 (cont.) — cinematic letterbox + decomposition designed
+
+Round-2 review returned FAIL again (2 blockers, both at the gameplay/cinematic projection
+boundary the previous fix opened): cinematic fov must be **290 during a dialog** (`src/MayaCamera.cpp:305-310`;
+315 otherwise), and the "latent" weapon-magnification bug was **live** — `drawViewWeapon`
+accepted `StateId::Dialog`, so a camera-driven dialog drew the player's weapon with gameplay
+magnification under the cinematic projection. Legacy draws no view weapon while a camera is
+active unless `cinematicWeapon != -1` (`src/MayaCamera.cpp:311-314`). Both fixed; the
+magnification is now derived from the live projection (`Camera3D::projectionInt()`,
+`Kx = m[0]/12800`, `Ky = |m[5]|*124/(239*12800)`), verified to reproduce the old hard-coded
+1.335781/1.339753 bit-for-bit, so the user-approved gameplay geometry did not move.
+**User-confirmed:** weapon unchanged in gameplay, absent in cinematics.
+
+**Cinematic letterbox** — third curated fact refuted this session. The letterbox is NOT the
+cockpit overlay art: it is two opaque black fills painted after the world pass,
+`(0,0,480,42)` and `(0,292,480,28)` (`src/Hud.cpp:455-456`), and the top one **overpaints the
+top 35 rows of the world band** (visible cinematic picture = rows 42..254). Gated on
+`state == ST_CAMERA` (`src/Canvas.cpp:1213`), hence ABSENT during a dialog over an active
+camera (`:1095`) — the picture deliberately grows 35 rows upward and re-letterboxes on close.
+The cockpit art is a separate script-toggled effect (opcode 76 `EV_TOGGLE_OVERLAY`), off by
+default, on map00 only around the drop-ship shot — and it turned out we already implement it
+correctly (`new_src/domain/game/ScriptVM.cpp:1011-1015`, `Hud::cockpitOverlay()`).
+Implemented, **user-confirmed**. ADR 0009's amendment carried the refuted claim and now carries
+a dated CORRECTION.
+
+**Process note.** Three curated facts were wrong this session — "draw2DSprite is a 1:1 blit",
+"the software-TinyGL path is not the port target", "the letterbox is overlay art". None were
+authored by the orchestrator, but all three were accepted without challenge and propagated
+into tasks, code and an ADR. Common failure mode: a conclusion drawn from ONE site instead of
+following the chain to its final consumer (`BeginFrame` discarding the y; `DrawWorldSpaceSpriteLine`
+projecting the billboard; `eraseRgn` painting the bars). Researcher briefs now require walking
+the chain to the last consumer and re-verifying quoted citations rather than trusting them.
+
+**Decomposition designed** (user-approved after reading the analysis):
+`docs/architecture/specs/2026-08-26-decomposition.md` (19 groups, 2 phases) +
+ADR 0010 (module boundaries and Env injection) + ADR 0011 (typed `TraceHit`, named encodings).
+Phase 1 extracts `CinematicCamera`, `LootSession`, `Targeting`, `ViewWeapon`, `SceneRenderer`,
+`PlayerActions` out of `GameContext` (target <= 400 lines, state machine only). Phase 2 splits
+`Game` into `TraceSystem`/`DoorSystem`/`MonsterSystem`/`SpriteLerps`/`CorpseLoot`/`EntityDb`
+behind one-line forwarders, so the two chains never share a file and can run in parallel.
+Refactor constraint: zero behaviour change; acceptance = the user sees no difference.

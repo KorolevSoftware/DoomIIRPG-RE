@@ -126,6 +126,7 @@ void SpriteBatch::begin() {
 	boundTex_ = nullptr;
 	currentTex_ = nullptr;
 	boundIndexed_ = false;
+	blendMode_ = 0;
 	begun_ = true;
 
 	glDisable(GL_DEPTH_TEST);
@@ -139,6 +140,12 @@ void SpriteBatch::end() {
 	flush();
 	glBindVertexArray(0);
 	begun_ = false;
+}
+
+void SpriteBatch::setBlendMode(int mode) {
+	if (mode == blendMode_) return;
+	flush();
+	blendMode_ = mode;
 }
 
 void SpriteBatch::emitQuad(const Vertex* v) {
@@ -182,7 +189,7 @@ void SpriteBatch::flush() {
 	// draws, and quads recorded before endFrame rasterize HERE (beginFrame's
 	// glEnable is long gone), which rendered kill-color pixels opaque.
 	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glBlendFunc(GL_SRC_ALPHA, blendMode_ == 1 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
 
 	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices_.size());
 

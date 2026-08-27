@@ -51,11 +51,18 @@ public:
 	// Fills a solid rectangle covering the whole canvas.
 	void clear(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b);
 
+	// Flushes pending quads. Public because a viewport change must not
+	// retro-scale quads recorded earlier (they rasterize at flush time).
+	void flush();
+
+	// Blend mode: 0 = SRC_ALPHA/ONE_MINUS_SRC_ALPHA (default), 1 = additive
+	// RENDER_ADD50 (SRC_ALPHA/ONE, src/GLES.cpp:660-664). Flushes on change.
+	void setBlendMode(int mode);
+
 	int canvasWidth() const { return canvasWidth_; }
 	int canvasHeight() const { return canvasHeight_; }
 
 private:
-	void flush();
 	void flushColor();
 	void flushIndexed();
 	void ensureCapacity(int quads);
@@ -82,6 +89,7 @@ private:
 
 	int canvasWidth_ = 0;
 	int canvasHeight_ = 0;
+	int blendMode_ = 0;
 	bool initialized_ = false;
 	bool begun_ = false;
 };

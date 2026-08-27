@@ -60,7 +60,6 @@ private:
 	int m_camIdx = -1;
 	int m_keyOffset = 0;   // absolute index of this camera's key 0
 	int m_chanOfs[6] = {}; // own channel byte offsets inside tweens
-	int m_basePrev[6] = {}; // cross-camera running tween base (src/Game.cpp:615-621)
 	MayaPose m_player;     // player pose captured at setup (-2 sentinel source)
 	MayaPose m_pose;
 	int m_agg[6] = {};     // aggregate components, CH_ order (src/MayaCamera.cpp:243-251)

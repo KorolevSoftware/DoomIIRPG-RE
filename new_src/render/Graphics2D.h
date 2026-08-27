@@ -72,6 +72,9 @@ public:
 	void drawBuffIcon(int iconIndex, int x, int y, int flags = 0,
 		uint8_t tintR = 255, uint8_t tintG = 255, uint8_t tintB = 255, uint8_t alpha = 255);
 
+	// Blend mode passthrough (0 = alpha, 1 = additive RENDER_ADD50).
+	void setBlendMode(int mode);
+
 	// Sets the Icons_Buffs texture used by drawString's '\'+letter icons.
 	void setBuffIconTexture(const Texture& buffs) { buffIcons_ = &buffs; }
 

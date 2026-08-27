@@ -39,6 +39,8 @@ void RenderBackend::applyViewport(Window& window) {
 }
 
 void RenderBackend::setCanvasViewport(int x, int y, int w, int h) {
+	// Batched quads rasterize at flush time -> flush before any viewport change.
+	batch_.flush();
 	if (canvasVp_[2] <= 0 || canvasVp_[3] <= 0 || w <= 0 || h <= 0) return;
 	float scaleX = static_cast<float>(canvasVp_[2]) / Window::kCanvasWidth;
 	float scaleY = static_cast<float>(canvasVp_[3]) / Window::kCanvasHeight;
@@ -53,6 +55,7 @@ void RenderBackend::setCanvasViewport(int x, int y, int w, int h) {
 }
 
 void RenderBackend::restoreCanvasViewport(Window& window) {
+	batch_.flush();
 	applyViewport(window);
 }
 

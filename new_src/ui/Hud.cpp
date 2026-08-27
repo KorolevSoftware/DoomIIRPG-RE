@@ -15,6 +15,7 @@ namespace {
 
 constexpr int kPanelTopW = 480;
 constexpr int kPanelTopH = 20;
+constexpr int kPanelBottomY = 256;
 constexpr int kWeaponH = 44;
 constexpr int kNumH = 20;
 constexpr int kKeyH = 44;
@@ -73,6 +74,7 @@ bool Hud::startup() {
 	const AppContext& app = AppContext::instance();
 	bool ok = true;
 	ok &= loadTexture(app, "HUD_Panel_top.bmp", imgPanelTop_);
+	ok &= loadTexture(app, "gameMenu_Panel_bottom.bmp", imgPanelBottom_);
 	ok &= loadTexture(app, "Hud_Weapon_Normal.bmp", imgWeaponNormal_);
 	ok &= loadTexture(app, "HUD_Weapon_Active.bmp", imgWeaponActive_);
 	ok &= loadTexture(app, "arrow-up.bmp", imgArrowUp_);
@@ -122,7 +124,7 @@ void Hud::draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeigh
 	}
 	drawDamageVignette(g, 0, 42, canvasWidth, canvasHeight - 42);
 	drawHudOverdraw(g, 0, 0, canvasWidth, canvasHeight);
-	drawTopBar(g, font, canvasWidth);
+	drawTopBar(g, font, canvasWidth); // also paints the bottom panel background
 	if (showArrows_) drawArrowControls(g);
 	drawBottomBar(g, font);
 	drawBubbleText(g, font, 240, 42, 480);
@@ -238,10 +240,13 @@ void Hud::drawMonsterHealth(Graphics2D& g, int scrCx, int viewTop) {
 	int n2 = ((n << 8) * ((stat2 << 16) / (stat << 8)) >> 8) + 256 - 1 >> 8;
 	if (n2 == 0 && stat2 > 0) n2 = 1;
 	int n4 = 2 * (480 << 8) / 128 >> 8;
-	if ((n4 & 0x1) != 0) ++n4; // odd -> even (boss +1 branch deferred)
+	if (monsterBoss_) ++n4;                 // :874 boss segments are 1px wider
+	else if ((n4 & 0x1) != 0) ++n4;         // odd -> even (both give 8 at 480)
 	int n5 = 2 + n4 * n;
 	int n6 = scrCx - (n5 >> 1);
-	int n3 = 6;   // VIOS-boss 50 / zoomed +20 variants deferred (:866-871)
+	// :866-871: pinky with parm 0 pushes the bar down; the zoomed-in +20
+	// variant has no counterpart here (no zoom system yet).
+	int n3 = monsterLowBar_ ? 50 : 6;
 	int y = viewTop + n3;
 
 	g.fillRect(n6, y, n5, n4 * 2 + 1, 0, 0, 0);
@@ -258,7 +263,7 @@ void Hud::drawMonsterHealth(Graphics2D& g, int scrCx, int viewTop) {
 	}
 }
 
-void Hud::feedMonsterHealth(int id, int hp, int maxHp) {
+void Hud::feedMonsterHealth(int id, int hp, int maxHp, bool lowBar, bool boss) {
 	// State half of legacy drawMonsterHealth (src/Hud.cpp:838-850): a new
 	// target snaps the animated value; changed hp on the same target starts
 	// a fresh 250 ms drain from the previous destination.
@@ -273,6 +278,8 @@ void Hud::feedMonsterHealth(int id, int hp, int maxHp) {
 		monsterChangeTime_ = 0;
 	}
 	monsterMaxHp_ = maxHp;
+	monsterLowBar_ = lowBar;
+	monsterBoss_ = boss;
 }
 
 void Hud::drawWeaponSelection(Graphics2D& g, const Font& font) {
@@ -323,6 +330,17 @@ void Hud::drawTopBar(Graphics2D& g, const Font& font, int canvasWidth) {
 	// viewRect[1]=20 here + the legacy n3=6 inset = absolute y=26
 	// (src/Hud.cpp:882). Messages are drawn solely by drawMessages.
 	drawMonsterHealth(g, 240, 20);
+
+	// Legacy paints the bottom panel in the same HUD pass as the top strip
+	// (src/TouchController.cpp:544-545). Called here rather than from
+	// GameContext::render so the gameplay states {Playing, Looting, Dialog}
+	// that already own the drawTopBar call get it with no extra call site.
+	drawBottomPanel(g);
+}
+
+void Hud::drawBottomPanel(Graphics2D& g) {
+	if (!imgPanelBottom_.valid()) return;
+	g.drawImage(imgPanelBottom_, 0, kPanelBottomY, 0);
 }
 
 void Hud::drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color) {

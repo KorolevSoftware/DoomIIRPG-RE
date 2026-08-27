@@ -1,6 +1,7 @@
 #include "core/GameContext.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -27,6 +28,13 @@ namespace newcore {
 
 void GameContext::init(const Init& sys) {
 	sys_ = sys;
+	CinematicCamera::Env cinEnv;
+	cinEnv.map = sys_.map;
+	cinEnv.player = sys_.player;
+	cinEnv.vm = sys_.vm;
+	cinEnv.host = this;
+	cinEnv.gameTime = &gameTime;
+	cinematic_.init(cinEnv);
 	if (sys_.tables) {
 		camera_.setSinTable(sys_.tables->sinTable.data());
 		sys_.game->setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (Game.h)
@@ -40,15 +48,15 @@ void GameContext::setState(StateId s) {
 	// closeDialog always asks back for ST_PLAYING; redirect while an
 	// inter-cinematic/cinematic context survives, INTER_CAMERA > CAMERA
 	// priority. dialogPrevState_ latches the pre-dialog state at entry.
-	if (s == StateId::Playing && state == StateId::Dialog) {
+	if (s == StateId::Playing && state_ == StateId::Dialog) {
 		if (dialogPrevState_ == StateId::InterCamera) s = StateId::InterCamera;
-		else if (cameraActive()) s = StateId::Camera;
+		else if (cinematic_.active()) s = StateId::Camera;
 	}
 	stateChanged = true;                                   // src/Canvas.cpp:1024
 	for (int& v : stateVars) v = 0;                        // sub-state timelines rebuilt per entry (:1024-1026)
 	exitState_();
-	oldState = state;
-	state = s;                                             // :1052-1053
+	oldState = state_;
+	state_ = s;                                             // :1052-1053
 	enterState_(s);
 }
 
@@ -56,7 +64,7 @@ void GameContext::exitState_() {
 	// Legacy exit hooks live here: ST_AUTOMAP unpauses the player,
 	// ST_MENU unpauses + clears the menu stack, ST_CAMERA re-enables render
 	// activation + clears skippingCinematic (src/Canvas.cpp:1030-1049).
-	if (state == StateId::Camera) skipCinematic_ = false;  // (:1037-1040)
+	if (state_ == StateId::Camera) cinematic_.clearSkipRequest();  // (:1037-1040)
 }
 
 void GameContext::enterState_(StateId s) {
@@ -125,8 +133,8 @@ void GameContext::tick() {
 	// clock too). Frozen elsewhere (deviation C5, narrowed by the cinematic
 	// group). Freezing during Dialog is what pauses the camera clock over a
 	// dialog (legacy activeCameraTime flip, src/Canvas.cpp:1092-1094).
-	if (!pauseGameTime && (state == StateId::Playing || state == StateId::Camera ||
-	                       state == StateId::Looting)) gameTime += kTickMs;
+	if (!pauseGameTime && (state_ == StateId::Playing || state_ == StateId::Camera ||
+	                       state_ == StateId::Looting)) gameTime += kTickMs;
 
 	// Expired-latch sweep: legacy runInputEvents zeroes blockInputTime once
 	// gameTime passes it, independent of thread state
@@ -143,7 +151,7 @@ void GameContext::tick() {
 			const char* env = std::getenv("D2R_AUTODIALOG");
 			enabled = env != nullptr && std::atoi(env) != 0 ? 1 : 0;
 		}
-		if (enabled != 0 && state == StateId::Dialog && --dialogCooldown <= 0) {
+		if (enabled != 0 && state_ == StateId::Dialog && --dialogCooldown <= 0) {
 			dialogCooldown = 40;
 			pendingActions_.push_back(Action::Use);
 		}
@@ -158,18 +166,18 @@ void GameContext::tick() {
 	bool blocked = inputBlocked();
 	for (size_t i = 0; i < pendingActions_.size(); ++i) {
 		Action a = pendingActions_[i];
-		if (state == StateId::Dialog) {
+		if (state_ == StateId::Dialog) {
 			sys_.dialogs->handleInput(a);
 			continue;
 		}
-		if (state == StateId::Camera) {
+		if (state_ == StateId::Camera) {
 			// Any action past the cinUnpauseTime lockout skips the cinematic
 			// (Passturn/Automap/Fire/18 in legacy; the subset set is smaller).
-			if (gameTime >= cinUnpauseTime_) skipCinematic_ = true;
+			if (cinematic_.skipGateOpen()) cinematic_.requestSkip();
 			continue;
 		}
-		if (state == StateId::Looting) { handleLootingAction(a); continue; }
-		if (blocked || state != StateId::Playing) break;
+		if (state_ == StateId::Looting) { handleLootingAction(a); continue; }
+		if (blocked || state_ != StateId::Playing) break;
 		handlePlayingAction(a);
 	}
 	pendingActions_.clear();
@@ -179,7 +187,7 @@ void GameContext::tick() {
 	// Threads tick in PLAYING and CAMERA only (src/Game.cpp:3259): during a
 	// cinematic the scripts keep running — input is what's parked.
 	sys_.game->setPlayerPos(sys_.player->viewX, sys_.player->viewY);
-	if (state == StateId::Playing || state == StateId::Camera) sys_.vm->runScriptThreads(gameTime);
+	if (state_ == StateId::Playing || state_ == StateId::Camera) sys_.vm->runScriptThreads(gameTime);
 
 	// SpriteLerp pool + door anims tick in every state legacy covers with
 	// updateLerpSprites: PLAYING/INTER_CAMERA (src/GameStateRunner.cpp:25,
@@ -191,19 +199,19 @@ void GameContext::tick() {
 	// keeps lerps-before-updateView order (src/GameStateRunner.cpp:184-185);
 	// in CAMERA this runs before the camera clock (legacy swaps those two —
 	// within-tick difference only).
-	if (state == StateId::Playing || state == StateId::InterCamera ||
-	    state == StateId::Camera || state == StateId::Dialog) {
+	if (state_ == StateId::Playing || state_ == StateId::InterCamera ||
+	    state_ == StateId::Camera || state_ == StateId::Dialog) {
 		// Walk-writer view feed (spec §4): the chooser compares move vectors
 		// against the last rendered view — maya pose during a cinematic key,
 		// else the player view angle (same two sources render() uses,
 		// GameContext.cpp:724-769; legacy read app->render->viewAngle).
-		sys_.game->setLerpViewAngle(cameraActive()
-		                                ? maya_.pose().yaw
+		sys_.game->setLerpViewAngle(cinematic_.active()
+		                                ? cinematic_.pose().yaw
 		                                : sys_.player->viewAngle);
 		sys_.game->update(kTickMs);
 	}
 
-	switch (state) {
+	switch (state_) {
 	case StateId::Loading: tickLoading(); break;
 	case StateId::Playing: tickPlaying(); break;
 	case StateId::InterCamera:
@@ -266,11 +274,11 @@ void GameContext::tickLoading() {
 	// (src/LoadingManager.cpp:715-717 gates on canvas->state == ST_LOADING);
 	// stomping a live ST_CAMERA here kept the cockpit overlay gate in
 	// render() false forever during the boot intro.
-	if (state == StateId::Loading) setState(StateId::Playing);
+	if (state_ == StateId::Loading) setState(StateId::Playing);
 	pauseGameTime = false;
 	blockInputTime = gameTime + 200;
 	std::fprintf(stderr, "[load] -> %s (blockInput 200ms)\n",
-		state == StateId::Camera ? "ST_CAMERA (kept)" : "ST_PLAYING");
+		state_ == StateId::Camera ? "ST_CAMERA (kept)" : "ST_PLAYING");
 }
 
 void GameContext::spawnPlayer() {
@@ -296,8 +304,7 @@ void GameContext::spawnPlayer() {
 }
 
 int GameContext::getHeight(int x, int y) const {
-	int hx = x & 0x7FF, hy = y & 0x7FF;
-	return sys_.map->heightMap[(hy >> 6) * 32 + (hx >> 6)] << 3;
+	return sys_.map->heightAt(x, y);
 }
 
 // ---- Playing (fixed order, spec §6) ----
@@ -330,14 +337,9 @@ void GameContext::tickPlaying() {
 	} else {
 		sys_.game->updateMonsters();              // Stage-1 stub (spec §0.B)
 	}
-	// 4.5 Facing probe for the health-bar feed (spec §0.F): one one-tile
-	//     trace per dirty latch (legacy ran it from the HUD top bar,
-	//     src/Hud.cpp:737-739, clearing the latch in updateView's tail,
-	//     src/MovementController.cpp:157).
-	if (sys_.game->facingDirty) {
-		sys_.game->facingDirty = false;
-		updateFacingProbe();
-	}
+	// 4.5 The facing probe no longer runs here: legacy recomputes it from the
+	//     HUD top bar on every rendered frame (src/Hud.cpp:735-742), see
+	//     GameContext::render.
 	// 5. door/sprite lerps tick in the globals section (legacy updateLerpSprites
 	//    here, src/GameStateRunner.cpp:184), still BEFORE updateView (:185).
 	// Help-popup dequeue while playing & monsters idle
@@ -367,7 +369,7 @@ void GameContext::tickPlaying() {
 	// driving the active camera whenever isCameraActive() regardless of the
 	// canvas state (src/MovementController.cpp:518-520) — e.g. a staticFunc
 	// STARTCINEMATIC that boot's ST_PLAYING transition overwrites.
-	if (cameraActive()) tickCinematicClock();
+	if (cinematic_.active()) cinematic_.tickClock();
 	// 7. camera pull-back + scene draw happen in render().
 	// HUD message timers tick with the playing state (legacy hud->update,
 	// src/Hud.cpp:1365-1378 analog).
@@ -397,19 +399,19 @@ void GameContext::tickPlaying() {
 		bool idle = sys_.player->viewX == sys_.player->destX &&
 		            sys_.player->viewY == sys_.player->destY &&
 		            sys_.player->viewAngle == sys_.player->destAngle;
-		if (stepsLeft > 0 && idle && !cameraActive() && !inputBlocked() &&
+		if (stepsLeft > 0 && idle && !cinematic_.active() && !inputBlocked() &&
 		    --cooldown <= 0) {
 			--stepsLeft;
 			cooldown = 40; // ~600 ms between steps
 			std::fprintf(stderr, "[dbg] autotest queue Forward (%d left)\n", stepsLeft);
 			pendingActions_.push_back(Action::Forward);
-		} else if (usesLeft > 0 && !cameraActive() && !inputBlocked() &&
+		} else if (usesLeft > 0 && !cinematic_.active() && !inputBlocked() &&
 		           --cooldown <= 0) {
 			--usesLeft;
 			cooldown = 200; // ~3 s between uses
 			std::fprintf(stderr, "[dbg] autotest queue Use (%d left)\n", usesLeft);
 			pendingActions_.push_back(Action::Use);
-		} else if (passesLeft > 0 && idle && !cameraActive() && !inputBlocked() &&
+		} else if (passesLeft > 0 && idle && !cinematic_.active() && !inputBlocked() &&
 		           --cooldown <= 0) {
 			--passesLeft;
 			cooldown = 100; // ~1.5 s between passes
@@ -603,20 +605,84 @@ void GameContext::drawLootingMenu(Graphics2D& g) {
 }
 
 // First-person view weapon (spec combat-stage1 §6.2; legacy Combat::drawWeapon
-// GL path src/Combat.cpp:621-844, formulas per docs/research/
-// 2026-08-26-hero-choice-and-weapon.md Part B). Screen-space 176x176 quad at
-// (196 + wpX + shakeX, 131 - (wpY + shakeY)) — top-left anchor like
-// draw2DSprite's v12 box (src/Render.cpp:358-373). TinyGL-only anchors and
-// the 1.35x SCALE_WEAPON flag are not ported (rewrite targets GL numbers).
+// GL path src/Combat.cpp:621-844). The legacy anchors (196 + wpX + shakeX,
+// 131 - (wpY + shakeY)) and the v12 box are VIEWPORT-relative inputs
+// (src/Render.cpp:358-373), not final canvas pixels: draw2DSprite is no 1:1
+// blit. On the GL path it builds a world-space billboard 400 units in front of
+// the eye (offset 5*((view[k]&~31)+8*(view[k]>>5))>>8, src/Render.cpp:343-421)
+// and lets the world projection magnify it (gles::DrawWorldSpaceSpriteLine,
+// src/GLES.cpp:483-547); the software fallback at src/Render.cpp:419 is dead
+// here, its scaleFactor *= 1.35f being an approximation of the same factor.
+//
+// Screen offsets from the billboard math (src/GLES.cpp:483-547):
+//   dpx = (x - vpW/2) * m[0] / 12800
+//   dpy = (y + v12 - vpH/2) * m[5] * vpH / (vpW * 12800)
+// so the quad is scaled about the viewport centre (239,124) = canvas (240,131)
+// by Kx = m[0]/12800, Ky = m[5]*vpH/2 / ((vpW/2) * 12800), read from the LIVE
+// projection (Camera3D::projectionInt) instead of being hard-coded: the
+// gameplay projection is buildProjectionMatrix(290,150) -> m[0]=17098,
+// m[5]=-33053 (Kx=1.33578, Ky=1.33973, the 0.3% anisotropy is real integer
+// aspect truncation 150.46 -> 150), but a cinematic renders at fov 315/290 and
+// would otherwise mismatch. m[5] is stored negated by the GLES BeginFrame
+// adjustment (new_src/render/Camera3D.cpp:88), hence the magnitude.
+// Viewport centre in viewport space and the canvas point it maps to.
+constexpr int kWeaponVpCx = 239, kWeaponVpCy = 124;
+constexpr int kWeaponCanvasCx = 240, kWeaponCanvasCy = 131;
+
+// Projects one legacy view-weapon quad (viewport-space top-left x, top edge
+// y, box size v12) onto the canvas and blits it clipped to the world band
+// (1,7,478,248) — the viewport that clips the billboard on the GL path.
+// Source texels are always the top-left 176x176 of the 256x256 weapon media
+// (src/GLES.cpp:539-542).
+static void drawWeaponQuad(Graphics2D& g, const Texture& tex, int x, int y, int v12,
+	uint8_t tint, float magX, float magY) {
+	constexpr int kSrc = 176;
+	const float fxl = kWeaponCanvasCx + (x - kWeaponVpCx) * magX;
+	const float fxr = kWeaponCanvasCx + (x + v12 - kWeaponVpCx) * magX;
+	const float fyb = kWeaponCanvasCy + (y + v12 - kWeaponVpCy) * magY;
+	const float fyt = fyb - v12 * magY;
+	const int xl = (int)std::floor(fxl), xr = (int)std::floor(fxr);
+	const int yt = (int)std::floor(fyt), yb = (int)std::floor(fyb);
+	const int dw = xr - xl, dh = yb - yt;
+	if (dw <= 0 || dh <= 0) return;
+	// Band clip; Graphics2D::setClip is not honoured by the sprite batch, so
+	// the quad and its source rect are trimmed by hand.
+	const int cx0 = std::max(xl, 1), cx1 = std::min(xr, 1 + 478);
+	const int cy0 = std::max(yt, 7), cy1 = std::min(yb, 7 + 248);
+	if (cx1 <= cx0 || cy1 <= cy0) return;
+	// Source edges in float + rounding: integer division here squeezed the
+	// cropped art by ~0.5% vertically.
+	const float su = (float)kSrc / (float)dw, sv = (float)kSrc / (float)dh;
+	const int sx0 = (int)std::lround((cx0 - xl) * su);
+	const int sx1 = (int)std::lround((cx1 - xl) * su);
+	const int sy0 = (int)std::lround((cy0 - yt) * sv);
+	const int sy1 = (int)std::lround((cy1 - yt) * sv);
+	if (sx1 <= sx0 || sy1 <= sy0) return;
+	g.drawImage(tex, sx0, sy0, sx1 - sx0, sy1 - sy0,
+		cx0, cy0, cx1 - cx0, cy1 - cy0, 0, tint, tint, tint, 255);
+}
+
 void GameContext::drawViewWeapon(Graphics2D& g) {
 	// Gate (src/Combat.cpp:706-708 state check): gameplay states only. Zoom
 	// skip (src/Canvas.cpp:1348 isZoomedIn) is implicit — no zoom system yet.
-	if (state != StateId::Playing && state != StateId::Looting &&
-	    state != StateId::Dialog) return;
+	if (state_ != StateId::Playing && state_ != StateId::Looting &&
+	    state_ != StateId::Dialog) return;
+	// While a camera is active legacy renders the world from
+	// MayaCamera::Render and Canvas::renderScene's drawWeapon call is
+	// unreachable (src/MovementController.cpp:518-523); the only view weapon
+	// is the cinematicWeapon != -1 branch (src/MayaCamera.cpp:311-314), which
+	// is deliberately deferred in the rewrite. The call site also gates on
+	// the cinematic pose; this keeps the invariant local should another
+	// caller appear.
+	if (cinematic_.active()) return;
 	Player& p = *sys_.player;
 	const int w = p.ce.weapon;                                 // (:677)
 	if (w < 0 || p.weapons == 0) return;                       // (:706-708)
 
+	// Legacy anchors (196,131) stay VIEWPORT-relative (draw2DSprite,
+	// rendering.md §6.2); the viewport origin (1,7) enters through the
+	// centre mapping in drawWeaponQuad, together with the projection
+	// magnification.
 	int scrX = 196;                        // 480/2 - 44                (:627)
 	int scrY = 131;                        // 320/2 - 29                (:628)
 	// weaponDown lower/raise lerp absent -> skip scrY += LOWEREDWEAPON_Y(38)
@@ -651,7 +717,9 @@ void GameContext::drawViewWeapon(Graphics2D& g) {
 		} else {
 			// SHOTHOLD return lerp; chainsaw jitter branch (:752-761) omitted.
 			const int elapsed = (int)(gameTime - c.animStartTime);
-			const int t = std::clamp(elapsed - c.flashTime, 0, c.animTime) *
+			// Lerp starts at animStartTime; legacy does not subtract
+			// flashTime (src/Combat.cpp:747).
+			const int t = std::clamp(elapsed, 0, c.animTime) *
 				65536 / std::max(c.animTime, 1);
 			wpX = atkX + (((idleX - atkX) * t) >> 16);
 			wpY = atkY + (((idleY - atkY) * t) >> 16);
@@ -666,13 +734,21 @@ void GameContext::drawViewWeapon(Graphics2D& g) {
 
 	// Muzzle flash FIRST so the gun art draws on top (:826-834): tile 1
 	// frame 3 at (+flashX+40, +flashY+40), 88x88 (scaleFactor 0x8000).
-	// renderMode 5 additive blend has no Graphics2D counterpart — alpha blit.
+	// renderMode 5 = RENDER_ADD50: additive blend with colour (.5,.5,.5,1)
+	// (src/GLES.cpp:660-664, src/Combat.cpp:833).
+	// Magnification from the projection actually in use this frame.
+	const int* proj = camera_.projectionInt();
+	const float magX = (float)proj[0] / 12800.f;
+	const float magY = (float)std::abs(proj[5]) * (float)kWeaponVpCy /
+		((float)kWeaponVpCx * 12800.f);
+
 	if (flash && ((1 << w) & 0x181) != 0) {  // legacy flash gate (src/Combat.cpp:826)
 		const Texture* ftex = sys_.world->spriteTexture(*sys_.media,
 			Combat::getWeaponTileNum(0), 3);
 		if (ftex != nullptr) {
-			g.drawImage(*ftex, 0, 0, ftex->width(), ftex->height(),
-				x + flashX + 40, y + flashY + 40, 88, 88, 0);
+			g.setBlendMode(1);
+			drawWeaponQuad(g, *ftex, x + flashX + 40, y + flashY + 40, 88, 128, magX, magY);
+			g.setBlendMode(0);
 		}
 	}
 
@@ -682,235 +758,18 @@ void GameContext::drawViewWeapon(Graphics2D& g) {
 	// deferred (hero-choice doc §B.3 exclusions).
 	const int tileNum = Combat::getWeaponTileNum(w);
 	const Texture* tex = sys_.world->spriteTexture(*sys_.media, tileNum, 0);
-	// TEMP [dbg] view-weapon audit (remove with Group-3 acceptance)
-	static bool texLogged = false;
-	if (!texLogged && tex != nullptr) {
-		texLogged = true;
-		std::fprintf(stderr, "[weapon] w=%d tile=%d mediaTex=%dx%d quad=(%d,%d)\n",
-			w, tileNum, tex->width(), tex->height(), x, y);
-	}
 	if (tex != nullptr) {
-		g.drawImage(*tex, 0, 0, tex->width(), tex->height(), x, y, 176, 176, 0);
+		drawWeaponQuad(g, *tex, x, y, 176, 255, magX, magY);
 	}
 }
 
 // ---- cinematic camera (docs/original-code/cutscenes-camera.md §1-§3) ----
 
-void GameContext::startCinematic(int camIdx) {
-	Player& p = *sys_.player;
-	MayaPose pose;                     // map units; <<4 applied post-inherit
-	// Dest-field capture like legacy setupCamera (src/ScriptThread.cpp:192-
-	// 196): equal to the view fields in every current flow (triggers fire
-	// from finishMovement after arrival) but faithful to a mid-walk start.
-	pose.x = p.destX;
-	pose.y = p.destY;
-	pose.z = p.destZ;
-	pose.yaw = p.destAngle & 0x3FF;    // viewPitch has no cinematic counterpart yet
-	if (!maya_.setup(*sys_.map, camIdx, pose)) {
-		std::fprintf(stderr, "[camera] bad camIdx %d\n", camIdx);
-		return;
-	}
-	cameraCamIdx_ = camIdx;
-	cameraView_ = true;                // legacy activeCameraView (src/ScriptThread.cpp:186)
-	activeCameraKey_ = -1;             // bound-not-started; first ADV_CAMERAKEY NextKeys onto key 0
-	cameraStartTime_ = gameTime;       // legacy activeCameraTime (src/Canvas.cpp:1092)
-	cinUnpauseTime_ = gameTime + 1000; // skip lockout (src/ScriptThread.cpp:227-228)
-	skipCinematic_ = false;
-	// State guard like legacy (:406-408): a chained STARTCINEMATIC must not
-	// re-clear subtitles/pending input via the enter hook.
-	if (state != StateId::Camera) setState(StateId::Camera);
-}
-
-void GameContext::nextKey() {
-	// MayaCamera::NextKey (src/MayaCamera.cpp:36-44): restart the clock at
-	// now and move to the next key. The ONLY place the key index advances
-	// besides Snap's counting tail (:365-368). NOTE: no end guard here —
-	// legacy happily parks PAST the last key; completion is the boundary
-	// clock's job (tickCinematicClock). An early finish inside the parking
-	// opcode would flush-resume the very thread still being parked
-	// mid-dispatch (its IP still on the argument byte), desyncing the VM.
-	cameraStartTime_ = gameTime;
-	++activeCameraKey_;
-	// TEMP [cam] key0 acceptance probe (spec 2026-08-26-camera-key0 §3 edit 6;
-	// remove once accepted).
-	std::fprintf(stderr, "[cam] nextKey idx=%d elapsed=%ld\n",
-		activeCameraKey_, (long)(gameTime - cameraStartTime_));
-}
-
-void GameContext::advanceCameraKey(ScriptThread* t, int resumeCount) {
-	// EV_ADV_CAMERAKEY park half (src/ScriptThread.cpp:690-702): unpauseTime=-1
-	// parks the thread; each completed key ticks the countdown and the flush
-	// resumes it (resumeKeyWaits/flushParkedThreads).
-	t->unpauseTime = -1;
-	cameraResumeList_.push_back(t);
-	cameraResumeCounts_.push_back(resumeCount);
-	// The opcode tail calls NextKey() immediately: the remainder of the
-	// current key is truncated and the next one starts now
-	// (src/ScriptThread.cpp:695, src/MayaCamera.cpp:36-44).
-	nextKey();
-}
-
-int GameContext::cameraKeyDuration(int key) const {
-	// MS channel, channel-major keys[numKeys*CH_MS + k] (src/Game.cpp:606-609),
-	// masked &0xFFFF like MayaCamera::Update (src/MayaCamera.cpp:59).
-	const MapData::MayaCamera& cam = sys_.map->mayaCameras[cameraCamIdx_];
-	return cam.keys[cam.numKeys * 6 + key] & 0xFFFF;
-}
-
 void GameContext::tickCamera() {
-	// ST_CAMERA per-frame order (src/Canvas.cpp:949-958): camera Update ->
-	// updateLerpSprites -> updateView. Lerps tick in the globals section
-	// (before the clock — legacy runs them after; within-tick difference
-	// only). Door lerps keep animating and parked threads keep ticking —
-	// input is what's parked.
-	if (skipCinematic_) {
-		skipCinematicNow();
-		return;
-	}
-	// TEMP [dbg] auto-skip (headless verification only; remove with the
-	// D2R_AUTOTEST driver): past the skip lockout, end the cinematic like a
-	// user key press. Inactive unless the env var is set.
-	static int autoSkip = -1;
-	if (autoSkip < 0) autoSkip = std::getenv("D2R_AUTOTEST") != nullptr ? 1 : 0;
-	if (autoSkip != 0 && gameTime >= cinUnpauseTime_ + 1000) skipCinematic_ = true;
-	tickCinematicClock();
+	cinematic_.tickCameraState();
 	// HUD message/subtitle timers run on the shared clock in legacy
 	// (gameTime advances in PLAYING + CAMERA, src/Game.cpp:3259).
 	sys_.hud->update(kTickMs);
-}
-
-void GameContext::tickCinematicClock() {
-	// Armed window (cameraView_ && key -1) runs no boundary engine and never
-	// auto-completes — legacy Update is skipped while activeCameraKey == -1
-	// (src/Canvas.cpp:949-952).
-	if (!cameraView_ || activeCameraKey_ < 0 || cameraCamIdx_ < 0 ||
-	    cameraCamIdx_ >= (int)sys_.map->mayaCameras.size()) return;
-	const MapData::MayaCamera& cam = sys_.map->mayaCameras[cameraCamIdx_];
-
-	// Key boundaries (src/MayaCamera.cpp:72-77): once a key's duration
-	// elapsed, Update does NOT advance anything on its own — with an
-	// outstanding ADV_CAMERAKEY park it calls Snap, else it returns and the
-	// pose holds at the boundary. Snap (:335-374) snaps the pose to the NEXT
-	// key's static value WITHOUT charging its duration or advancing the key,
-	// ticks the countdown, and either resumes the expired thread (whose own
-	// next ADV_CAMERAKEY then starts the following key fresh from now via
-	// NextKey) or, still counting, auto-advances one key (:365-368). The
-	// clock is only ever restarted by a NextKey, never by boundary
-	// accumulation — that distinction is what keeps chained handshakes from
-	// eating keys.
-	if (activeCameraKey_ >= (int)cam.numKeys) {
-		// Parked PAST the last key (final ADV_CAMERAKEY; legacy NextKey has
-		// no end guard, src/MayaCamera.cpp:36-44): hold the end pose until
-		// the last key's duration elapses from the restart, then complete —
-		// Snap tail (:376-397) resumes the parked thread via flush.
-		if (gameTime - cameraStartTime_ >= cameraKeyDuration((int)cam.numKeys - 1))
-			finishCinematic();
-		return;
-	}
-	if (!cameraResumeList_.empty() &&
-	    gameTime - cameraStartTime_ >= cameraKeyDuration(activeCameraKey_)) {
-		if (activeCameraKey_ + 1 >= cam.numKeys) {
-			finishCinematic();         // park on the last boundary -> complete (:358)
-			return;
-		}
-		maya_.snap(activeCameraKey_ + 1);      // Snap pose half (:338-357)
-		if (!resumeKeyWaits() && !cameraResumeList_.empty()) {
-			nextKey();                         // counting tail NextKey (:365-368)
-		}
-	}
-	int keyMs = cameraKeyDuration(activeCameraKey_);
-	int elapsed = (int)(gameTime - cameraStartTime_);
-	if (elapsed < keyMs) maya_.update(activeCameraKey_, elapsed);
-}
-
-bool GameContext::resumeKeyWaits() {
-	// One completed key ticks every parked ADV_CAMERAKEY count; expired ones
-	// resume in legacy callThreads[] pool order (src/MayaCamera.cpp:359-370).
-	// Returns true if any thread was resumed — the caller then must NOT also
-	// take Snap's auto-advance branch (legacy single keyThread slot returns
-	// right after run(), :359-364).
-	std::vector<size_t> done;
-	for (size_t i = 0; i < cameraResumeCounts_.size(); ++i) {
-		if (--cameraResumeCounts_[i] <= 0) done.push_back(i);
-	}
-	if (done.empty()) return false;
-	std::sort(done.begin(), done.end(), [this](size_t a, size_t b) {
-		return sys_.vm->indexOf(cameraResumeList_[a]) < sys_.vm->indexOf(cameraResumeList_[b]);
-	});
-	// Remove expired entries FIRST, collecting the threads: resumeThread()
-	// runs scripts synchronously and a resumed script may immediately hit the
-	// next ADV_CAMERAKEY, re-parking and reallocating these very vectors —
-	// erasing afterwards used stale indices against the reallocated buffers
-	// (user-visible SIGSEGV in vector::erase).
-	std::vector<ScriptThread*> toResume;
-	for (size_t i : done) toResume.push_back(cameraResumeList_[i]);
-	for (size_t i = done.size(); i-- > 0;) {
-		cameraResumeList_.erase(cameraResumeList_.begin() + done[i]);
-		cameraResumeCounts_.erase(cameraResumeCounts_.begin() + done[i]);
-	}
-	for (ScriptThread* t : toResume) sys_.vm->resumeThread(t);
-	return true;
-}
-
-void GameContext::finishCinematic() {
-	// End-of-keys Snap (src/MayaCamera.cpp:376-397). The state restore only
-	// applies while still inside ST_CAMERA — legacy returns early when the
-	// canvas moved on (:380-382), e.g. a cinematic started mid-load whose
-	// ST_PLAYING tail overwrite must not be re-restored.
-	const MapData::MayaCamera& cam = sys_.map->mayaCameras[cameraCamIdx_];
-	maya_.snap(cam.numKeys - 1);   // hold the final-key pose
-	activeCameraKey_ = -1;
-	cameraView_ = false;           // Snap tail clears the flag (src/MayaCamera.cpp:379)
-	// Snap tail: ST_CAMERA -> ST_PLAYING, never a pre-camera restore
-	// (src/MayaCamera.cpp:380-384).
-	if (state == StateId::Camera) setState(StateId::Playing);
-	// Snap-tail view reset (src/MayaCamera.cpp:396-397). Guarded: an
-	// unsettled angle means a scripted rotation is in flight and arrival
-	// handling owns the refresh.
-	sys_.player->viewPitch = 0;                 // viewPitch = destPitch = 0 (:396)
-	if (sys_.player->viewAngle == sys_.player->destAngle)
-		sys_.player->startRotation();           // startRotation(true) step-vector refresh (:397)
-	flushParkedThreads(false);     // single run() per thread, like Snap's resume (:390-394)
-}
-
-void GameContext::skipCinematicNow() {
-	// Game::skipCinematic analog (src/Game.cpp:2507-2544): snap the remaining
-	// keys, fast-forward the parked threads with the huge-timestamp analog,
-	// immediate state restore. Subtitles/particles/fade have no rewrite
-	// counterpart yet.
-	const MapData::MayaCamera& cam = sys_.map->mayaCameras[cameraCamIdx_];
-	maya_.snap(cam.numKeys - 1);   // Snap the remaining keys' end pose
-	activeCameraKey_ = -1;
-	cameraView_ = false;           // skip force-ends the view (src/Game.cpp:2507-2544)
-	if (state == StateId::Camera) setState(StateId::Playing);   // Snap tail (:380-384)
-	flushParkedThreads(true);
-}
-
-void GameContext::flushParkedThreads(bool force) {
-	// Drain cameraResumeList_ in legacy callThreads[] pool order. force=false:
-	// one run() per parked thread (Snap resume). force=true: skip fast-forward
-	// — legacy attemptResume(gameTime + 0x40000000) falls through every WAIT
-	// (src/Game.cpp:2507-2544); the rewrite reuses the public run()-based
-	// resume path and expires whatever re-parks the thread, capped as a
-	// runaway guard.
-	std::vector<ScriptThread*> list;
-	list.swap(cameraResumeList_);
-	cameraResumeCounts_.clear();
-	std::sort(list.begin(), list.end(), [this](ScriptThread* a, ScriptThread* b) {
-		return sys_.vm->indexOf(a) < sys_.vm->indexOf(b);
-	});
-	for (ScriptThread* t : list) {
-		if (!force) {
-			sys_.vm->resumeThread(t);
-			continue;
-		}
-		int r = 2;
-		for (int guard = 0; guard < 64 && r == 2; ++guard) {
-			r = sys_.vm->resumeThread(t);
-			if (r == 2) t->unpauseTime = 0;    // huge-timestamp analog: expire any re-park
-		}
-		if (r == 2) std::fprintf(stderr, "[camera] fast-forward cap hit, thread left parked\n");
-	}
 }
 
 // ---- playing action handlers ----
@@ -990,8 +849,12 @@ void GameContext::handlePlayingAction(Action a) {
 		// close (giveLootPool ran before stand-up,
 		// src/LootingSystem.cpp:89-103) and advanceTurn at stand-up expiry
 		// (:79-80) — looting costs its turn.
-		Entity* corpse = sys_.game->findLootableCorpseFacing(
-			p.viewX, p.viewY, p.viewStepX, p.viewStepY);
+		// The chainsaw is the exception: for melee the corpse branch elects an
+		// ATTACK target (gib) instead of a loot session
+		// (src/PlayingInputHandler.cpp:280-317 vs :318-334).
+		Entity* corpse = (p.ce.weapon == 1) ? nullptr
+			: sys_.game->findLootableCorpseFacing(
+				p.viewX, p.viewY, p.viewStepX, p.viewStepY);
 		if (corpse != nullptr) {
 			setState(StateId::Looting);
 			break;
@@ -1021,45 +884,35 @@ void GameContext::handlePlayingAction(Action a) {
 		// ---- fire (legacy probe src/PlayingInputHandler.cpp:189-548) ----
 		// Order preserved: loot -> tile event -> door -> fire; reached ONLY
 		// when nothing above consumed the press (legacy return-true chain).
-		// Election ray:
-		// DEVIATION (research open question 1) — legacy probes ~6 units along
-		// the TinyGL view-matrix rows (:218-221); we sweep ONE TILE along the
-		// discrete view step with mask CONTENTS_WEAPONSOLID (13997), radius 2,
-		// skipping the player. Behavior-equivalent for adjacent-target
-		// election; stacked candidates may differ (spec deviation 1).
-		// Holy-water pistol extra bits (:206 n5 |= 0x4100) and the chainsaw
-		// shrink (:210-213 n7=1, |= 0x10) are dead on the map00 route.
 		const int weapon2 = p.ce.weapon;   // legacy reads ce->weapon (:197)
 		if (weapon2 >= 0 && !sys_.game->combat.active) {
-			const int endX = p.viewX + p.viewStepX;
-			const int endY = p.viewY + p.viewStepY;
-			Entity* hit = nullptr;
 			int frac = 16384;
-			sys_.game->traceMove(*sys_.map, p.viewX, p.viewY, endX, endY,
-				sys_.game->playerEntity(), Enums::CONTENTS_WEAPONSOLID, 2,
-				&hit, &frac);
+			Entity* hit = electFireTarget(weapon2, &frac);
 			const int dist2 = (hit != nullptr)
 				? sys_.game->entityDistFrom(hit, p.viewX, p.viewY) : 0;
-			// Classify the closest hit per the legacy candidate scan
-			// (:224-368 reduced to the single-hit ray). Corpses (eType 9)
-			// reach the ray via WEAPONSOLID bit 9 but only elected a loot
-			// session in legacy — already preempted above; barrels (10),
-			// decor etc. fall through to the air-shot tail like legacy's
-			// unhandled types (:361-364).
+			// World slot carries no def and reads as eType 0 - same convention
+			// as electFireTarget (:1145); a plain nullptr means nothing was
+			// elected at all.
+			const int hitType = (hit == nullptr) ? -1
+				: (hit->def != nullptr ? hit->def->eType : Enums::ET_WORLD);
+			// Outcome mapping of the legacy shot commit (:496-540): attackable
+			// types fire at the entity, a wall within one tile is a push, and
+			// everything else (nothing elected, far geometry) is an air shot
+			// into the WORLD slot.
 			enum Outcome { kAirShot, kElected, kWallPush };
 			Outcome outcome = kAirShot;
-			const int hitType =
-				(hit != nullptr && hit->def != nullptr) ? hit->def->eType : -1;
-			if (hitType == Enums::ET_MONSTER) {                            // :264-269
-				outcome = kElected;
-			} else if (hitType == Enums::ET_NPC && dist2 >= 8192) {        // :253-262
+			if (hitType == Enums::ET_MONSTER || hitType == Enums::ET_NPC ||
+			    hitType == Enums::ET_DECOR || hitType == Enums::ET_ENV_DAMAGE ||
+			    hitType == Enums::ET_CORPSE ||
+			    hitType == Enums::ET_ATTACK_INTERACTIVE ||
+			    hitType == Enums::ET_NONOBSTRUCTING_SPRITEWALL) {
 				outcome = kElected;
 			} else if ((hitType == Enums::ET_WORLD || hitType == Enums::ET_SPRITEWALL) &&
-			           dist2 <= sys_.game->combat.tileDistances[0]) {      // :229-235 + :467 gate
+			           dist2 <= sys_.game->combat.tileDistances[0]) {      // :467 gate
 				outcome = kWallPush;
 			}
-			// TEMP [dbg] election-ray audit (remove after fire-path acceptance)
-			std::fprintf(stderr, "[fire] election spr=%d type=%d frac=%d dist2=%d -> %s\n",
+			// TEMP [dbg] election summary (remove after fire-path acceptance)
+			std::fprintf(stderr, "[fire] elected spr=%d type=%d frac=%d dist2=%d -> %s\n",
 				hit ? hit->getSprite() : -1, hitType, frac, dist2,
 				outcome == kElected ? "elect" :
 				outcome == kWallPush ? "wallpush" : "air");
@@ -1077,11 +930,13 @@ void GameContext::handlePlayingAction(Action a) {
 					std::fprintf(stderr, "[combat] zoom-entry weapons deferred (initZoom)\n");
 					break;
 				}
-				// Air/world shots target the WORLD slot at the player position;
-				// elected targets pass their sprite coords (legacy passes
-				// calcPosition/traceCollision coords, :509-536).
+				// Air/world shots target the WORLD slot; elected targets pass
+				// their sprite coords (legacy passes calcPosition/
+				// traceCollision coords, :509-536). The air-shot impact point is
+				// the trace contact point, not the player (:532-536).
 				Entity* target = outcome == kElected ? hit : sys_.game->worldEntity();
-				int ax = p.viewX, ay = p.viewY;
+				int ax = sys_.game->traceCollisionX();
+				int ay = sys_.game->traceCollisionY();
 				if (outcome == kElected) {
 					const int s = target->getSprite();
 					if (s >= 0) {
@@ -1112,56 +967,208 @@ void GameContext::handlePlayingAction(Action a) {
 	}
 }
 
-// Facing probe feeding the future health-bar readout (spec §0.F; subset of
-// src/MovementController.cpp:28-93). One swept tile from dest along the
-// discrete view step — DEVIATION: legacy rays along the TinyGL view-matrix
-// rows (:38-40). Mask 21741 = CONTENTS_WEAPONSOLID minus corpse(512)/
-// nonobstructing-spritewall(8192) plus item(64)/decor_noclip(16384),
-// radius 2.
+// Forward vector of the current player view in 16.16 (legacy -view[2]/-view[6],
+// src/MovementController.cpp:38, src/PlayingInputHandler.cpp:218). Same
+// derivation as the camera pull-back below (GameContext.cpp render block).
+void GameContext::viewForward(int& fwdX, int& fwdY) const {
+	const std::vector<int32_t>& sinTable = sys_.tables->sinTable;
+	const int a = sys_.player->viewAngle & 0x3FF;
+	fwdX = sinTable[(a + 256) & 0x3FF];        // cos
+	fwdY = -sinTable[a];                       // -sin
+}
+
+// Ordered target election over the sorted fire-trace hit list — port of the
+// ACTION_FIRE scan (src/PlayingInputHandler.cpp:218-385, docs/original-code/
+// combat.md §8). The legacy loot election (n6) can never fire here: lootable
+// corpses are preempted by findLootableCorpseFacing in Action::Use, so this
+// walk only elects attack targets. Deliberately NOT ported (silent legacy
+// special cases): barricade unlink (:387-393), sentry-bot pickup (:405-431),
+// water-spout refill (:433-447).
+Entity* GameContext::electFireTarget(int weapon, int* outFrac) {
+	Player& p = *sys_.player;
+	Combat& combat = sys_.game->combat;
+	const bool melee = Combat::checkWeaponMask(weapon, 2);  // WP_MELEEMASK = chainsaw only (src/Enums.h:155)
+	int mask = 13997;                                       // CONTENTS_WEAPONSOLID (src/Enums.h:31)
+	if (weapon == 2) mask |= 0x4100;                        // holy water: ENV_DAMAGE + DECOR_NOCLIP (:203-205)
+	if (melee) mask |= 0x10;                                // chainsaw: PLAYERCLIP (:212-215)
+	const int tiles = melee ? 1 : 6;                        // :208-215
+	int fwdX = 0, fwdY = 0;
+	viewForward(fwdX, fwdY);
+	const int endX = p.viewX + ((tiles * 64 * fwdX) >> 16); // :218 n7*-view[2]>>8 = n7 tiles
+	const int endY = p.viewY + ((tiles * 64 * fwdY) >> 16);
+	sys_.game->traceMove(*sys_.map, p.viewX, p.viewY, endX, endY,
+		sys_.game->playerEntity(), mask, 2, nullptr, nullptr);
+
+	Entity* entity = nullptr;
+	Entity* melee13 = nullptr;   // legacy entity2 (:249-254)
+	int frac = 16384;            // legacy n4
+	for (const auto& h : sys_.game->lastTraceHits()) {
+		Entity* ent = h.second;
+		if (ent == nullptr) continue;
+		const int f = h.first;
+		const int dist = sys_.game->entityDistFrom(ent, p.viewX, p.viewY);
+		// World slot carries no def and reads as eType 0 (Game.h:122).
+		const int et = (ent->def != nullptr) ? ent->def->eType : Enums::ET_WORLD;
+		const int sub = (ent->def != nullptr) ? ent->def->eSubType : 0;
+		if (et == Enums::ET_WORLD || et == Enums::ET_SPRITEWALL ||
+		    et == Enums::ET_PLAYERCLIP) {                       // :229-236
+			if (entity == nullptr) { entity = ent; frac = f; }
+			break;                                              // blocking: always ends the walk
+		}
+		if (et == Enums::ET_ATTACK_INTERACTIVE) {               // :238-247
+			if (((1 << sub) & 0x1) == 0 || weapon == 1) {        // eSubType != 0 FURNITURE, or chainsaw
+				entity = ent; frac = f;
+				break;
+			}
+			continue;
+		}
+		if (et == Enums::ET_NONOBSTRUCTING_SPRITEWALL) {        // :248-254
+			if (melee) melee13 = ent;
+			continue;
+		}
+		if (et == Enums::ET_NPC) {                              // :255-263
+			if (dist >= 8192) { entity = ent; frac = f; break; }// adjacent NPCs are transparent
+			continue;
+		}
+		if (et == Enums::ET_MONSTER) {                          // :264-269
+			entity = ent; frac = f;
+			break;                                              // wins over anything collected
+		}
+		if (et == Enums::ET_DOOR) {                             // :270-277
+			if (entity == nullptr) { entity = ent; frac = f; }
+			break;
+		}
+		if (et == Enums::ET_CORPSE) {                           // :278-334
+			// EXACT one-tile equality and NO break — an own-tile corpse
+			// (dist 0) is skipped so the monster behind it still wins
+			// (combat.md §8.4). The non-chainsaw branch elects a LOOT target
+			// (:318-334), already handled by findLootableCorpseFacing before
+			// the fire branch, so only the chainsaw attack pick lives here.
+			if (dist == combat.tileDistances[0] && weapon == 1) {
+				if (entity == nullptr || entity->def == nullptr ||
+				    entity->def->eType != Enums::ET_CORPSE ||
+				    entity->linkIndex < ent->linkIndex) {       // :306-311 highest linkIndex of the pile
+					entity = ent; frac = f;
+				}
+			}
+			continue;
+		}
+		if (et == Enums::ET_ENV_DAMAGE) {                       // :335-338
+			if (sub == 1 && weapon == 2 && p.ammo[3] >= 2) { entity = ent; frac = f; break; }
+			continue;
+		}
+		if (et == Enums::ET_DECOR) {                            // :339-343
+			const int si = ent->getSprite();
+			if (si >= 0 && si < sys_.map->numSprites &&
+			    (sys_.map->mapSpriteInfo[si] & 0xFF) == 0x95) { // TILENUM_PRACTICE_TARGET
+				entity = ent; frac = f;
+				break;
+			}
+			continue;
+		}
+		if (et == Enums::ET_DECOR_NOCLIP) {                     // :344-348
+			if (sub == 7 && dist == combat.tileDistances[0]) { entity = ent; frac = f; break; }
+			continue;
+		}
+		if (et != Enums::ET_ITEM && entity == nullptr) {        // :350 fallback (ITEM never elected)
+			entity = ent; frac = f;
+		}
+	}
+
+	int dist2 = combat.tileDistances[9];                        // :356-359
+	if (entity != nullptr) dist2 = sys_.game->entityDistFrom(entity, p.viewX, p.viewY);
+	// eType 10 out of weapon range (:379-381).
+	if (entity != nullptr && entity->def != nullptr &&
+	    entity->def->eType == Enums::ET_ATTACK_INTERACTIVE &&
+	    ((1 << entity->def->eSubType) & 0x1) == 0 &&
+	    combat.worldDistToTileDist(dist2) > combat.weaponField(weapon, Combat::kFieldRangeMax)) {
+		entity = nullptr;
+	}
+	// Melee promotion of the remembered eType 13 (:383-385).
+	if (melee13 != nullptr && (entity == nullptr || entity->def == nullptr ||
+	    (entity->def->eType != Enums::ET_MONSTER &&
+	     entity->def->eType != Enums::ET_CORPSE))) {
+		entity = melee13;
+	}
+	if (outFrac != nullptr) *outFrac = frac;
+	return entity;
+}
+
+// Facing probe feeding the health-bar readout — port of
+// MovementController::checkFacingEntity (src/MovementController.cpp:28-93,
+// docs/original-code/combat.md §7.1). Single 6-tile ray from the logical tile
+// centre pushed 28 units forward, mask 21741 (WORLD/MONSTER/NPC/DOOR/ITEM/
+// DECOR/ATTACK_INTERACTIVE/SPRITEWALL/DECOR_NOCLIP), radius 2. No Z check:
+// legacy tests Z only when zoomed in and there is no zoom system.
 void GameContext::updateFacingProbe() {
 	Player& p = *sys_.player;
-	constexpr int kFacingMask = 21741;         // src/MovementController.cpp:38 decomposed
-	const int endX = p.destX + p.viewStepX;
-	const int endY = p.destY + p.viewStepY;
+	constexpr int kFacingMask = 21741;         // src/MovementController.cpp:38
+	int fwdX = 0, fwdY = 0;
+	viewForward(fwdX, fwdY);
+	const int startX = p.destX + ((28 * fwdX) >> 16);   // :38 -view[2]*28 >> 14
+	const int startY = p.destY + ((28 * fwdY) >> 16);
+	const int endX = p.destX + ((384 * fwdX) >> 16);    // :38 6*-view[2] >> 8 = 6 tiles
+	const int endY = p.destY + ((384 * fwdY) >> 16);
 	Entity* hit = nullptr;
-	sys_.game->traceMove(*sys_.map, p.destX, p.destY, endX, endY,
+	sys_.game->traceMove(*sys_.map, startX, startY, endX, endY,
 		sys_.game->playerEntity(), kFacingMask, 2, &hit, nullptr);
-	// Monster-preference rescan over the sorted hit list (:43-86 subset): a
-	// monster further along the ray replaces a closer item/spritewall-family
-	// hit; hard blockers stop the scan. The spritewall mapFlags gate and the
-	// decor/type-10 promotions (:61-81) feed showHelp only — absent Stage 1.
+	// Monster promotion re-scan (:41-86): entered only when the nearest hit is
+	// ITEM / MONSTERBLOCK_ITEM / SPRITEWALL / ATTACK_INTERACTIVE / DECOR_NOCLIP,
+	// then the sorted hit list is walked from index 0 (the nearest hit itself
+	// included) and the pick may move further along the ray. eType 11 is
+	// unreachable with this mask (legacy dead branch) but kept for fidelity.
 	if (hit != nullptr && hit->def != nullptr) {
 		const int t0 = hit->def->eType;
+		const int t0Sub = hit->def->eSubType;
 		if (t0 == Enums::ET_ITEM || t0 == Enums::ET_MONSTERBLOCK_ITEM ||
 		    t0 == Enums::ET_SPRITEWALL || t0 == Enums::ET_ATTACK_INTERACTIVE ||
 		    t0 == Enums::ET_DECOR_NOCLIP) {
 			for (const auto& h : sys_.game->lastTraceHits()) {
 				Entity* ent = h.second;
-				if (ent == nullptr || ent->def == nullptr || ent == hit) continue;
-				const int et = ent->def->eType;
-				if (et == Enums::ET_MONSTER) {                         // :47-51
+				if (ent == nullptr) continue;
+				// World slot carries no def and reads as eType 0 (Game.h:122).
+				const int et = (ent->def != nullptr) ? ent->def->eType : Enums::ET_WORLD;
+				const int sub = (ent->def != nullptr) ? ent->def->eSubType : 0;
+				if (et == Enums::ET_MONSTER) {                          // :47-53
 					if (t0 != Enums::ET_SPRITEWALL) hit = ent;
 					break;
 				}
 				if (et == Enums::ET_DOOR || et == Enums::ET_PLAYERCLIP ||
-				    et == Enums::ET_WORLD) break;                      // :55-60
+				    et == Enums::ET_WORLD) break;                       // :56-62
+				if (et == Enums::ET_SPRITEWALL) {                       // :63-65
+					const int li = ent->linkIndex;
+					if (li >= 0 && li < (int)sys_.map->mapFlags.size() &&
+					    (sys_.map->mapFlags[li] & 0x2) != 0) break;  // opaque tile flag
+					continue;
+				}
+				if (et == Enums::ET_DECOR) {                            // :66-72
+					if (t0 == Enums::ET_SPRITEWALL) hit = ent;
+					break;
+				}
+				if (et == Enums::ET_DECOR_NOCLIP) {                     // :74-79
+					if (t0Sub != 6) { hit = ent; break; }
+					continue;
+				}
+				if (et == Enums::ET_ATTACK_INTERACTIVE &&
+				    (sub == 1 || sub == 2 || sub == 3)) {               // :80-83
+					if (t0 != Enums::ET_ITEM) { hit = ent; break; }
+					continue;
+				}
 			}
 		}
 	}
 	p.facingEntity = hit;
 	if (p.facingEntity != nullptr && p.facingEntity->def != nullptr) {
-		// Distance gates (:88-93): non-monsters beyond Chebyshev^2 36864
-		// drop; monsters always kept. showHelp branches absent.
+		// Distance gate (:88-93): non-monsters beyond Chebyshev^2 36864 (3 tiles)
+		// drop; monsters are never distance-gated. showHelp branches absent.
+		// DEVIATION: legacy measures from destX/destY, we use the interpolated
+		// eye (identical while idle, <=1 tile apart mid-lerp).
 		const int dist = sys_.game->entityDistFrom(p.facingEntity, p.viewX, p.viewY);
 		if (p.facingEntity->def->eType != Enums::ET_MONSTER &&
 		    dist > sys_.game->combat.tileDistances[2]) {
 			p.facingEntity = nullptr;
 		}
 	}
-	// TEMP [dbg] probe audit (remove with the Group-3 feed acceptance)
-	std::fprintf(stderr, "[face] probe spr=%d type=%d\n",
-		p.facingEntity ? p.facingEntity->getSprite() : -1,
-		(p.facingEntity && p.facingEntity->def) ? p.facingEntity->def->eType : -1);
 }
 
 void GameContext::debugGiveKeycards() {
@@ -1201,16 +1208,20 @@ void GameContext::render(AppContext& app) {
 
 	sys_.world->setTime((int)upTimeMs);
 
-	// Cinematic letterbox (legacy ST_CAMERA entry swaps the raster viewport
-	// to cinRect, src/Canvas.cpp:1207-1216). cinRect = viewRect with y=42
-	// (src/Canvas.cpp:151-154); viewRect = {0, 20, 480, 250} on the 480x320
-	// canvas (src/Canvas.cpp:124-127). The full-buffer black clear in
-	// beginFrame() provides the bars.
-	static constexpr int kCinRect[4] = { 0, 42, 480, 250 };
-	bool cinematicView = (state == StateId::Camera);
-	if (cinematicView) {
-		renderer.setCanvasViewport(kCinRect[0], kCinRect[1], kCinRect[2], kCinRect[3]);
-	}
+	// World band, used by BOTH gameplay and cinematics: the GL path snaps the
+	// viewport to glViewport(1, 65, 478, 248) = canvas rect (1, 7, 478, 248),
+	// centre (240,131), whatever y the raster rect carried
+	// (src/GLES.cpp:119-127 discards it, src/TinyGL.cpp:149-167;
+	// rendering.md §6.1, ADR 0009). The cinematic letterbox is not a viewport
+	// change either: it is two opaque black fills painted over the finished
+	// world band (src/Hud.cpp:455-456, see the StateId::Camera block below).
+	static constexpr int kWorldRect[4] = { 1, 7, 478, 248 };
+
+	// Single source of truth for "a cinematic owns the world this frame":
+	// one value, produced by one owner, feeding fov, cockpit overlay and
+	// view-weapon suppression (spec 2026-08-26-decomposition §P1-G2). Also
+	// performs the display-rate pose resample.
+	const MayaPose* cinePose = cinematic_.renderPose();
 
 	// Screen shake offsets (src/Render.cpp:2265-2270): lateral offset along
 	// the view right vector + vertical offset, canvas units -> <<4 render
@@ -1222,27 +1233,10 @@ void GameContext::render(AppContext& app) {
 
 	// Camera from the player view + render pull-back (src/Render.cpp:2279-
 	// 2282; magnitude <= 2.5 map units). Gameplay keeps using player view coords.
-	if (cameraActive() && cameraCamIdx_ >= 0 &&
-	    cameraCamIdx_ < (int)sys_.map->mayaCameras.size()) {
+	if (cinePose != nullptr) {
 		// Cinematic takeover (legacy MayaCamera::Render, src/MayaCamera.cpp:
 		// 302-310): the maya pose IS the view; FOV 315 (290 under a dialog).
-		// Legacy re-evaluates the pose EVERY rendered frame from absolute
-		// elapsed (src/Canvas.cpp:951, src/MovementController.cpp:519);
-		// sampling only in the 15 ms tick beats against the display refresh
-		// and reads as periodic slow-motion waves.
-		// Ticks own the key state (tickCinematicClock: boundaries, Snap
-		// holds, resume handshake); render samples the interpolation of the
-		// current key at display rate. Past a key's duration the pose HOLDS
-		// (no update) exactly like the tick path.
-		int64_t camElapsed = gameTime - cameraStartTime_;
-		// Armed window must NOT resample: key -1 has no duration channel and
-		// would overwrite the setup pose legacy renders statically
-		// (src/Canvas.cpp:950 skips Update at -1).
-		if (activeCameraKey_ >= 0 &&
-		    activeCameraKey_ < (int)sys_.map->mayaCameras[cameraCamIdx_].numKeys &&
-		    camElapsed < cameraKeyDuration(activeCameraKey_))
-			maya_.update(activeCameraKey_, (int)camElapsed);
-		const MayaPose& mp = maya_.pose();
+		const MayaPose& mp = *cinePose;
 		int cyaw = mp.yaw & 0x3FF;
 		int msin = sinTable[cyaw];
 		int mcos = sinTable[(cyaw + 256) & 0x3FF];
@@ -1254,9 +1248,13 @@ void GameContext::render(AppContext& app) {
 			my += (shakeX << 4) * -msin >> 16;
 			mz += shakeY << 4;
 		}
-		int fov = 315;
+		// viewAspect over the same 478x248 viewport as gameplay
+		// (src/Render.cpp:2223).
+		// fov 290 while a dialog runs inside the cinematic, 315 otherwise
+		// (src/MayaCamera.cpp:305-310 canvas->state == ST_DIALOG).
+		int fov = (state_ == StateId::Dialog) ? 290 : 315;
 		camera_.setView(mx, my, mz, cyaw, mp.pitch, mp.roll, fov,
-			(fov << 14) / ((480 << 14) / 320));
+			(fov << 14) / ((478 << 14) / 248));
 	} else {
 	int yaw = sys_.player->viewAngle & 0x3FF;
 	int viewSin = sinTable[yaw];
@@ -1273,11 +1271,13 @@ void GameContext::render(AppContext& app) {
 	// player->viewPitch). FOV stays at the documented 290: legacy widened by
 	// |pitch| only on the mvp2D billboard path (src/TinyGL.cpp:195-200), the
 	// world/GL projection kept viewFov — the rewrite has a single projection.
+	// viewAspect over the 478x248 world viewport (src/Render.cpp:2223).
 	camera_.setView(rvx, rvy, rvz, sys_.player->viewAngle, sys_.player->viewPitch, 0, 290,
-		(290 << 14) / ((480 << 14) / 320));
+		(290 << 14) / ((478 << 14) / 248));
 	}
 
 	if (sys_.world->initialized() && sys_.map->numNodes > 0) {
+		renderer.setCanvasViewport(kWorldRect[0], kWorldRect[1], kWorldRect[2], kWorldRect[3]);
 		sys_.world->drawSky(camera_);
 		// Per-sprite sort-bias hooks (src/Render.cpp:856-862): corpse/linked
 		// entities draw nearer (+1), monsters (-1).
@@ -1322,33 +1322,51 @@ void GameContext::render(AppContext& app) {
 		}
 		sys_.world->drawBSP(*sys_.map, *sys_.media, camera_, spriteSortBias.data(),
 		                    spriteCharClass.data());
+		renderer.restoreCanvasViewport(app.window());
 	} else {
 		g.fillRect(0, 0, 480, 320, 32, 32, 64);
 	}
 
-	// View weapon paints over the world, before viewport restore/overlays
-	// (legacy renderScene order src/Canvas.cpp:1344-1355; spec §6.2).
-	drawViewWeapon(g);
-
-	// Overlays draw in full canvas space again; the cockpit overlay anchors
-	// at the cinRect top edge y=42 (src/Hud.cpp:623-624 draws both copies at
-	// cinRect positions in screen space).
-	if (cinematicView) renderer.restoreCanvasViewport(app.window());
+	// View weapon paints over the world in full canvas space; its legacy
+	// anchors already include the world viewport origin (ADR 0009).
+	if (cinePose == nullptr) drawViewWeapon(g);
 
 	// Cockpit overlay while a cinematic renders with the raw toggle set
 	// (MayaCamera::Render -> Hud::drawOverlay, src/MayaCamera.cpp:316-318;
 	// cinRect = viewRect.x / 42 / viewRect width, src/Canvas.cpp:151-154).
 	// The boot intro enables it only around camera 0 (IP 1945-2062).
-	if (state == StateId::Camera && sys_.hud->cockpitOverlay()) {
+	if (cinePose != nullptr && sys_.hud->cockpitOverlay()) {
 		sys_.hud->drawOverlay(g, 0, 42, 480);
+	}
+
+	// Cinematic letterbox: two opaque black fills painted after the world
+	// pass and the cockpit art, so the top one overpaints rows 0..41 of the
+	// world band (eraseRgn = setColor(0) + fillRect, src/Hud.cpp:455-456;
+	// rects from cinRect[1]=42, displayRect[2]=480, softKeyY=320).
+	// Deliberately keyed on `state`, NOT on the cinematic pose: with a dialog box up over
+	// an active camera the legacy repaintFlags = 47 skips the bars
+	// (src/Canvas.cpp:1095) so the picture grows 35 rows upward and
+	// re-letterboxes on close (src/DialogSystem.cpp:541-554); ST_INTER_CAMERA
+	// has no bars either (src/Canvas.cpp:1213, src/MovementController.cpp:394).
+	if (state_ == StateId::Camera) {
+		g.fillRect(0, 0, 480, 42, 0, 0, 0);
+		g.fillRect(0, 292, 480, 28, 0, 0, 0);
 	}
 
 	// Health-bar feed (spec §0.F): resolve the facing probe into LIVE
 	// ET_MONSTER stats every frame; -1 hides the bar (legacy gates
 	// src/Hud.cpp:825-835). Then the top bar gains its real caller for the
 	// gameplay states — messages stay solely in drawMessages.
+	if (state_ == StateId::Playing) {
+		// Legacy call site: Hud::draw forces the probe right before drawTopBar
+		// while ST_PLAYING (src/Hud.cpp:735-742). facingDirty stays as an
+		// advisory latch (many sites set it) but no longer gates the probe.
+		updateFacingProbe();
+		sys_.game->facingDirty = false;
+	}
 	{
 		int feedId = -1, feedHp = 0, feedMaxHp = 0;
+		bool feedLowBar = false, feedBoss = false;
 		Entity* fe = sys_.player->facingEntity;
 		if (fe != nullptr && fe->monster != nullptr && fe->isMonster() &&
 		    (fe->info & Entity::kInfoActive) != 0) {
@@ -1356,12 +1374,17 @@ void GameContext::render(AppContext& app) {
 			if (feedHp > 0) {
 				feedId = fe->getSprite();
 				feedMaxHp = fe->monster->ce.getStat(Enums::STAT_MAX_HEALTH);
+				// n3 = 50 for a PINKY with parm 0 (src/Hud.cpp:866-868);
+				// n4 += 1 for a boss (:874, Entity::isBoss()).
+				feedLowBar = fe->def != nullptr && fe->def->eSubType == 5 &&
+					fe->def->parm == 0;
+				feedBoss = Game::isBossDef(fe->def);
 			}
 		}
-		sys_.hud->feedMonsterHealth(feedId, feedHp, feedMaxHp);
+		sys_.hud->feedMonsterHealth(feedId, feedHp, feedMaxHp, feedLowBar, feedBoss);
 	}
-	if (state == StateId::Playing || state == StateId::Looting ||
-	    state == StateId::Dialog) {
+	if (state_ == StateId::Playing || state_ == StateId::Looting ||
+	    state_ == StateId::Dialog) {
 		sys_.hud->drawTopBar(g, *sys_.font, 480);
 	}
 
@@ -1370,11 +1393,11 @@ void GameContext::render(AppContext& app) {
 
 	// Dialog box overlay (legacy backPaint -> dialogState,
 	// src/Canvas.cpp:447-449).
-	if (state == StateId::Dialog) sys_.dialogs->draw(g);
+	if (state_ == StateId::Dialog) sys_.dialogs->draw(g);
 
 	// Loot list overlay during the dwell window — paints OVER world+HUD
 	// (src/Canvas.cpp:414-417,469-472).
-	if (state == StateId::Looting) drawLootingMenu(g);
+	if (state_ == StateId::Looting) drawLootingMenu(g);
 
 	renderer.endFrame(app.window());
 }

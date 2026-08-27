@@ -233,15 +233,15 @@ bool DialogSystem::enqueueHelpDialog(int textType, int strIdx, int threadIdx) {
 	helpIds_[numHelpMessages_] = (textType << 10) | strIdx;
 	helpThreads_[numHelpMessages_] = threadIdx;
 	++numHelpMessages_;
-	if (env_.ctx->state == StateId::Playing) dequeueHelpDialog();  // (859-861)
+	if (env_.ctx->state() == StateId::Playing) dequeueHelpDialog();  // (859-861)
 	return true;
 }
 
 void DialogSystem::dequeueHelpDialog(bool force) {
 	if (numHelpMessages_ == 0) return;
-	if (env_.ctx->state == StateId::Dialog || closing_) return;    // (760-762)
+	if (env_.ctx->state() == StateId::Dialog || closing_) return;    // (760-762)
 	// INTER_CAMERA also passes in legacy (:763-765); it arrives with GROUP 2.
-	if (!force && env_.ctx->state != StateId::Playing) return;
+	if (!force && env_.ctx->state() != StateId::Playing) return;
 	// secretActive guard (:766-768): secrets not implemented.
 
 	type_ = helpTypes_[0];
@@ -351,7 +351,7 @@ void DialogSystem::handleInput(Action action) {
 		break;                                   // no movement actions exist here
 	}
 	// Tail: dequeue the next queued help popup once back in play (109-111).
-	if (env_.ctx->state == StateId::Playing && env_.game->monstersTurn == 0) {
+	if (env_.ctx->state() == StateId::Playing && env_.game->monstersTurn == 0) {
 		dequeueHelpDialog();
 	}
 }

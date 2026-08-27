@@ -1,5 +1,13 @@
 # 2026-08-26 — Combat Stage 1: fire pipeline, damage math, monster payload, HUD feed
 
+> **PARTIALLY SUPERSEDED (2026-08-26)** by
+> `specs/2026-08-26-combat-stage1-fixes.md`: §0.F's "one tile toward `viewStep`"
+> facing probe (:157-160), the single-closest-hit fire election of §4/§9
+> deviation 1, and §6.2's view-weapon anchors/source rects are WRONG and are
+> replaced there (6-tile facing ray, ordered election walk over the sorted hit
+> list, legacy world viewport + 176-texel UV window). Everything else in this
+> spec stands.
+
 Status: **spec for implementation**. Architect: design only; coder groups implement.
 Normative inputs: `docs/research/2026-08-26-combat-stage1.md` (§refs below),
 `docs/original-code/combat.md` §§1–6,
@@ -147,6 +155,8 @@ distinct input/render gating.
   the rifle via EVT 617 before any combat.
 
 ### F. Health-bar feed: facing probe replaces the demo feed
+<!-- SUPERSEDED: the one-tile probe below is the source of the "bar only for an
+adjacent monster" defect. Use spec 2026-08-26-combat-stage1-fixes.md §1. -->
 
 * New `Player::facingEntity` (`Entity*`, default nullptr — field absent
   today; audit row `docs/research/2026-08-26-combat-stage1.md` §5).
@@ -788,6 +798,8 @@ CMake uses GLOB — reconfigure after the two NEW files
 ---
 
 ## 9. Deviations (all deliberate, cited)
+<!-- SUPERSEDED items: deviation 1 (single-hit election ray) and the view-weapon
+placement notes — see spec 2026-08-26-combat-stage1-fixes.md §2 and §3. -->
 
 1. **Election ray**: one swept tile along the discrete view step vs the
    legacy ~6-unit matrix-row probe (research open question 1). Adjacent-

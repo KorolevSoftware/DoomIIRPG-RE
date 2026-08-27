@@ -10,6 +10,7 @@
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Player.h"
+#include "domain/game/TraceSystem.h"
 #include "io/EntityDefs.h"
 #include "domain/world/MapData.h"
 #include "text/Text.h"
@@ -125,11 +126,14 @@ public:
 	// reads it as eType 0 (spec 2026-08-26-combat-stage1 deviation 13).
 	Entity* worldEntity() { return entities_.empty() ? nullptr : &entities_[0]; }
 
-	// Sorted (frac asc) hit list of the most recent traceMove — the legacy
-	// traceEntities/traceFracs pair (src/Game.cpp:312-326). Consumed by the
-	// facing probe's monster-preference rescan
-	// (src/MovementController.cpp:43-86 subset).
-	const std::vector<std::pair<int, Entity*>>& lastTraceHits() const { return traceHits_; }
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
+	// Rebuilds the legacy pair view over trace.hits() for the consumers that
+	// still walk pairs (GameContext fire election + facing probe).
+	const std::vector<std::pair<int, Entity*>>& lastTraceHits() const;
+
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B1.
+	int traceCollisionX() const { return trace.collisionX(); }
+	int traceCollisionY() const { return trace.collisionY(); }
 
 	// Open/close a door entity (n=0 open, n=1 close). n2 is the legacy snap
 	// selector (src/Game.cpp:1153-1155): 0 = finish the animation instantly,
@@ -159,18 +163,9 @@ public:
 	// refused without animating.
 	DoorUseResult useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY);
 
-	// Swept-capsule move trace: legacy Game::trace (7-arg wrapper
-	// src/Game.cpp:195-197, body :199-327) + Render::traceWorld
-	// (src/Render.cpp:1212-1283, flattened — see spec 2026-08-23
-	// faithful-player-collision §3.3). Sweeps segment (x0,y0)->(x1,y1) as a
-	// capsule of the given radius (canvas units, tile=64) against world lines
-	// (if mask & 1) and all entityDb entities matching mask & (1<<eType),
-	// skipping skipEnt. Returns TRUE when nothing blocks (commit allowed) —
-	// legacy commits iff traceEntity == nullptr (src/MovementController.cpp:332-333).
-	// Out-params (optional): closest hit = lowest frac (legacy traceEntity /
-	// traceFracs[0], src/Game.cpp:312-326); frac is 14.14 fixed point,
-	// 16384 == 1.0, hit <= 16382, start-inside == -1, miss sentinel 16384
-	// (src/Render.cpp:1119-1125,1195-1209).
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
+	// Old bool + out-param shape of TraceSystem::trace; see TraceSystem.h for
+	// the contract. map is ignored (TraceSystem holds the same MapData).
 	bool traceMove(const MapData& map, int x0, int y0, int x1, int y1,
 	               Entity* skipEnt, int mask, int radius,
 	               Entity** outEntity = nullptr, int* outFrac = nullptr);
@@ -178,8 +173,8 @@ public:
 	// Door auto-close on turn advance (legacy CanCloseDoor + advanceTurn).
 	void advanceTurnDoors();
 
-	// Player position (canvas units) used by door auto-close checks.
-	void setPlayerPos(int x, int y) { playerX_ = x; playerY_ = y; }
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F1.
+	void setPlayerPos(int x, int y) { trace.setPlayerPos(x, y); }
 
 	// ---- Phase 5 additions ----
 
@@ -289,6 +284,7 @@ public:
 	bool facingDirty = false;       // canvas updateFacingEntity latch analog (src/Entity.cpp:527)
 
 	Combat combat;                  // peer subsystem (ADR 0008)
+	TraceSystem trace;              // peer subsystem (spec §P2-GA); wired in loadEntities
 
 	// Faithful ring moves (src/Game.cpp:752-808, :825-855). activate ports:
 	// runStaticFunc fires SCR_MONSTER_ACTIVATE on MFLAG_TRIGGERONACTIVATE,
@@ -310,10 +306,8 @@ public:
 	// eSubType in [FIRSTBOSS..LASTBOSS] (src/Entity.cpp:1399 shape).
 	static bool isBossDef(const EntityDef* def);
 
-	// Chebyshev^2 distance from (x,y) to the entity's sprite position
-	// (src/Entity.cpp:1155-1158), reading mapSprites like traceEntityHits
-	// does (Game.cpp traceEntityHits S_X/S_Y reads).
-	int entityDistFrom(const Entity* e, int x, int y) const;
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
+	int entityDistFrom(const Entity* e, int x, int y) const { return trace.distFrom(e, x, y); }
 
 	// Entity::pain ET_MONSTER non-boss subset (src/Entity.cpp:281-394):
 	// MFLAG_NOKILL floor, pain/death pose overlay + frameTime hold,
@@ -331,7 +325,6 @@ public:
 private:
 	void updateDoors();
 	void freeLerpSprite(SpriteLerp* ls);       // completion snap + slot free (src/Game.cpp:3078-3243, subset)
-	int playerX_ = -1, playerY_ = -1;
 
 	// Fixed monster payload pool (legacy entityMonsters[80], Error 37 on
 	// overflow src/Game.cpp:430-436 — rewrite logs and skips). Lifetime is
@@ -357,18 +350,8 @@ private:
 	const EntityDefs* defs_ = nullptr;     // set in loadEntities
 	ScriptVM* vm_ = nullptr;
 
-	// Trace scratch (reused buffers; single-threaded GL loop).
-	int tracePoints_[4] = { 0, 0, 0, 0 };              // x0,y0,x1,y1 (src/Game.cpp:208-211)
-	int traceBBox_[4]   = { 0, 0, 0, 0 };              // clamped bbox (src/Game.cpp:212-215)
-	std::vector<std::pair<int, Entity*>> traceHits_;   // (frac 14.14, entity)
-	// World contact point of the last traceMove (legacy Game::
-	// traceCollisionX/Y fields, src/Game.cpp:302-310): lerp at the hit frac,
-	// else the ray end. ET_WORLD distance queries resolve through it
-	// (Entity::calcPosition src/Entity.cpp:1375-1378 analog).
-	int traceCollisionX_ = 0, traceCollisionY_ = 0;
-
-	void traceEntityHits(const MapData& map, Entity* skipEnt, int mask, int radius); // src/Game.cpp:216-296
-	int  traceWorldFrac(const MapData& map, int mask, int radius2);                  // src/Render.cpp:1212-1283 (flat)
+	// FORWARDER scratch (spec §3.1): pair view rebuilt by lastTraceHits().
+	mutable std::vector<std::pair<int, Entity*>> legacyTraceHits_;
 
 	struct DoorAnim {
 		Entity* door = nullptr;

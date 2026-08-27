@@ -42,6 +42,11 @@ public:
 	// Raw 14.14 combined MVP (used for sprite depth sorting like legacy).
 	const int* mvpInt() const { return mvp_; }
 
+	// Raw 14.14 projection matrix, post GLES BeginFrame adjustments
+	// ([1],[5] negated, Camera3D.cpp:85-89). The view-weapon billboard
+	// magnification is derived from [0]/[5] (src/GLES.cpp:483-547).
+	const int* projectionInt() const { return projection_; }
+
 	// Cached view angles (masked 0x3FF) and position.
 	int viewX() const { return viewX_; }
 	int viewY() const { return viewY_; }

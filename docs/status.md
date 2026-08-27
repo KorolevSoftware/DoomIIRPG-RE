@@ -80,8 +80,9 @@ Full module/wiring details: [architecture/README.md](architecture/README.md).
 
 ### Phase 5 — missing
 
-No game-state machine/worlds/tileEvents VM/dialogs/combat. `GameLoop` is an unused stub
-(core/GameLoop.cpp:17-55); the loop is hand-rolled in Main.cpp:281-464.
+STALE as of 2026-08-26: the state machine, tileEvents VM, dialogs and combat all exist now
+(`core/GameContext.cpp`, `domain/game/ScriptVM.cpp`, `domain/game/DialogSystem.cpp`,
+`domain/game/Combat.cpp`), and `GameLoop` is wired (`core/AppContext.cpp:62`), not a stub.
 tileEvents/bytecode parsed and stored but not interpreted (domain/world/MapData.h:73-75).
 
 ## Biggest gaps (priority hints)
@@ -96,3 +97,57 @@ tileEvents/bytecode parsed and stored but not interpreted (domain/world/MapData.
 ## Next steps
 
 - Decide next unit of work (suggest: PLAN checkbox sync + Phase 4 monsters or game-state skeleton).
+
+## 2026-08-26 — playtest fixes in progress (see docs/journal.md for the full entry)
+
+Camera key-0 CONFIRMED good by the user. Four playtest defects; research done for all
+four (4 researchers in parallel), curated into `docs/original-code/{combat,rendering,cutscenes-camera}.md`
+with raw logs in `docs/research/2026-08-26-*.md`.
+
+| # | Defect | Root cause | Status |
+|---|---|---|---|
+| 4 | Shaft lift rides rushed | tween indices are camera-local; we still added the legacy global rebase, so every delta silently resolved to 0 | **DONE** — reviewed PASS, user-confirmed "работает идеально" |
+| 2 | Health bar only on the adjacent tile | original uses a 6-tile facing ray; monsters are never distance-gated. Our spec said "one tile" | **DONE** — user-confirmed |
+| 3 | Standing on a corpse blocked the shot | own-tile entity sorts first (frac −1); the original's corpse branch accepts only at exactly one tile and never breaks | **DONE** — user-confirmed |
+| 1 | Rifle too high and too small | `draw2DSprite` is a world-space billboard 400 units ahead, magnified by the world projection (Kx 1.336 / Ky 1.340) — not a 1:1 screen blit | **DONE** — user-confirmed |
+| 5 | Cutscene viewport slid down (found in round 2) | the original never changes the viewport for cinematics; `cinRect` is the cockpit-overlay anchor, and `BeginFrame` discards the y | **DONE** — user-confirmed |
+| 6 | Wall shots fired and burned the turn (regression from our 6-tile ray) | world hit has `def == nullptr`, so the wall-push branch was dead code | **DONE** — user-confirmed |
+
+Spec: `docs/architecture/specs/2026-08-26-combat-stage1-fixes.md` (6 groups),
+ADR `docs/architecture/adr/0009-legacy-world-viewport.md` (user chose to restore the legacy
+world band (1,7,478,248), horizon back at y=131). `2026-08-26-combat-stage1.md` is partially
+superseded. G4 (bottom HUD panel 480x64 at y=256) landed as a prerequisite for G5.
+
+Regression list confirmed clean by the user: doors, loot, dialogs, TAB "Turn Passed",
+monster wake/pain/death/corpse looting.
+
+## Next steps
+
+All four playtest defects + the self-inflicted wall-shot regression are user-confirmed fixed
+(2026-08-26): lift ride cutscenes, health bar at range, shooting from a corpse tile, rifle
+size/height, cutscene entry without a vertical step, wall shot not consuming ammo/turn,
+impact point and flash correct.
+
+Also user-confirmed on 2026-08-26: cinematic fov/weapon-suppression fixes (weapon unchanged in
+gameplay, absent in cinematics) and the cinematic letterbox black bars.
+
+## Current focus — decomposition
+
+Spec `docs/architecture/specs/2026-08-26-decomposition.md` (19 groups, 2 phases),
+ADR 0010 (modules + Env injection), ADR 0011 (typed TraceHit + named encodings).
+Zero behaviour change; acceptance = the user sees no difference. Phase 1 (GameContext ->
+CinematicCamera/LootSession/Targeting/ViewWeapon/SceneRenderer/PlayerActions) is sequential;
+Phase 2 (Game -> TraceSystem/DoorSystem/MonsterSystem/SpriteLerps/CorpseLoot/EntityDb behind
+forwarders) runs in parallel with it.
+
+### Known gaps found in passing, not yet scheduled
+
+- `Hud::clearMessages()` has zero call sites; legacy zeroes `msgCount` on ST_CAMERA entry
+  (`src/Canvas.cpp:1209`) and never draws messages during a cinematic.
+- Bottom HUD panel draws background only (widgets live in the uncalled `Hud::draw`).
+- A far `ET_SPRITEWALL`/`ET_DOOR`/`ET_DECOR_NOCLIP` election becomes an air shot here, while
+  legacy `src/PlayingInputHandler.cpp:509` fires at the entity for any `eType != 0`.
+- Then: bottom-panel widgets (shield/health/portrait/weapon icon/keys currently unreachable —
+  they live in `Hud::draw`, which has no caller in the gameplay render path).
+- Cleanup: drop the TEMP `[cam] nextKey` print (rides now eye-confirmed), throttle the tween
+  out-of-range diagnostic, fix the stale comment placement in `MayaCamera.cpp`.

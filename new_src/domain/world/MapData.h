@@ -61,6 +61,13 @@ public:
 	std::vector<uint8_t> lineYs;           // numLines * 2
 	std::vector<uint8_t> heightMap;        // 1024 (32x32 tiles)
 
+	// Terrain height in canvas units (legacy MovementController::getHeight;
+	// port of new_src/core/GameContext.cpp:299-304).
+	int heightAt(int x, int y) const {
+		const int hx = x & 0x7FF, hy = y & 0x7FF;
+		return heightMap[(hy >> 6) * 32 + (hx >> 6)] << 3;
+	}
+
 	// ---- Sprites ----
 	// mapSprites is a flat array with 9 fields per sprite (X,Y,Z,RENDERMODE,
 	// NODE,NODENEXT,VIEWNEXT,ENT,SCALEFACTOR). mapSpriteInfo carries per-sprite
