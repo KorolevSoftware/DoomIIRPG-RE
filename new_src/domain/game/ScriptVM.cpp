@@ -661,9 +661,9 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int angle = dir == 4 ? 512 : dir == 0 ? 0 : dir == 2 ? 256 : 768;
 			p.destX = p.viewX = (tx << 6) + 32;    // :2544-2545
 			p.destY = p.viewY = (ty << 6) + 32;
-			p.destZ = p.viewZ = env_.ctx->getHeight(p.viewX, p.viewY) + 36;   // :2546
+			p.destZ = p.viewZ = env_.map->heightAt(p.viewX, p.viewY) + 36;   // :2546
 			p.destAngle = p.viewAngle = angle;     // :2543 snap
-			env_.ctx->finishRotationFired();       // step-vector refresh + FACE event
+			env_.ctx->actions().finishRotationFired(); // step-vector refresh + FACE event
 			std::fprintf(stderr,
 				"[targetpractice] enter tile=%d,%d dir=%d (inventory strip/score deferred)\n",
 				tx, ty, dir);
@@ -709,7 +709,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->dstY = 32 + (dstTileY << 6);
 			Entity* ent = env_.game->findEntityBySprite(sprite);   // info |= 0x400000 (:364-371)
 			if (ent != nullptr) ent->info |= 0x400000;
-			ls->dstZ = env_.ctx->getHeight(ls->dstX, ls->dstY) + dstZrel;   // (:370)
+			ls->dstZ = env_.map->heightAt(ls->dstX, ls->dstY) + dstZrel;   // (:370)
 			const MapData& m = *env_.map;
 			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
 			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
@@ -751,7 +751,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->dstY = dstY;
 			Entity* ent = env_.game->findEntityBySprite(sprite);   // info |= 0x400000 (+MFLAG_LERP_SHADOW n/a)
 			if (ent != nullptr) ent->info |= 0x400000;
-			ls->dstZ = env_.ctx->getHeight(dstX, dstY) + dstZrel;  // (:1410)
+			ls->dstZ = env_.map->heightAt(dstX, dstY) + dstZrel;  // (:1410)
 			const MapData& m = *env_.map;
 			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
 			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
@@ -1110,7 +1110,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				env_.player->viewAngle = viewAngle;
 				env_.player->destAngle = destAngle;
 				env_.player->startRotation();
-				env_.ctx->gotoThread_ = t;         // resumed by the rotation arrival
+				env_.ctx->actions().gotoThread = t; // resumed by the rotation arrival
 				t->unpauseTime = -1;
 				n = 2;
 			} else {                                           // instant snap (:1572)
@@ -1129,7 +1129,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			bool animate = (v & 0x4000) != 0;
 			p.destX = (((v >> 5) & 0x1F) << 6) + 32;           // (:604)
 			p.destY = ((v & 0x1F) << 6) + 32;                  // (:605)
-			p.destZ = env_.ctx->getHeight(p.destX, p.destY) + 36; // (:606)
+			p.destZ = env_.map->heightAt(p.destX, p.destY) + 36; // (:606)
 			int face = (v >> 10) & 0xF;
 			// TEMP [dbg] GOTO decode audit (remove after bug #1 verified)
 			std::fprintf(stderr, "[dbg] GOTO raw=0x%04X tile=%d,%d dest=%d,%d destZ=%d face=%d anim=%d adv=%d\n",
@@ -1149,7 +1149,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				p.startRotation();                             // startRotation(false) (:624)
 				p.setZStep(p.destZ - p.viewZ);                 // (:625)
 				if (p.destX != p.viewX || p.destY != p.viewY || p.viewAngle != p.destAngle) {
-					env_.ctx->gotoThread_ = t;     // arrival resumes via tickPlaying (:627)
+					env_.ctx->actions().gotoThread = t; // arrival resumes via tickPlaying (:627)
 					t->unpauseTime = -1;
 					n = 2;
 				}
@@ -1159,11 +1159,11 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				p.viewZ = p.destZ;
 				if (face != 15) {                              // ABSOLUTE angle (:639-642)
 					p.viewAngle = p.destAngle = face << 7;
-					env_.ctx->finishRotationFired();           // finishRotation(true) FACE events
+					env_.ctx->actions().finishRotationFired(); // finishRotation(true) FACE events
 				}
 				if ((v & 0x8000) != 0) env_.game->advanceTurn(); // (:643-645)
 				if (env_.ctx->state() != StateId::Camera) p.startRotation(); // (:646-649)
-				env_.ctx->gotoTriggered_ = true;   // destination events next tick (:653)
+				env_.ctx->actions().gotoTriggered = true; // destination events next tick (:653)
 			}
 			// relink()/clearEvents(1)/updateFacingEntity/invalidateRect
 			// (:656-659) n/a — player entity is unlinked and input events are
@@ -1274,8 +1274,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->srcZ = m.mapSprites[sprite + 2 * m.numSprites]
 				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
 			// Relative landing height preserved (:1678): dstZ = h(dst)+srcZ-h(src).
-			ls->dstZ = env_.ctx->getHeight(ls->dstX, ls->dstY)
-				+ (ls->srcZ - env_.ctx->getHeight(ls->srcX, ls->srcY));
+			ls->dstZ = env_.map->heightAt(ls->dstX, ls->dstY)
+				+ (ls->srcZ - env_.map->heightAt(ls->srcX, ls->srcY));
 			ls->srcScale =
 				m.mapSprites[sprite + 8 * m.numSprites];
 			ls->dstScale = (scaleByte >= 0) ? scaleByte << 1 : ls->srcScale;

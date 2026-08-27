@@ -7,6 +7,7 @@
 #include "core/CinematicCamera.h"
 #include "core/GameStates.h"
 #include "core/LootSession.h"
+#include "core/PlayerActions.h"
 #include "domain/game/Game.h"
 #include "domain/game/Targeting.h"
 #include "render/SceneRenderer.h"
@@ -25,7 +26,6 @@ class Localization;
 class MapData;
 class MediaLoader;
 class Player;
-struct ScriptThread;
 class ScriptVM;
 class Tables;
 class World3D;
@@ -75,21 +75,9 @@ public:
 	// 2026-08-26-decomposition §P1-G2); the VM reaches it through here.
 	CinematicCamera& cinematic() { return cinematic_; }
 
-	// Script-driven movement handshake storage (cutscenes-camera.md §4):
-	// animated GOTO/TURN_PLAYER parks its thread in gotoThread_ and
-	// tickPlaying's arrival handling resumes it once view==dest and the angle
-	// settled (src/MovementController.cpp:164-167, :298-302). gotoTriggered_
-	// defers an instant GOTO's destination events to the next playing tick
-	// (src/MovementController.cpp:503-509).
-	ScriptThread* gotoThread_ = nullptr;
-	bool gotoTriggered_ = false;
-
-	// finishRotation(true) analog, also invoked by the VM's instant-GOTO path
-	// (src/ScriptThread.cpp:641).
-	void finishRotationFired();
-	// Terrain height in canvas coords (src/MovementController.cpp getHeight
-	// analog); used by spawnPlayer and the VM's GOTO destZ.
-	int getHeight(int x, int y) const;
+	// Player turn actions: input handler, arrival hooks and the script
+	// GOTO/TURN_PLAYER handshake fields the VM writes (spec §P1-G7).
+	PlayerActions& actions() { return actions_; }
 
 	// Clocks in ms. upTimeMs is the monotonic app clock; gameTime pauses
 	// outside Playing this phase (spec deviation C5).
@@ -114,16 +102,11 @@ private:
 	void enterState_(StateId s);
 
 	bool inputBlocked() const;
-	void handlePlayingAction(Action a);
 
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)
 	void tickCamera();       // ST_CAMERA per-frame order (src/Canvas.cpp:949-958)
 	void tickDying();
-
-	void spawnPlayer();      // legacy Game::spawnPlayer (src/Game.cpp:941-972)
-	void finishMovement();   // legacy MovementController::finishMovement (:160-196)
-	int flagForFacingDir(int i) const; // src/MovementController.cpp:214-224
 
 	Init sys_;
 	StateId state_ = StateId::Loading;
@@ -147,6 +130,10 @@ private:
 
 	// World pass: viewport, camera, sky, BSP, sprite classification (spec §P1-G6).
 	SceneRenderer scene_;
+
+	// Playing input, movement commit, use chain, fire commit, arrival hooks
+	// (spec §P1-G7).
+	PlayerActions actions_;
 };
 
 } // namespace newcore

@@ -11,6 +11,16 @@ You are the coder of the Doom II RPG rewrite. You implement in `new_src/` ONLY.
 
 - NEVER create, modify or delete anything under `src/` or `Doom 2 RPG Java/` — read-only reference (also enforced by deny rules in `.claude/settings.json`).
 - Follow the given spec. If it is ambiguous or contradictory, stop and report the blocker instead of guessing on big decisions; small obvious gaps may be filled with a note in your report.
+- **Read files with Read/Grep/Glob and change them with Write/Edit — never with shell text
+  processors.** `perl -pi`, `sed -i`, `awk` in-place, `tr`, redirect-over-the-file: all
+  forbidden for anything under `new_src/`. They apply edits you never see, they silently
+  succeed when the pattern does not match, and they leave diffs no author actually read.
+  `grep`/`rg` for searching and `sed -n`/`head`/`tail` for *printing* are fine; anything that
+  WRITES goes through the editing tools.
+- **Every `.c` / `.cpp` / `.h` file is created and written with Write/Edit — never through
+  another language or the shell.** No `cat > foo.cpp <<'EOF'` heredocs, no `python3 -c` that
+  prints a source file, no `perl`/`sed`/`awk`, no redirect into a source path. Writing C++
+  through a second language is code you never actually read, in a diff nobody authored.
 - **Write C++ yourself, with Write/Edit. NEVER generate code files by running a Python (or shell) script that emits them.** Codegen hides the code from the author, makes the result impossible to reason about in review, and produces diffs nobody actually wrote. Python is for verification/analysis tools under `tools/` only, never for producing `new_src/` sources.
 - Match the style of neighboring `new_src/` files (naming, error handling, include order). No speculative abstractions, no dead code. Comments minimal and English-only, e.g. referencing the original trick location like `Render.cpp:931`.
 - Do not commit to git.

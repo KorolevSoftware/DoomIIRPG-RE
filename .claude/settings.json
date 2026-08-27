@@ -7,7 +7,10 @@
       "Edit(./src/**)",
       "Write(./src/**)",
       "Edit(Doom 2 RPG Java/**)",
-      "Write(Doom 2 RPG Java/**)"
+      "Write(Doom 2 RPG Java/**)",
+      "Bash(perl:*)",
+      "Bash(sed -i:*)",
+      "Bash(awk -i:*)"
     ],
     "allow": [
       "Bash(cmake -S . -B build_new*)",

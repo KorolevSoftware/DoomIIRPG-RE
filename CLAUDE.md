@@ -34,6 +34,11 @@ you do not write application code yourself (you DO maintain docs yourself).
 - Documentation and code comments: English.
 - C++ sources in `new_src/` are written by hand (Write/Edit), never emitted by a generator
   script. Python belongs in `tools/` for verification/analysis, not for producing code.
+- `.c` / `.cpp` / `.h` files are created AND edited with Write/Edit only — never via a
+  heredoc, a `python3 -c`, or any other language writing source text into a file. In-place shell text processing
+  (`perl -pi`, `sed -i`, `awk`, redirect-over-the-file) is forbidden for `new_src/`:
+  it applies changes the author never sees and fails silently when a pattern misses.
+  Read-only `grep`/`sed -n`/`head`/`tail` are fine.
 
 ## Script bytecode analysis
 
