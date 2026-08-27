@@ -195,6 +195,7 @@ Facts verified byte-level against `tmp_map00.bin` (layout provenance in
   `y = 320 − 64 = 256` (`src/TouchController.cpp:544-545`). So the visible 3D
   band is canvas y 20…255 while the *projection* is centred on canvas
   y = 7 + 248/2 = **131**.
+  (Bottom-bar widget geometry and data sources: `docs/original-code/ui.md`.)
 * Projection: `viewAspect = (viewFov<<14) / ((viewportWidth<<14)/viewportHeight)`
   (`src/Render.cpp:2223`) — i.e. `aspect ≈ fov·H/W`; `buildProjectionMatrix`
   sets `m[5] = cot(aspect/2)`, `m[0] = m[5]·aspect/fov`

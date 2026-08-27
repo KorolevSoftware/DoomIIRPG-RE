@@ -117,13 +117,23 @@ public:
 	// (src/Hud.cpp:866-868); boss = Entity::isBoss() -> ++n4 (:874).
 	void feedMonsterHealth(int id, int hp, int maxHp, bool lowBar = false, bool boss = false);
 
+	// Bottom-bar feed. All values are the RAW stats the legacy widgets read
+	// live every frame (src/Hud.cpp:683-709; the invalidate-flag clears in
+	// Hud::draw are commented out, ui.md 8): health/maxHealth = stats 0/1,
+	// shield = stat 2, weapon = ce->weapon, ammo = ammo[weapons[9w+4]],
+	// keysRow = (inventory[19]>0 ? 1 : 0) | (inventory[20]>0 ? 2 : 0)
+	// (19 = red, 20 = blue; src/Hud.cpp:1154-1179).
+	void feedPlayerStatus(int health, int maxHealth, int shield, int weapon, int ammo, int keysRow);
+
+	// Bottom bar: the widget row on top of drawBottomPanel's background.
+	void drawBottomBar(Graphics2D& g, const Font& font);
+
 	// Bottom-bar sub-elements.
 	void drawWeapon(Graphics2D& g, int x, int y, int weapon, bool highlighted);
 	void drawNumbers(Graphics2D& g, int x, int y, int space, int num, int weapon);
 	void drawCurrentKeys(Graphics2D& g, int x, int y);
 
 private:
-	void drawBottomBar(Graphics2D& g, const Font& font);
 	void drawArrowControls(Graphics2D& g);
 	void drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
 	void drawCenterMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
@@ -162,13 +172,13 @@ private:
 	Texture imgAttArrow_;
 	Texture imgHudTest_;
 
-	// Demo state (later replaced by real player state).
-	int health_ = 100;
-	int maxHealth_ = 100;
-	int shield_ = 75;
-	int weapon_ = 3;
-	int ammo_ = 30;
-	int keys_ = 3; // 0=none, 1=red, 2=blue, 3=both
+	// Bottom-bar widget values, refreshed by feedPlayerStatus every frame.
+	int health_ = 0;
+	int maxHealth_ = 1;
+	int shield_ = 0;
+	int weapon_ = -1;
+	int ammo_ = 0;
+	int keys_ = 0; // 0=none, 1=red, 2=blue, 3=both
 	int playerRow_ = 0; // face row based on health
 
 	// Demo messages.

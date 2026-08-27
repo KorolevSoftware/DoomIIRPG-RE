@@ -282,6 +282,19 @@ void Hud::feedMonsterHealth(int id, int hp, int maxHp, bool lowBar, bool boss) {
 	monsterBoss_ = boss;
 }
 
+void Hud::feedPlayerStatus(int health, int maxHealth, int shield, int weapon, int ammo, int keysRow) {
+	// Pure value transfer: the legacy widgets read these straight off the
+	// player each draw pass (src/Hud.cpp:683-709), so there is no smoothing
+	// and no dirty flag here. maxHealth is only ever used as a divisor for
+	// the portrait row, which the original leaves unguarded (ui.md 4).
+	health_ = health;
+	maxHealth_ = maxHealth;
+	shield_ = shield;
+	weapon_ = weapon;
+	ammo_ = ammo;
+	keys_ = keysRow;
+}
+
 void Hud::drawWeaponSelection(Graphics2D& g, const Font& font) {
 	if (!weaponSelect_ || !imgWeaponNormal_.valid()) return;
 
@@ -573,15 +586,13 @@ void Hud::drawNumbers(Graphics2D& g, int x, int y, int space, int num, int weapo
 	if (weapon == 13) {
 		h2 = -1;
 	}
+	// All three glyphs are drawn unconditionally and at fixed offsets
+	// (src/Hud.cpp:1143-1150). h2 == -1 is meaningful: row 20*(9-(-1)) = 200
+	// is row 10 of the 11-row sheet, the '/' glyph, so weapon 13 reads "N/5".
+	// No leading-zero suppression either: 0 shows "000".
 	g.drawRegion(imgNumbers_, 0, kNumH * (9 - h1), 10, kNumH, x, y, Graphics2D::kAnchorTop);
-	int posX = x + space + 10;
-	if (h2 >= 0) {
-		g.drawRegion(imgNumbers_, 0, kNumH * (9 - h2), 10, kNumH, posX, y, Graphics2D::kAnchorTop);
-		posX += space + 10;
-	}
-	if (h3 >= 0) {
-		g.drawRegion(imgNumbers_, 0, kNumH * (9 - h3), 10, kNumH, posX, y, Graphics2D::kAnchorTop);
-	}
+	g.drawRegion(imgNumbers_, 0, kNumH * (9 - h2), 10, kNumH, x + space + 10, y, Graphics2D::kAnchorTop);
+	g.drawRegion(imgNumbers_, 0, kNumH * (9 - h3), 10, kNumH, x + 2 * space + 20, y, Graphics2D::kAnchorTop);
 }
 
 void Hud::drawCurrentKeys(Graphics2D& g, int x, int y) {

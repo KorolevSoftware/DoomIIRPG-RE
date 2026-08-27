@@ -124,6 +124,9 @@ Every claim cites `src/` (legacy RE port). Values extracted from the shipped
 
 ## 2. HUD weapon icon — `Hud::drawWeapon` (`src/Hud.cpp:1048-1125`)
 
+(Full bottom-bar widget map, geometry, gating and per-weapon ammoType table:
+`docs/original-code/ui.md`.)
+
 Bottom-bar icon at (268,258) (`src/Hud.cpp:683`) from
 `imgWeaponNormal`/`imgWeaponActive` 44px-tall rows; texY per weapon id:
 {0:0, 1:1, 2:2, 3/4:10, 5/6:11, 7:3, 8:4, 9:5, 10:6, 11:7, 12:8, 13:9,

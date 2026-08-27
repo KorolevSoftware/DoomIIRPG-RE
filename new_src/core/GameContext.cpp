@@ -516,6 +516,24 @@ void GameContext::render(AppContext& app) {
 	targeting_.feedHealthBar();
 	if (gameplayView) {
 		sys_.hud->drawTopBar(g, *sys_.font, 480);
+
+		// Bottom bar: legacy repaint bit 0x4, drawn right after the 0x2 group
+		// (src/Hud.cpp:747-782) and on top of the panel background that
+		// drawTopBar paints. The per-state mask is 47 for
+		// Playing/Combat/Dialog/Dying and excludes ST_CAMERA (24) and
+		// ST_INTER_CAMERA (43), which is exactly `gameplayView` here.
+		const Player& p = *sys_.player;
+		int ammoCount = 0;
+		if (sys_.tables) {
+			const int ammoType = sys_.tables->weaponDef(p.weapon).ammoType;
+			if (ammoType >= 0 && ammoType < 9) ammoCount = p.ammo[ammoType];
+		}
+		// Nested-if fold of src/Hud.cpp:1158-1172: slot 19 = red keycard,
+		// slot 20 = blue keycard.
+		const int keysRow = (p.inventory[19] > 0 ? 1 : 0) | (p.inventory[20] > 0 ? 2 : 0);
+		sys_.hud->feedPlayerStatus(p.getHealth(), p.getMaxHealth(),
+		                           p.ce.getStat(Enums::STAT_ARMOR), p.weapon, ammoCount, keysRow);
+		sys_.hud->drawBottomBar(g, *sys_.font);
 	}
 
 	// Messages overlay while cockpit/HUD stay hidden.
