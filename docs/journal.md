@@ -728,3 +728,47 @@ Transitional duplications, all with named graves (tracked in `docs/status.md`):
 `Game::lastTraceHits()` rebuilds a legacy vector (P3-B2), `GameContext::getHeight` and the
 door forwarders are one-liners. Three shims outstanding; if they start accruing faster than
 they are paid, stop extracting and close Phase 3 first.
+
+### 2026-08-27 — decomposition complete (Phase 1: 7/7, Phase 2: 6/6)
+
+User-confirmed on screen after the final batch: doors, monsters (wake/pain/death/corpse),
+looting, script lerps, the shaft lift ride, shooting past a corpse, health bar at range.
+Boot spawn-line count identical to the pre-refactor run (75).
+
+`GameContext.cpp` 1626 -> 535, `Game.cpp` 1565 -> 305. Two god-objects became thirteen
+modules with pointwise `Env` injection and no `GameContext*`/singleton anywhere:
+`CinematicCamera`, `LootSession`, `Targeting`, `ViewWeapon`, `SceneRenderer`, `PlayerActions`
+(Phase 1) and `TraceSystem`, `DoorSystem`, `MonsterSystem`, `SpriteLerps`, `CorpseLoot`,
+`EntityDb` (Phase 2).
+
+P2-GF paid the worst debt: five owners of verbatim entityDb helper copies collapsed into
+`EntityDb`. Drift check before deleting found the copies identical except one null guard
+`SpriteLerps` needed for its pointer-vs-member difference — an injection artifact, not drift,
+so no live bug. The duplication existed only because the helpers' owner was scheduled LAST
+while every module needing tile-list access came earlier; `EntityDb` should have been the
+FIRST Phase-2 group. Lesson for the next multi-group refactor: extract shared owners before
+their consumers.
+
+Two claims corrected during the work, both mine:
+- "one owner closes the pre-`loadEntities` null-deref window" — it does not. The window comes
+  from WHEN `init` runs, not what it points at; closing it needs a `wire()`/`reset()` split
+  because three modules' `init` also does the per-level reset. Unreachable today; own ticket.
+- The fixes and the first refactor groups could not be split into separate commits because the
+  refactor had already moved the fixed code. Commit before refactoring.
+
+Process notes that earned their keep:
+- Every coder verified its transfer mechanically (reverse the renames, diff back against the
+  deleted block) and declared cosmetic deltas (re-indentation, comment re-wraps, a stray brace)
+  so reviewers did not chase them.
+- Three specs errors of the same shape — collapsing two conditions that look equivalent — were
+  caught by coders reading `src/`; one had already shipped a defect (an extra `hud->update` on
+  cinematic skip frames). The rule is now standing in `.claude/agents/coder.md`.
+- Agents reached for `perl -pi`/heredocs to write C++; now forbidden in prose AND denied in
+  `.claude/settings.json`.
+
+Phase 3 remains (optional): carry `TraceHit` to its last consumers (`PlayerActions` still
+decodes `def == nullptr`), name the content masks (13997/21741/13501) and the
+`weapons[w*9+field]` indexing, sweep the standing forwarders in `Game.h`.
+Non-refactor backlog: bottom HUD panel widgets, sound (still absent — a TEMP `[loot] sound`
+print stands in), and the SDL `swapInterval=1` hang exposure (a blocked swap parks the loop
+forever, where the original clamped frame time instead).

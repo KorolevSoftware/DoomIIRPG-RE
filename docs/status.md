@@ -131,6 +131,17 @@ impact point and flash correct.
 Also user-confirmed on 2026-08-26: cinematic fov/weapon-suppression fixes (weapon unchanged in
 gameplay, absent in cinematics) and the cinematic letterbox black bars.
 
+## Current focus — decomposition COMPLETE (2026-08-27, user-confirmed)
+
+Phase 1: 7/7, Phase 2: 6/6. `GameContext.cpp` 1626 -> 535, `Game.cpp` 1565 -> 305.
+Thirteen modules, pointwise `Env` injection, no singleton or context back-references.
+All five duplicated entityDb helper copies collapsed into `EntityDb` (P2-GF).
+
+Remaining, optional Phase 3: `TraceHit` to its last consumers (`PlayerActions` still decodes
+`def == nullptr`), named content masks and weapon-table fields, forwarder sweep in `Game.h`.
+
+### Original plan (kept for reference)
+
 ## Current focus — decomposition
 
 Spec `docs/architecture/specs/2026-08-26-decomposition.md` (19 groups, 2 phases),
