@@ -772,3 +772,30 @@ decodes `def == nullptr`), name the content masks (13997/21741/13501) and the
 Non-refactor backlog: bottom HUD panel widgets, sound (still absent — a TEMP `[loot] sound`
 print stands in), and the SDL `swapInterval=1` hang exposure (a blocked swap parks the loop
 forever, where the original clamped frame time instead).
+
+### 2026-08-27 — Phase 3, part one (user-confirmed)
+
+- **P3-C2** weapon tables became parsed structs (`WeaponDef` 9 bytes, `WeaponPose` 6) instead of
+  a byte vector read through an enum of field indices and a view class — the user's call, and
+  the right one: it removed `WeaponField`, the stride constants, `WeaponRow`, `fromOffset` and
+  the per-read bounds check. Value-identity proven by a verifier compiled against our own
+  `io/Tables.cpp` and fed the real `tables.bin`: all 32 weapon rows, 15 pose rows, plus
+  negative and out-of-range ids, zero mismatches.
+- Assert cleanup, also the user's observation: the 15 `offsetof` asserts guarded nothing, since
+  `Tables::load` assigns every field by name, so member order is not part of the file format.
+  The two `sizeof` asserts stay — the loader uses `sizeof` as the record stride, so padding
+  would silently shift every row. A wall of 15 convincing-looking asserts, only two of which
+  were load-bearing.
+- **P3-B1** was nearly empty as scoped (owner side was already done in P2-GA; every forwarder
+  had a consumer in files that group could not touch) — another sequencing artifact of mine:
+  a group whose content depended on work scheduled after it.
+- **P3-B2** made `TraceHit` the only carrier of trace results and deleted the hand-decode in
+  `Targeting`/`PlayerActions`, closing the class of bug that produced the dead wall-push branch.
+  Acceptance grep (`def == nullptr` in `core/` + `Targeting.cpp`) is genuinely empty — the coder
+  even reworded its own comment so the grep is an invariant rather than a substring near-miss.
+  Forwarders deleted with their last consumers, `entityDistFrom` included.
+
+Discipline that earned its keep in B2: the coder kept a provably unreachable `isWorld()` term
+in the corpse branch (term-by-term transfer beats an equivalence argument in code that already
+regressed once) and, conversely, refused the spec's suggested `isWorld()` in the wall gate
+because it differs from `eType == ET_WORLD` for an entity whose def has `eType == 0`.
