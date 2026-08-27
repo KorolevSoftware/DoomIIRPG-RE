@@ -67,11 +67,14 @@ public:
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
 	// Rebuilds the legacy pair view over trace.hits() for the consumers that
-	// still walk pairs (GameContext fire election + facing probe). The returned
-	// reference is valid only until the next call (mutable rebuild in place).
+	// still walk pairs (Targeting::electFireTarget + updateFacingProbe). The
+	// returned reference is valid only until the next call (mutable rebuild in
+	// place).
 	const std::vector<std::pair<int, Entity*>>& lastTraceHits() const;
 
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B1.
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2
+	// (retagged in P3-B1: the sole consumer is the PlayerActions fire commit,
+	// PlayerActions.cpp:255-256, which P3-B2 owns).
 	int traceCollisionX() const { return trace.collisionX(); }
 	int traceCollisionY() const { return trace.collisionY(); }
 
@@ -189,7 +192,9 @@ public:
 	// (spec §1 difficulty note).
 	int difficulty() const;
 
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete after BOTH
+	// P3-B2 (Targeting/PlayerActions) and P3-C2 (Combat.cpp:147,338) have moved
+	// to trace.distFrom(); noted in P3-B1.
 	int entityDistFrom(const Entity* e, int x, int y) const { return trace.distFrom(e, x, y); }
 
 private:

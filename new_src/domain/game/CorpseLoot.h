@@ -64,7 +64,7 @@ public:
 	void poolLootCorpse(int tx, int ty, const Localization& loc, Pool& out);
 
 	// Grant pass (src/LoothingSystem.cpp:281-307): give() per non-class-6
-	// entry, weapon starter ammo max(usage,10) of tables.weaponData[idx*9+4],
+	// entry, weapon starter ammo max(usage,10) of the weapon row's AmmoType,
 	// credits give(0,24,credits), foundLoot stderr stub, resets pool counters
 	// + text. tables may be null (skips starter ammo).
 	void giveLootPool(Pool& pool, Player& player, const Tables* tables);

@@ -23,10 +23,15 @@ bool Tables::load(const std::vector<uint8_t>& data) {
 		count = end - base;
 	};
 
+	// Tables 1 and 2 are read as raw signed bytes and then split into rows;
+	// the byte vectors themselves have no readers left.
+	std::vector<int8_t> weaponInfoBytes;
+	std::vector<int8_t> weaponDataBytes;
+
 	size_t s, c;
 	range(0, s, c); ok = ok && loadTable(data, s, c, monsterAttacks);
-	range(1, s, c); ok = ok && loadTable(data, s, c, weaponInfo);
-	range(2, s, c); ok = ok && loadTable(data, s, c, weaponData);
+	range(1, s, c); ok = ok && loadTable(data, s, c, weaponInfoBytes);
+	range(2, s, c); ok = ok && loadTable(data, s, c, weaponDataBytes);
 	range(3, s, c); ok = ok && loadTable(data, s, c, monsterStats);
 	range(4, s, c); ok = ok && loadTable(data, s, c, combatMasks);
 	range(5, s, c); ok = ok && loadTable(data, s, c, keysNumeric);
@@ -43,7 +48,47 @@ bool Tables::load(const std::vector<uint8_t>& data) {
 	range(18, s, c); ok = ok && loadTable(data, s, c, skyPaletteB);
 	range(19, s, c); ok = ok && loadTable(data, s, c, skyTexelB);
 
+	// Row split. A trailing partial row is dropped: the legacy reader clamped
+	// every out-of-table field to 0 anyway, and both tables are an exact
+	// multiple of their row size in the shipped tables.bin.
+	weaponPoses.resize(weaponInfoBytes.size() / sizeof(WeaponPose));
+	for (size_t i = 0; i < weaponPoses.size(); ++i) {
+		const int8_t* r = weaponInfoBytes.data() + i * sizeof(WeaponPose);
+		WeaponPose& p = weaponPoses[i];
+		p.idleX = r[0];
+		p.idleY = r[1];
+		p.atkX = r[2];
+		p.atkY = r[3];
+		p.flashX = r[4];
+		p.flashY = r[5];
+	}
+	weaponDefs.resize(weaponDataBytes.size() / sizeof(WeaponDef));
+	for (size_t i = 0; i < weaponDefs.size(); ++i) {
+		const int8_t* r = weaponDataBytes.data() + i * sizeof(WeaponDef);
+		WeaponDef& w = weaponDefs[i];
+		w.strMin = r[0];
+		w.strMax = r[1];
+		w.rangeMin = r[2];
+		w.rangeMax = r[3];
+		w.ammoType = r[4];
+		w.ammoUsage = r[5];
+		w.projType = r[6];
+		w.numShots = r[7];
+		w.shothold = r[8];
+	}
+
 	return ok;
+}
+
+const WeaponDef& Tables::weaponDef(int weaponId) const {
+	static const WeaponDef kMissing{};
+	if (weaponId < 0 || (size_t)weaponId >= weaponDefs.size()) return kMissing;
+	return weaponDefs[(size_t)weaponId];
+}
+
+const WeaponPose* Tables::weaponPose(int weaponId) const {
+	if (weaponId < 0 || (size_t)weaponId >= weaponPoses.size()) return nullptr;
+	return &weaponPoses[(size_t)weaponId];
 }
 
 template <typename T>

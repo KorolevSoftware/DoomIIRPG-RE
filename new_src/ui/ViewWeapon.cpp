@@ -5,6 +5,7 @@
 
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
+#include "domain/game/WeaponTable.h"
 #include "io/Media.h"
 #include "io/Tables.h"
 #include "render/Camera3D.h"
@@ -103,13 +104,16 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam) {
 	// wpinfo table 1: idleX,idleY,atkX,atkY,flashX,flashY signed bytes per
 	// weapon (src/Combat.h:53-59).
 	const Tables& tables = *env_.tables;
-	if ((size_t)(w * 6 + 5) >= tables.weaponInfo.size()) return;
-	const int idleX = tables.weaponInfo[w * 6 + 0];
-	const int idleY = tables.weaponInfo[w * 6 + 1];
-	const int atkX  = tables.weaponInfo[w * 6 + 2];
-	const int atkY  = tables.weaponInfo[w * 6 + 3];
-	const int flashX = tables.weaponInfo[w * 6 + 4];
-	const int flashY = tables.weaponInfo[w * 6 + 5];
+	// Row missing => draw nothing, same as the former
+	// ((size_t)(w * 6 + 5) >= weaponInfo.size()) early return.
+	const WeaponPose* pose = tables.weaponPose(w);
+	if (pose == nullptr) return;
+	const int idleX = pose->idleX;
+	const int idleY = pose->idleY;
+	const int atkX  = pose->atkX;
+	const int atkY  = pose->atkY;
+	const int flashX = pose->flashX;
+	const int flashY = pose->flashY;
 
 	// Attack pose: hold (atkX,atkY) until flashDone, then lerp back over
 	// animTime in 16.16 (src/Combat.cpp:735-767). b5 reduces to

@@ -14,6 +14,12 @@ class MapData;
 // Peer subsystem owning the swept-capsule traces (spec
 // 2026-08-26-decomposition §P2-GA). Moved verbatim out of Game; the only
 // behavioural addition is that the hit list is typed (TraceHit, ADR 0011).
+//
+// This class is the ONLY place allowed to decode the legacy trace conventions
+// (ADR 0011 decisions 2-4): "world hit == entities[0] with def == nullptr" is
+// resolved in pushHit, and the distance of a hit is distFrom(), never a field.
+// Consumers read TraceHit::kind / eType / startsInside() — never
+// hit.entity->def == nullptr, never a raw frac comparison against -1.
 class TraceSystem {
 public:
 	// Non-owning views on the world. db is the entity database: the entity

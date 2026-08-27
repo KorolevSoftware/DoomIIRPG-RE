@@ -89,10 +89,19 @@ static int capsuleToCircleTrace(const int p[4], int radius2, int cx, int cy, int
 // Resolves the legacy "world hit == entities[0], def == nullptr" convention
 // once (ADR 0011 decision 2): every other decode site is gone.
 void TraceSystem::pushHit(int frac, Entity* ent) {
+	if (ent == nullptr) {
+		// Honesty guard (review 2026-08-27): World is a real entity slot
+		// (entities[0], def == nullptr by design), so a null pointer is not a
+		// world hit — it is no hit at all (kind None), and a None record has
+		// no place in the sorted hit list. Unreachable today: traceEntityHits
+		// dereferences ent->def before pushing, and trace() pushes
+		// db.worldEntity(), non-null once loadEntities ran.
+		return;
+	}
 	TraceHit h;
 	h.entity = ent;
 	h.frac = frac;
-	if (ent != nullptr && ent->def != nullptr) {
+	if (ent->def != nullptr) {                 // ent != nullptr guaranteed above
 		h.kind = TraceHitKind::Ent;
 		h.eType = ent->def->eType;
 		h.eSubType = ent->def->eSubType;

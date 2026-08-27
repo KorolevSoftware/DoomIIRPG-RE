@@ -39,6 +39,10 @@ you do not write application code yourself (you DO maintain docs yourself).
   (`perl -pi`, `sed -i`, `awk`, redirect-over-the-file) is forbidden for `new_src/`:
   it applies changes the author never sees and fails silently when a pattern misses.
   Read-only `grep`/`sed -n`/`head`/`tail` are fine.
+- Docs (`.md`) MAY be edited with a Python script — it is cheaper than pulling a long file
+  into context — but every replacement MUST be guarded (`assert old in s`) so a missed
+  pattern fails loudly instead of silently doing nothing. That guard is the whole reason
+  `sed`/`perl` are banned and this is not.
 
 ## Script bytecode analysis
 

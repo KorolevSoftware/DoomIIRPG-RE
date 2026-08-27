@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "domain/game/CombatEntity.h"
+#include "domain/game/WeaponTable.h"
 
 namespace newcore {
 
@@ -26,17 +27,7 @@ struct Tables;
 // (src/App.cpp:506-512 — roll-bit-exactness is not a legacy invariant).
 class Combat {
 public:
-	// Weapon-field offsets into the stride-9 int8 weapons table
-	// (src/Combat.h:26-35).
-	static constexpr int kFieldStrMin = 0;
-	static constexpr int kFieldStrMax = 1;
-	static constexpr int kFieldRangeMin = 2;
-	static constexpr int kFieldRangeMax = 3;
-	static constexpr int kFieldAmmoType = 4;
-	static constexpr int kFieldAmmoUsage = 5;
-	static constexpr int kFieldProjType = 6;
-	static constexpr int kFieldNumShots = 7;
-	static constexpr int kFieldShothold = 8;
+	// Weapon rows live in WeaponTable.h as WeaponDef / WeaponPose.
 
 	static constexpr int kMaxTileDistances = 16;   // MAX_TILEDISTANCES (src/Combat.h:19)
 
@@ -65,7 +56,9 @@ public:
 	Entity* curTarget = nullptr;
 	int targetType = 0, targetSubType = 0;
 	EntityMonster* targetMonster = nullptr;
-	int attackerWeaponId = -1, attackerWeapon = 0, attackerWeaponProj = 0;
+	// attackerWeapon (src/Combat.cpp:102, the pre-scaled attackerWeaponId * 9)
+	// has no counterpart here: every reader looks the row up by weapon id.
+	int attackerWeaponId = -1, attackerWeaponProj = 0;
 	int stage = -1, nextStage = -1, nextStageTime = 0;
 	int animStartTime = 0, animTime = 0, animEndTime = 0;
 	int flashTime = 0;
@@ -106,16 +99,15 @@ public:
 	// Accessors for the CombatEntity stat-math trio (they replace legacy's
 	// app singleton reaches into app->combat / app->game / weapons table).
 	const Env& env() const { return env_; }
-	const std::vector<int8_t>& weaponTable() const;   // tables->weaponData
 	int difficulty() const;                           // game->difficulty()
 
 	// Entity::CheckWeaponMask twin (src/Entity.h:52-54).
 	static bool checkWeaponMask(int weaponId, int mask) { return ((1 << weaponId) & mask) != 0; }
 
-	// Table accessor for weapon-field consumers outside this module
-	// (Player::fireWeapon guards); bounds-clamped like the rewrite's other
-	// table reads.
-	int8_t weaponField(int weaponId, int field) const;
+	// Weapon row lookup for this module and for consumers outside it
+	// (Player::fireWeapon guards, Targeting range gate). A missing table or an
+	// out-of-range id reads as an all-zero record.
+	const WeaponDef& weaponDef(int weaponId) const;
 
 	// Center-message stand-in for legacy hud->addMessage(str[, args])
 	// (spec §3.3): composes kTextMain str with %NN args via Game::composeArgs.

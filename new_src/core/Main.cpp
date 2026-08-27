@@ -50,8 +50,9 @@ int main(int argc, char* argv[]) {
 	Tables tables;
 	if (app.readResource(Resources::kTables, raw)) {
 		if (tables.load(raw)) {
-			std::fprintf(stdout, "tables.bin OK: attacks=%zu wpinfo=%zu weapons=%zu stats=%zu masks=%zu keys=%zu osc=%zu levelnames=%zu\n",
-				tables.monsterAttacks.size(), tables.weaponInfo.size(), tables.weaponData.size(),
+			// wpinfo/weapons are now row counts, not byte counts.
+			std::fprintf(stdout, "tables.bin OK: attacks=%zu wpinfoRows=%zu weaponRows=%zu stats=%zu masks=%zu keys=%zu osc=%zu levelnames=%zu\n",
+				tables.monsterAttacks.size(), tables.weaponPoses.size(), tables.weaponDefs.size(),
 				tables.monsterStats.size(), tables.combatMasks.size(), tables.keysNumeric.size(),
 				tables.oscCycle.size(), tables.levelNames.size());
 			std::fprintf(stdout, "  monsterColors=%zu sin=%zu drinks=%zu weakness=%zu movieFx=%zu sounds=%zu\n",

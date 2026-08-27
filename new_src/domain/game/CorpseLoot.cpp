@@ -7,6 +7,7 @@
 #include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Player.h"
+#include "domain/game/WeaponTable.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
@@ -216,10 +217,13 @@ void CorpseLoot::giveLootPool(Pool& pool, Player& player, const Tables* tables) 
 		int cnt = entry & 0x3F;
 		player.give(cls, idx, cnt);                      // (:289)
 		std::fprintf(stderr, "[loot] give class=%d idx=%d cnt=%d\n", cls, idx, cnt);
-		if (cls == 1 && tables != nullptr &&
-		    (size_t)(idx * 9 + 5) < tables->weaponData.size()) {
-			int ammoType = tables->weaponData[idx * 9 + 4];   // AMMOTYPE (src/Combat.h:26-36)
-			int usage = tables->weaponData[idx * 9 + 5];      // AMMOUSAGE
+		if (cls == 1 && tables != nullptr) {
+			// The former guard ((idx*9+5) < size) is folded into the row
+			// lookup: a missing row reads ammoUsage 0, so the usage > 0 gate
+			// skips the grant exactly as the guard did.
+			const WeaponDef& row = tables->weaponDef(idx);
+			int ammoType = row.ammoType;
+			int usage = row.ammoUsage;
 			if (usage > 0) player.give(2, ammoType, std::max(usage, 10)); // (:290-296)
 		}
 	}

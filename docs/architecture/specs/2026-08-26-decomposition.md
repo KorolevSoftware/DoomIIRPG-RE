@@ -829,7 +829,7 @@ Phase 3 starts when Phase 1 and P2-GA are both landed:
 | P3-B2 | `Targeting.{h,cpp}`, `PlayerActions.cpp` (consumer migration §5.2) | P3-C2 |
 | P3-C1 | `Enums.h` masks + `TraceSystem.cpp`, `Targeting.cpp`, `PlayerActions.cpp` call sites | — (after P3-B2) |
 | P3-C2 | `WeaponTable.h` + `Combat.{h,cpp}`, `CombatEntity.cpp`, `Player.cpp`, `ViewWeapon.cpp`, `CorpseLoot.cpp` | P3-B1/B2 |
-| P3-C3 | `Enums.h` tile names + `MapBits.h` + `Game.cpp`/`World3D.cpp`/`ScriptVM.cpp` call sites | P3-B*, P3-C1 |
+| P3-C3 | `Enums.h` tile names + `MapBits.h` + `Game.cpp`/`World3D.cpp`/`ScriptVM.cpp` call sites | P3-B* only — **NOT P3-C1** (CORRECTION 2026-08-27: both edit `Enums.h`; running them together is the `kOpenDoors` situation that already broke the build once during Phase 2. Run C1 then C3, or split the header first.) |
 | P3-C4 | `tileDistSq` in `Combat.{h,cpp}` + call sites | after P3-C1 |
 | P3-F1..F5 | forwarder sweep: delete each `Game.h` forwarder and fix its callers, one subsystem per group | one at a time |
 

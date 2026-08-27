@@ -8,6 +8,7 @@
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Player.h"
+#include "domain/game/WeaponTable.h"
 
 namespace newcore {
 
@@ -95,7 +96,8 @@ int CombatEntity::calcHit(Combat& c, CombatEntity& attackerCe, CombatEntity& def
 	// src/CombatEntity.cpp:157-298. Omitted: oneShotCheat (:169-171), the
 	// sniper-zoom pixel-bbox block (:173-216), the punch branches
 	// (:233-238 crFlags 0x10 gate, :253-261 punchingMonster).
-	const int attackerWeapon = c.attackerWeapon;                 // :159
+	// :159 attackerWeapon (the pre-scaled attackerWeaponId * 9) is replaced by
+	// the row lookup below; both come from the same weapon id.
 	const int attackerWeaponId = c.attackerWeaponId;             // :160
 	Entity* curTarget = c.curTarget;                             // :161
 	int eType;
@@ -113,21 +115,20 @@ int CombatEntity::calcHit(Combat& c, CombatEntity& attackerCe, CombatEntity& def
 
 	bool farCap = false;                                         // :218
 	int td = c.worldDistToTileDist(worldDist);                   // :219
-	const auto& weapons = c.weaponTable();                       // int8 stride-9 table
+	const WeaponDef& row = c.weaponDef(attackerWeaponId);
 	int n7;
-	if (td < weapons[attackerWeapon + Combat::kFieldRangeMin]) {           // :221-223
-		n7 = weapons[attackerWeapon + Combat::kFieldRangeMin] - td;
-	} else if (td > weapons[attackerWeapon + Combat::kFieldRangeMax]) {    // :224-229
+	if (td < row.rangeMin) {                                     // :221-223
+		n7 = row.rangeMin - td;
+	} else if (td > row.rangeMax) {                              // :224-229
 		if (attackerWeaponId == 7 || attackerWeaponId == 2) {
 			farCap = true;
 		}
-		n7 = td - weapons[attackerWeapon + Combat::kFieldRangeMax];
+		n7 = td - row.rangeMax;
 	} else {
 		n7 = 0;                                                  // :230-232
 	}
 	// punch branch n7=0 (:233-235) omitted (crFlags 0x10 never set).
-	if ((weapons[attackerWeapon + Combat::kFieldRangeMin] ==
-	     weapons[attackerWeapon + Combat::kFieldRangeMax] ||
+	if ((row.rangeMin == row.rangeMax ||
 	     (c.crFlags & 0x40) != 0) && n7 > 0) {                    // :236-238
 		return c.crFlags |= 0x400;
 	}
@@ -183,10 +184,12 @@ int CombatEntity::calcDamage(Combat& c, CombatEntity& attackerCe, Entity* target
 	// path). parm is the legacy n (unused by this body — kept for signature
 	// parity with calcCombat's targetSubType pass-through).
 	(void)parm;
-	const int weapon = attackerCe.weapon * 9;                    // :302
-	const auto& weapons = c.weaponTable();
-	int dmgStrMin = weapons[weapon + Combat::kFieldStrMin] & 0xFF;   // :303
-	int dmgStrMax = weapons[weapon + Combat::kFieldStrMax] & 0xFF;   // :304
+	// :302 weapon = attackerCe.weapon * 9 — the row is looked up by id.
+	const WeaponDef& row = c.weaponDef(attackerCe.weapon);
+	// The & 0xFF is legacy: the signed byte is reinterpreted unsigned here
+	// (src/CombatEntity.cpp:303-304). Kept as is, not a bug to fix.
+	int dmgStrMin = row.strMin & 0xFF;                            // :303
+	int dmgStrMax = row.strMax & 0xFF;                            // :304
 
 	if (attackerCe.weapon == 13) {                               // :306-309 soul cube x2
 		dmgStrMin *= 2;

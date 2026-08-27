@@ -77,17 +77,12 @@ int Combat::getWeaponTileNum(int n) {
 	}
 }
 
-int8_t Combat::weaponField(int weaponId, int field) const {
-	const size_t idx = (size_t)(weaponId * 9 + field);
-	if (env_.tables == nullptr || idx >= env_.tables->weaponData.size()) return 0;
-	return env_.tables->weaponData[idx];
-}
-
-const std::vector<int8_t>& Combat::weaponTable() const {
-	// Callers guarantee a loaded table (init logs otherwise); fall back to a
-	// static empty so a failed tables load degrades to misses, not crashes.
-	static const std::vector<int8_t> kEmpty;
-	return env_.tables != nullptr ? env_.tables->weaponData : kEmpty;
+const WeaponDef& Combat::weaponDef(int weaponId) const {
+	// Callers guarantee a loaded table (init logs otherwise); a missing table
+	// degrades to an all-zero row, i.e. to misses, not to a crash.
+	static const WeaponDef kMissing{};
+	if (env_.tables == nullptr) return kMissing;
+	return env_.tables->weaponDef(weaponId);
 }
 
 int Combat::difficulty() const {
@@ -128,20 +123,21 @@ void Combat::performAttack(Entity* target, int attackX, int attackY, bool script
 		std::fprintf(stderr, "[combat] performAttack refused (no weapon equipped)\n");
 		return;
 	}
-	attackerWeapon = attackerWeaponId * 9;             // :102
+	// :102 attackerWeapon = attackerWeaponId * 9 — the row is looked up by id.
 	// punchingMonster staging (:103-107) omitted — no punching Stage 1.
 	stage = 0;                                         // :109
 	nextStageTime = 0;                                 // :110
 	animEndTime = 0;                                   // :112
-	animLoopCount = weaponField(attackerWeaponId, kFieldNumShots);        // :113
+	const WeaponDef& row = weaponDef(attackerWeaponId);
+	animLoopCount = row.numShots;                      // :113
 	{                                                  // :114-120 ammo-pool cap
-		const int ammoType = weaponField(attackerWeaponId, kFieldAmmoType);
-		const int usage = weaponField(attackerWeaponId, kFieldAmmoUsage);
+		const int ammoType = row.ammoType;
+		const int usage = row.ammoUsage;
 		if (usage > 0 && ammoType >= 0 && ammoType < 9) {
 			animLoopCount = std::min(env_.player->ammo[ammoType] / usage, animLoopCount);
 		}
 	}
-	attackerWeaponProj = weaponField(attackerWeaponId, kFieldProjType);   // :121
+	attackerWeaponProj = row.projType;                 // :121
 	// Melee lunge for monster weapon 18 omitted (src/Combat.cpp:131-164):
 	// unreachable while only the player attacks.
 	worldDist = env_.game->entityDistFrom(curTarget,
@@ -180,8 +176,8 @@ bool Combat::tick() {
 		if (((1 << attackerWeaponId) & 0x77FF) == 0) {           // :204-206
 			crFlags |= 0x40;
 		}
-		const int ammoType = weaponField(attackerWeaponId, kFieldAmmoType);
-		const int usage = weaponField(attackerWeaponId, kFieldAmmoUsage);
+		const int ammoType = weaponDef(attackerWeaponId).ammoType;
+		const int usage = weaponDef(attackerWeaponId).ammoUsage;
 		const bool hasAmmo = (ammoType != 0);                    // :207-208
 		int ammoPool = 0;
 		if (hasAmmo && usage != 0 && ammoType > 0 && ammoType < 9) {
@@ -217,8 +213,8 @@ bool Combat::tick() {
 			}
 		} else {                                                 // :248-259
 			hitType = calcHitEntity(curTarget);                  // :249
-			int dmg = weaponField(attackerWeaponId, kFieldStrMin);   // :250
-			const int dmgMax = weaponField(attackerWeaponId, kFieldStrMax); // :251
+			int dmg = weaponDef(attackerWeaponId).strMin;        // :250
+			const int dmgMax = weaponDef(attackerWeaponId).strMax;   // :251
 			if (dmg != dmgMax) {
 				dmg += (int)nextByte() % (dmgMax - dmg);         // :253
 			}
@@ -245,7 +241,7 @@ bool Combat::tick() {
 		}
 		totalDamage += damage;                                   // :309
 		totalArmorDamage += crArmorDamage;                       // :310
-		animTime = weaponField(attackerWeaponId, kFieldShothold);// :311
+		animTime = weaponDef(attackerWeaponId).shothold;         // :311
 		// haste statusEffects[2] x5 branch absent -> always x10 (:312-317).
 		animTime *= 10;
 		animStartTime = (int)*env_.gameTime;                     // :318
@@ -333,11 +329,11 @@ int Combat::calcHitEntity(Entity* e) {
 		crFlags |= 0x400;
 		return 0;
 	}
-	const int w = env_.player->ce.weapon * 9;                        // :866
+	const WeaponDef& row = weaponDef(env_.player->ce.weapon);        // :866
 	const int td = worldDistToTileDist(
 		env_.game->entityDistFrom(e, env_.player->destX, env_.player->destY)); // :867
-	const int8_t rangeLo = env_.tables->weaponData[w + kFieldRangeMin];
-	const int8_t rangeHi = env_.tables->weaponData[w + kFieldRangeMax];   // :868
+	const int8_t rangeLo = row.rangeMin;
+	const int8_t rangeHi = row.rangeMax;                             // :868
 	if (td < rangeLo || td > rangeHi) {                              // :869-872
 		crFlags |= 0x400;
 		return 0;

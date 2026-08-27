@@ -130,7 +130,7 @@ Entity* Targeting::electFireTarget(int weapon, int* outFrac) {
 	if (entity != nullptr && entity->def != nullptr &&
 	    entity->def->eType == Enums::ET_ATTACK_INTERACTIVE &&
 	    ((1 << entity->def->eSubType) & 0x1) == 0 &&
-	    combat.worldDistToTileDist(dist2) > combat.weaponField(weapon, Combat::kFieldRangeMax)) {
+	    combat.worldDistToTileDist(dist2) > combat.weaponDef(weapon).rangeMax) {
 		entity = nullptr;
 	}
 	// Melee promotion of the remembered eType 13 (:383-385).

@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "domain/game/WeaponTable.h"
+
 namespace newcore {
 
 // Indexes into the tables.bin offset table. Element types per table:
@@ -48,9 +50,15 @@ class Tables {
 public:
 	bool load(const std::vector<uint8_t>& data);
 
+	// Weapon row lookups. An out-of-range id (including a negative one) reads
+	// as an all-zero record / a null pose, which is what the former per-field
+	// bounds clamp produced for a missing row.
+	const WeaponDef& weaponDef(int weaponId) const;
+	const WeaponPose* weaponPose(int weaponId) const;
+
 	std::vector<int16_t> monsterAttacks;
-	std::vector<int8_t> weaponInfo;
-	std::vector<int8_t> weaponData;
+	std::vector<WeaponPose> weaponPoses;   // table 1 (wpinfo), 6 bytes/row
+	std::vector<WeaponDef> weaponDefs;     // table 2, 9 bytes/row
 	std::vector<int8_t> monsterStats;
 	std::vector<int32_t> combatMasks;
 	std::vector<int8_t> keysNumeric;

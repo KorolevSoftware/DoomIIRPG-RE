@@ -104,9 +104,16 @@ docs/architecture/README.md; журнал: docs/journal.md)._
       - [x] Дискретное движение по клеткам: шаг 1 клетка, повороты 90°,
         advanceTurnDoors после действия; ввод обрабатывается ад-хок в
         Main.cpp (перенос внутрь Game-driven advanceTurn — Фаза 5).
-      - [ ] Монстры (EntityMonster, AI, активация).
-      - [ ] Подбор предметов (touchedItem, give).
-      - [ ] Оружие/combat (CombatEntity::calcHit/calcDamage).
+      - [x] Монстры (EntityMonster, AI, активация): domain/game/MonsterSystem —
+        пробуждение по видимости, поза боли, смерть, превращение в труп,
+        XP; подтверждено на экране 2026-08-26/27.
+      - [ ] Подбор предметов (touchedItem, give). НЕ реализован: Player::give
+        существует, но мировых подборов нет (лут с трупов — отдельный путь,
+        domain/game/CorpseLoot, работает).
+      - [x] Оружие/combat (CombatEntity::calcHit/calcDamage): domain/game/Combat +
+        CombatEntity, выбор цели лучом на 6 клеток (domain/game/Targeting),
+        полоса HP цели, отдача и вспышка оружия вида (ui/ViewWeapon).
+        Спека: docs/architecture/specs/2026-08-26-combat-stage1{,-fixes}.md.
 - [ ] Фаза 5. Игровой цикл: миры, локации, tileEvents, скрипты, диалоги,
       combat.
       - [x] Каркас (2026-08-23): машина состояний {Loading=7, Playing=3,
@@ -128,10 +135,20 @@ docs/architecture/README.md; журнал: docs/journal.md)._
         цепочки; текст: загрузка kTextMap, clamp глифов (пробел был
         мусорным подчёркиванием — src/Graphics.cpp:648-652), переносы и
         dehyphenate по легаси Text.
-      - [ ] Полная система диалогов (стили/говорящие), катсцены
-        (ST_CAMERA/ST_INTER_CAMERA), инвентарь-UI и лут (EV_MAKE_CORPSE
-        пропущен), монстры/AI, combat, сохранения, automap, переход между
-        картами (EV_CHANGE_MAP пока parse-only).
+      - [x] Катсцены (ST_CAMERA): maya-камеры, per-key часы, парковка/резюм
+        скриптовых потоков, леттербокс (две чёрные заливки + скриптовый арт
+        кокпита), поездки лифта. core/CinematicCamera. Подтверждено на экране.
+      - [x] Лут: EV_MAKE_CORPSE, пул лута, выдача, UI списка
+        (core/LootSession + domain/game/CorpseLoot).
+      - [ ] Полная система диалогов (стили/говорящие).
+      - [ ] Виджеты нижней панели HUD: код есть (Hud::draw/drawBottomBar), но
+        у него НЕТ вызывающего в игровом рендере — щит/здоровье/портрет/слот
+        оружия не видны.
+      - [ ] Сохранения, automap.
+      - [ ] Переход между картами (EV_CHANGE_MAP пока parse-only,
+        ScriptVM.cpp:890).
+      - [ ] Звук: отсутствует полностью (ни микшера, ни загрузки ресурсов;
+        вместо вызовов — TEMP-принты в stderr).
 
 ## Статус (заметки для разработки)
 

@@ -7,6 +7,7 @@
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
+#include "domain/game/WeaponTable.h"
 
 namespace newcore {
 
@@ -228,8 +229,9 @@ bool Player::fireWeapon(Combat& combat, Entity* target, int x, int y) {
 	if (weapon == 1 && target != nullptr && target->isCorpse()) {
 		std::fprintf(stderr, "[combat] chainsaw gib path deferred\n");
 	}
-	const int ammoType = combat.weaponField(weapon, Combat::kFieldAmmoType);
-	const int usage = combat.weaponField(weapon, Combat::kFieldAmmoUsage);
+	const WeaponDef& wdef = combat.weaponDef(weapon);
+	const int ammoType = wdef.ammoType;
+	const int usage = wdef.ammoUsage;
 	if (ammoType != 0) {                                       // :782-796
 		const int have = ammo[ammoType];
 		if (usage > 0 && have - usage < 0) {                   // :784
@@ -239,7 +241,7 @@ bool Player::fireWeapon(Combat& combat, Entity* target, int x, int y) {
 	}
 	// Projectile weapons are out of Stage-1 scope (research §6.3): refuse
 	// like the soul-cube guard rather than mis-firing instant hitscan damage.
-	const int proj = combat.weaponField(weapon, Combat::kFieldProjType);
+	const int proj = wdef.projType;
 	if (proj != 0) {
 		std::fprintf(stderr, "[combat] projectile weapon %d unsupported (proj=%d)\n",
 			weapon, proj);
