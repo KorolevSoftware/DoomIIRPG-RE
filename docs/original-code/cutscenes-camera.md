@@ -174,8 +174,14 @@ All 14 cameras use sampleRate=125. The exit-from-the-docking-elevator beats:
   instant teleport to tile (6,20) center (416,1312) facing angle 512 with pitch/roll
   zeroed (`src/ScriptThread.cpp:602-653`) — exactly cam7's final key spot. Keys:
   key0 (544,1248,484) **yaw −2 (inherit player)** 1250 ms → key1 same pos yaw 512
-  1000 ms → key2 (416,1248,484) yaw 640 500 ms (authored data cut) → key3 (416,1312,484)
+  1000 ms → key2 (416,1248,484) yaw 640 500 ms → key3 (416,1312,484)
   yaw 512 **ms=0**. Total 2750 ms; opens seamlessly on the player's facing.
+  Tween counts `[X 7, Y 3, Z 0, pitch 0, yaw 10, roll 0]`: key0 has NO tweens (static
+  hold, yaw glided by the inherit block), key1 tweens X `[-11,-15,-19,-19,-20,-18,-16]`
+  + YAW `[11,18,20,23,21,18,12]`, key2 tweens Y `[13,19,19]` + YAW `[-17,-39,-43]`.
+  So this camera is fully smooth — an earlier note calling key2 an "authored data cut"
+  was wrong; a jerk at its end means the port lost the tween bytes (see PITFALL below).
+  The only authentic discontinuity is the fov 315→290 / `+8` coord change at the cut.
 * **cam 10** (ev[56], tile (10,19) ENTER-all-dirs, IP 4223): self-disable, then
   `STARTCINEMATIC cam=10 @4226 → ADV_CAMERAKEY resumes=1 @4228` synchronously, then
   ~13 s of doorway pantomime choreography, final `ADV_CAMERAKEY resumes=1 @4487`.
@@ -184,6 +190,90 @@ All 14 cameras use sampleRate=125. The exit-from-the-docking-elevator beats:
 * Boot-chain first-ADV gaps: cam0 `OP5@1946→OP18@1954` and cam1 `OP5@2098→OP18@2103`
   are same-frame; cam5 `OP5@2422→first OP18@2517` has a ~1–3 s lead-in that shows the
   frozen key0 high shot. Every boot camera's last key has ms=0.
+
+### Tween-byte addressing (PITFALL)
+
+Per-camera tween indices in the map file are **camera-local** (verified: cameras
+0/4/5/7/11/12 all start their first tweened channel at raw index 0 —
+`docs/research/assets/probe_lift_cams.py`). The legacy loader keeps ONE array for the
+whole map, split by channel via `ofsMayaTween[ch]` (`src/LoadingManager.cpp:389-396`),
+so it **rebases the indices at load time**: `if (shiftShort >= 0) shiftShort += array[l%6]`
+where `array[]` holds the cumulative per-channel byte counts of the PREVIOUS cameras
+(`src/Game.cpp:612-620`; those counts are only added at `:636`, after the indices are
+read — hence "previous"). The per-camera blob is written channel-major with a running
+per-channel cursor (`src/Game.cpp:632-637`), and fetches use
+`mayaCameraTweens[ofsMayaTween[j] + indx + step]` (`src/MayaCamera.cpp:181-195`).
+
+Consequence for a port that keeps **per-camera** tween blobs: the cross-camera rebase
+must NOT be applied — the address is `chanOfs[ch] + rawIdx + step`. Applying it makes
+every fetch of a late camera fall out of range; if the fetch silently yields 0 the key
+holds still and then covers its whole distance inside the final partial sample window
+(`keyMs - (estNumTweens)*sampleRate` ms), which reads on screen as the camera
+"rushing"/cutting. Cameras 11/12 (lift rides, 4/6 Z bytes) and 7 (elevator exit) are
+the loudest victims; camera 0 is the only map00 camera with a zero rebase.
+
+### map00 lift-ride cameras 11 / 12 (shaft behind the blue door)
+
+The ride is NOT a separate system: same `EV_STARTCINEMATIC` + `EV_ADV_CAMERAKEY`
+cinematic path, cameras parked at (736,1248) = centre of the shaft tile (11,19),
+`yaw = -2` (inherit player) on every key so only Z moves. `sampleRate = 125`.
+
+* **Trigger chain** — wall button decal sprite 207: ev[43] tile (10,18) TRIGGER dir E
+  (IP 4568) toggles the platform sprite 169 via LERPSPRITE (z −32 / +24, sounds
+  1088/1089) and flips script var v23 ("platform parked on (11,19)").
+* **Ride down** — ev[61] tile (11,19) ENTER (IP 4667), guarded `EVAL v23==0`:
+  `STARTCINEMATIC cam=11` → `GOTO (11,25) face=keep` (INSTANT, bit14 clear) →
+  `ADV_CAMERAKEY keys=3`; tail after resume re-parks the platform, resets the button
+  frame and `SETSTATE v23=1`.
+  Keys: key0 z 484 ms=600 tweens[Z]=[-23,-34,-37,-32]; key1 z 342 ms=200 **no tweens
+  (static 200 ms landing hold)**; key2 z 352 ms=0. Total **800 ms**.
+* **Ride up** — ev[129] tile (11,26) TRIGGER dir N (IP 4707): click sound 1121,
+  `ENTITY_FRAME 208 frame=1`, `WAIT 200`, animated `GOTO (11,25) face=E`,
+  `MARKTILE`, `ADVANCETURN`, sound 1088, then `STARTCINEMATIC cam=12` →
+  `GOTO (11,19) face=E` (INSTANT) → async platform lerp → `ADV_CAMERAKEY keys=2`;
+  tail plays 1089, resets the button, `SETSTATE v23=1`.
+  Keys: key0 z 352 ms=800 tweens[Z]=[14,20,25,24,23,17]; key1 z 480 ms=0.
+  Total **800 ms**.
+* Exact Z curves (key-space units; render pose = value<<4):
+  cam 11 key0 `484→461→427→390→358` at 0/125/250/375/500 ms then `358→342` over the
+  final 100 ms; cam 12 key0 `352→366→386→411→435→458→475` at 0..750 ms in 125 ms steps
+  then `475→480` over the final 50 ms.
+* Neither ride is skippable: `cinUnpauseTime = gameTime + 1000`
+  (`src/ScriptThread.cpp:185`) outlives the 800 ms ride, so the Skip soft key
+  (`src/Canvas.cpp:954-957`) and the skip input path
+  (`src/InputEventController.cpp:416-419`) never arm.
+* **Deferred destination events.** The instant `EV_GOTO` sets `gotoTriggered`
+  (`src/ScriptThread.cpp:653`), but the consumer sits at
+  `src/MovementController.cpp:503-509`, i.e. AFTER the camera early-return at `:390-395`
+  — so the destination tile's ENTER events only fire on the first `ST_PLAYING` frame
+  after the cinematic. This is load-bearing for the ride up: it teleports the player
+  onto (11,19) where ev[61] (ride DOWN) is an ENTER event; by the time the deferred
+  events run, the resumed tail has already set `v23=1`, so ev[61]'s guard fails.
+  Firing destination events during the cinematic would recursively restart camera 11.
+  (A facing nibble != 15 does run `finishRotation(true)` synchronously,
+  `src/ScriptThread.cpp:641` → type-8 FACE events only; (11,19) has none.)
+* Player movement/turn interpolation is frozen for the whole ride: `updateView`
+  returns right after `activeCamera->Render()` (`src/MovementController.cpp:390-395`),
+  skipping the glide block at `:402-481`; input in `ST_CAMERA` only ever considers the
+  skip gesture (`src/InputEventController.cpp:416-419`).
+
+### Frame-time source (no fixed step anywhere)
+
+`Main.cpp` measures a real per-frame delta and clamps it to **125 ms**
+(`src/Main.cpp:132-134`), passing it to `DoLoop`, which runs exactly one
+`canvas->run()` and then `upTimeMs += time` (`src/CAppContainer.cpp:55-61`).
+`Canvas::run` sets `app->time = upTimeMs` and advances
+`gameTime += app->time - app->lastTime` only while `!pauseGameTime && state != ST_MENU`
+(`src/Canvas.cpp:749-770`). The camera does no clamping of its own — it reads
+`gameTime - activeCameraTime` (`src/Canvas.cpp:951`), and every `NextKey()` restamps
+`activeCameraTime = gameTime` (`src/MayaCamera.cpp:36-44`), so each key has its own
+fresh clock (no cumulative timeline). Dialogs pause it by flipping
+`activeCameraTime = gameTime - activeCameraTime` (`src/Canvas.cpp:1092-1094`).
+
+FOV/coord discontinuity at every cinematic end is authentic: cinematic renders raw
+`<<4` camera coords at fov **315** (290 under a dialog, `src/MayaCamera.cpp:302-312`),
+gameplay renders `(viewX<<4)+8` at fov **290** (`src/Canvas.cpp:1344`,
+`src/MovementController.cpp:544`).
 
 ### map00 camera data (from tmp_map00.bin)
 
@@ -205,7 +295,10 @@ starts at (1504,800,560) yaw 256 for 2.5 s, dollies to (1504,320,560) looking do
 - Instant (bit14=0): view snaps (`viewX/Y/Z = dest…`), `viewAngle=destAngle=nibble<<7`,
   optional `advanceTurn()` if bit15, then `startRotation(false)` outside cutscenes;
   marks `gotoTriggered` so the destination-tile events fire from `updateView`
-  (`src/MovementController.cpp:503-509`). Finally `player->relink()`,
+  (`src/MovementController.cpp:503-509`) — but that block sits AFTER the
+  camera-active early-return at `:390-395`, so during a cinematic the destination
+  ENTER events are DEFERRED to the first `ST_PLAYING` frame after it ends
+  (load-bearing for the lift ride up, see §3). Finally `player->relink()`,
   `clearEvents(1)`, `updateFacingEntity=true`, repaint.
 - Animated (bit14=1): shortest-arc turn setup, `zStep=(|Δz|+animFrames-1)/animFrames`,
   and if anything differs, hands control to `gotoThread=this` and waits
@@ -308,6 +401,169 @@ Note: dialog/string ids are indexes into text table `loadMapStringID = 4+(mapID-
 for map00 (`src/LoadingManager.cpp:310`); their English text lives in the localization
 resource, not in the map file.
 
+## 7. Cinematic letterbox: black bars, cockpit art, subtitle/Skip placement
+
+Verified 2026-08-26 (`docs/research/2026-08-26-cinematic-letterbox.md`).
+Canvas = 480x320 (`Applet::IOS_WIDTH/HEIGHT`, `src/App.h:36-37`), so
+`displayRect = {0,0,480,320}` (`src/Canvas.cpp:49-52`), `screenRect = {0,0,480,320}`,
+`softKeyY = 320` (`src/Canvas.cpp:100-119`), `viewRect = {0,20,480,250}` (`:123-127`),
+`cinRect = {0,42,480,250}` (`:151-154`), `CAMERAVIEW_BAR_HEIGHT = 20` (`:149`).
+
+### 7.1 The bars are two opaque black fills, NOT the cockpit art
+
+`Hud::drawCinematicText` opens with (`src/Hud.cpp:455-456`, verbatim):
+
+```
+graphics->eraseRgn(0, 0, canvas->displayRect[2], canvas->cinRect[1]);
+graphics->eraseRgn(0, canvas->cinRect[1] + canvas->cinRect[3], canvas->displayRect[2],
+                   canvas->softKeyY - (canvas->cinRect[1] + canvas->cinRect[3]));
+```
+
+Substituting: **TOP bar `(0, 0, 480, 42)`** (rows 0..41) and
+**BOTTOM bar `(0, 292, 480, 28)`** (rows 292..319, since 42+250 = 292 and
+320-292 = 28). `eraseRgn` = `setColor(0)` + `fillRect` (`src/Graphics.cpp:250-256`)
+and `Graphics::fillRect` forces `a = 1.0` (`src/Graphics.cpp:88-95`), so both are
+**opaque black**, in absolute display coordinates (`fillRect` does not add
+`transX/transY`; `graphClipRect` is `displayRect` because `backPaint` is entered
+right after `graphics.resetScreenSpace()`, `src/Canvas.cpp:986-987`).
+
+This is the whole letterbox. The **cockpit overlay is a different, script-gated
+effect**: `Hud::drawOverlay` (`src/Hud.cpp:620-625`) runs only from
+`MayaCamera::Render` under `if (app->hud->cockpitOverlayRaw)`
+(`src/MayaCamera.cpp:316-318`); that flag starts false (`Hud::Hud` memsets the
+object, `src/Hud.cpp:24-26`) and is only flipped by opcode 76 `EV_TOGGLE_OVERLAY`
+(`this->app->hud->cockpitOverlayRaw ^= 1;`, `src/ScriptThread.cpp:1710-1713`,
+id `src/Enums.h:476`). In map00 it is enabled for exactly one shot — the drop-ship
+arrival camera 0: `TOGGLE_OVERLAY @1945 -> STARTCINEMATIC cam=0 @1946 ... ->
+TOGGLE_OVERLAY @2062` (disassembler run over `tmp_map00.bin`). Every other
+cinematic in map00 shows bars with NO cockpit art.
+
+Overlay geometry: `cockpit.bmp` is **240x234** (BMP header in
+`Payload/Doom2rpg.app/Packages/cockpit.bmp`: width 0xF0, height 0xEA), loaded via
+`Applet::loadImage("cockpit.bmp")` (`src/App.cpp:418`). Two blits:
+`drawImage(img, cinRect[0]=0, cinRect[1]=42, flags=0, rot=0, mode=0)` → top-left
+anchor, covers `(0,42)-(239,275)`; `drawImage(img, cinRect[2]=480, 42, flags=24,
+rot=4, 0)` → flags 24 = 8(RIGHT)|16, so `x = 480-240 = 240`, and `rotateMode = 4`
+is `glScalef(-1,1,1)` = horizontal mirror (`src/Graphics.cpp:349-368` anchor math,
+`src/Image.cpp` `DrawTexture` case 4). Combined the art covers
+**`(0,42,480,234)` = rows 42..275**, its top edge flush with the bottom of the
+top black bar.
+
+### 7.2 Draw order per frame, and what overpaints the world
+
+The world 3D pass happens during `canvas->run()`
+(`ST_CAMERA` branch `src/Canvas.cpp:948-958` → `updateView` →
+`MayaCamera::Render`, `src/MovementController.cpp:390-395`); the 2D pass happens
+afterwards in `backPaint` (`src/Canvas.cpp:381`, called at `:986-987`). Order:
+
+1. `Main.cpp` clears the whole framebuffer to black every frame
+   (`glClearColor(0,0,0,1); glClear(...)`, `src/Main.cpp:125-126`).
+2. `MayaCamera::Render`: world (fov 315 / 290 in dialog) → `renderPortal()` →
+   cinematic view weapon (`combat->drawWeapon(0,0)` if `cinematicWeapon != -1`) →
+   **cockpit overlay** if `cockpitOverlayRaw` → post-process
+   (`src/MayaCamera.cpp:302-324`). All of this lands in the GL band
+   `glViewport(1,65,478,248)` = canvas `(1,7,478,248)` = rows 7..254
+   (rendering.md §6.3) — the overlay excepted, it is plain 2D at rows 42..275.
+3. `backPaint`: fade-of-3D (`REPAINT_VIEW3D`), then particles
+   (`REPAINT_PARTICLES`, clipped to `cinRect+1/-2` in ST_CAMERA,
+   `src/ParticleSystem.cpp:201-215`), then `hud->draw` (`src/Canvas.cpp:405-417`).
+4. `Hud::draw` in ST_CAMERA has `hud->repaintFlags = 0x18` only, so it runs the
+   bubble block (0x8) and then, **last**, the 0x10 block
+   (`src/Hud.cpp:799-818`): `drawCinematicText` → **top bar, bottom bar**, big
+   title, subtitle (+ player face), `drawBubbleText` again (`src/Hud.cpp:490`),
+   then the right soft-key label.
+5. `backPaint` tail: `Canvas::fadeFlags` fade over everything
+   (`src/Canvas.cpp:499-510`).
+
+**Yes — the top bar paints over already-rendered world.** The world band is rows
+7..254; the top fill blacks out rows 7..41 of it (35 rows). The bottom fill
+(292..319) is entirely below the world band and only hides HUD leftovers; rows
+255..291 are black only because of the per-frame full-screen clear (nothing sets
+`REPAINT_CLEAR` in ST_CAMERA). Net visible world during a cinematic:
+**rows 42..254 (213 px tall), full width**.
+
+### 7.3 What consumes `cinRect` and `CAMERAVIEW_BAR_HEIGHT`
+
+`cinRect[1] = 42` / `cinRect[3] = 250` are consumed by exactly five places:
+* the two `eraseRgn` bars (`src/Hud.cpp:455-456`) — `cinRect[1]` = top-bar height,
+  `cinRect[1]+cinRect[3]` = 292 = bottom-bar top edge;
+* the subtitle baseline (`src/Hud.cpp:469-470`, §7.5);
+* the cockpit blits' anchor (`src/Hud.cpp:623-624`);
+* particle clipping in ST_CAMERA (`src/ParticleSystem.cpp:204-215`);
+* the ST_CAMERA `setViewport` call, which the GL path throws away
+  (`src/Canvas.cpp:1215`, rendering.md §6.3);
+* plus `cinRect[3]` as the scrolling-text base y in the story screens
+  (`src/IntroSequenceManager.cpp:243`).
+
+`CAMERAVIEW_BAR_HEIGHT = 20` (`src/Canvas.cpp:149`) has **one** consumer:
+`Combat::drawWeapon` shifts the cinematic weapon up by it —
+`if (b2) { weapon = game->cinematicWeapon; scrY -= CAMERAVIEW_BAR_HEIGHT; }`
+with `b2 = (state == ST_CAMERA && cinematicWeapon != -1)`
+(`src/Combat.cpp:675`, `:701-704`).
+
+### 7.4 Gating — which cinematic sub-case gets bars
+
+The bars ride on `hud->repaintFlags` bit `0x10`. Where it is written:
+* `setState(ST_CAMERA)`: `app->hud->repaintFlags = 24` (= 0x08|0x10) plus
+  `clearSoftKeys()` and the `cinRect` viewport call (`src/Canvas.cpp:1207-1216`).
+* Every ST_CAMERA frame `MovementController::updateView` masks
+  `app->hud->repaintFlags &= 0x18` right after `activeCamera->Render()`
+  (`src/MovementController.cpp:390-395`) — so 0x18 survives and only bubble+
+  cinematic draw; the HUD panels never appear. The `&= ~0x10` clear after drawing
+  is commented out in this port (`src/Hud.cpp:800`), i.e. the bit is sticky.
+* `EV_CAMERA_STR` **assigns** `app->hud->repaintFlags = 16`
+  (`src/ScriptThread.cpp:538-539`). Harmless in ST_CAMERA; outside it this would
+  turn the bars on until the next `setState` (all 13 `CAMERA_STR` sites in map00
+  are inside ST_CAMERA, so it never fires there).
+
+Consequences per sub-case:
+
+| case | state | bars | HUD panels | cockpit art |
+|---|---|---|---|---|
+| boot intro fly-over / any scripted cinematic | ST_CAMERA | **yes** | no | only if opcode 76 was toggled (map00: camera 0 only) |
+| map00 drop-ship arrival (cam 0) | ST_CAMERA | **yes** | no | yes, rows 42..275 |
+| dialog opened during a cinematic | ST_DIALOG (camera still active) | **no** | top bar only | still drawn (`MayaCamera::Render` runs, fov 290) |
+| `EV_START_INTERCINEMATIC` scene | ST_INTER_CAMERA | **no** | yes (0x2B) | n/a (`updateView` skips camera render, `src/MovementController.cpp:391`) |
+| gameplay | ST_PLAYING/ST_COMBAT | no | yes (0x2F) | n/a |
+
+Details: `setState(ST_DIALOG)` assigns `hud->repaintFlags = 47` and calls
+`tinyGL->resetViewPort()` (`src/Canvas.cpp:1084-1097`); the ST_DIALOG frame runs
+`updateView` (mask → 0x08) and then `|= 0x2B` (`src/Canvas.cpp:919-925`), final
+0x2B → **no 0x10, no bars**. So the picture un-letterboxes (grows upward by 35
+rows) while a dialog box is up over a cinematic, and re-letterboxes when the
+dialog closes back into ST_CAMERA (`src/DialogSystem.cpp:541-554`).
+`setState(ST_INTER_CAMERA)` assigns `43` (0x2B) (`src/Canvas.cpp:1080-1081`) and
+each frame `|= 0x2B` (`src/Canvas.cpp:825-826`) — never 0x10.
+Skippable vs non-skippable changes nothing about the bars: `cinUnpauseTime` only
+gates the Skip soft key and the skip input (`src/Canvas.cpp:955-957`,
+`src/InputEventController.cpp:416-419`).
+
+### 7.5 Text/soft-key placement relative to the bars
+
+All inside the same 0x10 block, drawn AFTER the fills:
+* Big cinematic title: `drawString(largeBuffer, SCR_CX = 240, 1, flags = 1)`
+  (`src/Hud.cpp:465`) — HCENTER|TOP at y = 1, i.e. **inside the top black bar**.
+  Wrapped to `subtitleMaxChars = 480/9 = 53` chars (`src/Canvas.cpp:96`), or
+  `53-7 = 46` when `showCinPlayer` (`src/Hud.cpp:457`).
+* Subtitle: `n3 = cinRect[1]+cinRect[3] = 292`;
+  `n4 = (n3 + ((screenRect[3] - n3 - 32) >> 1)) - 10 = (292 + ((320-292-32)>>1)) - 10`
+  = `292 + (-4>>1) - 10` = **280** (`src/Hud.cpp:469-470`); drawn at
+  `(240, 280)` HCENTER|TOP, second wrapped line at `y = 296`
+  (`src/Hud.cpp:481-486`). So line 1 sits in the un-drawn gap below the world
+  band and line 2 sits on the bottom black bar.
+* Player face (bit 14 of `EV_CAMERA_STR` → `showCinPlayer`):
+  `drawRegion(imgPlayerFaces, 0,0,32,30, 5, n4 - (width-32)/2, 0,0,0)`
+  → x = 5, y = 280 - (imgPlayerFaces->width - 32)/2; the subtitle then switches
+  to LEFT anchor at x = `imgPlayerFaces->width + 10` (`src/Hud.cpp:474-477`).
+* "Skip" soft key: `drawString(texBuff, 478, 320, 40)` — flags 40 = 8(RIGHT)|
+  32(BOTTOM), absolute display coords (`src/Hud.cpp:803-817`, string at `:813`), i.e. bottom-right
+  **on** the bottom bar. Armed by `setRightSoftKey(0,40)` once
+  `gameTime > cinUnpauseTime` (`src/Canvas.cpp:955-957`).
+
+None of these positions are derived from the bar rects at runtime beyond
+`cinRect[1]/[3]`, so fixing/adding the bars does not move any text: title y = 1,
+subtitle y = 280, soft key anchored to (478,320).
+
 ## Port checklist (minimum viable map00 opening)
 
 1. **States**: implement ST_PLAYING/ST_CAMERA/ST_INTER_CAMERA/ST_DIALOG transitions with
@@ -315,7 +571,9 @@ resource, not in the map file.
    PLAYING/CAMERA (`src/Game.cpp:3259`).
 2. **Camera runtime**: parse per-map `numKeys/sampleRate/keys[7ch]/tweenIndices/tweens`
    (§3 layout); reproduce `setupCamera` (incl. `-2` inherit sentinel and 1000 ms
-   `cinUnpauseTime`), the 125 Hz-sample interpolation formulas, shortest-arc angles,
+   `cinUnpauseTime`), the 125 Hz-sample interpolation formulas **including the
+   camera-local vs global tween-index rebase** (§3 PITFALL — getting it wrong silently
+   zeroes every tween delta and makes keys lurch/rush), shortest-arc angles,
    `Update(activeCameraKey, gameTime-activeCameraTime)` ticking, FOV 315/290,
    viewport swap to `cinRect`, and end-of-keys → ST_PLAYING reset.
 3. **Opcodes**: STARTCINEMATIC(5), ADV_CAMERAKEY(18) with resume-count handshake,
