@@ -140,6 +140,26 @@ CinematicCamera/LootSession/Targeting/ViewWeapon/SceneRenderer/PlayerActions) is
 Phase 2 (Game -> TraceSystem/DoorSystem/MonsterSystem/SpriteLerps/CorpseLoot/EntityDb behind
 forwarders) runs in parallel with it.
 
+### Decomposition debt — MUST be paid in P2-GF (do not lose this)
+
+`DoorSystem` carries verbatim COPIES of `Game::findMapEntity`, `linkEntity` and
+`unlinkEntity` (private members, marked "do not add logic here"), because those helpers
+belong to `EntityDb` which only exists from P2-GF, and a module `Env` may not hold a `Game*`.
+P2-GC (`MonsterSystem`) needs the same helpers (`corpsifyMonster` relinks entities) and must
+copy the SAME comment rather than invent a variant. **P2-GF deletes both copies and switches
+them to `EntityDb*`.** Duplicated logic drifting apart is exactly what this refactor exists to
+prevent, so this is the one debt that cannot be quietly deferred.
+
+`MonsterSystem::Env` carries a `std::function<void(int)> snapLerps` shim because the lerp pool
+belongs to P2-GD; **P2-GD must replace it with a `SpriteLerps*`** and repoint `Env::clockMs` at
+the lerp clock's new owner. `Game::snapSpriteLerps` (= legacy `snapLerpSprites`,
+`src/Game.cpp:1149-1166`) becomes `SpriteLerps::snap`.
+
+Also transitional, tagged FORWARDER, scheduled to die: `Game::lastTraceHits()` rebuilds a
+legacy vector from `TraceSystem::hits()` per call (dies in P3-B2); `Game::traceMove` keeps an
+unused `const MapData&` parameter; `Game::performDoorEvent` / `useDoorFacing` /
+`GameContext::getHeight` are one-line forwarders.
+
 ### Known gaps found in passing, not yet scheduled
 
 - `Hud::clearMessages()` has zero call sites; legacy zeroes `msgCount` on ST_CAMERA entry

@@ -35,6 +35,24 @@ void GameContext::init(const Init& sys) {
 	cinEnv.host = this;
 	cinEnv.gameTime = &gameTime;
 	cinematic_.init(cinEnv);
+	LootSession::Env lootEnv;
+	lootEnv.map = sys_.map;
+	lootEnv.game = sys_.game;
+	lootEnv.player = sys_.player;
+	lootEnv.loc = sys_.loc;
+	lootEnv.font = sys_.font;
+	lootEnv.dialogs = sys_.dialogs;
+	lootEnv.tables = sys_.tables;
+	lootEnv.host = this;
+	lootEnv.upTimeMs = &upTimeMs;
+	loot_.init(lootEnv);
+	Targeting::Env tgtEnv;
+	tgtEnv.game = sys_.game;
+	tgtEnv.player = sys_.player;
+	tgtEnv.map = sys_.map;
+	tgtEnv.tables = sys_.tables;
+	tgtEnv.hud = sys_.hud;
+	targeting_.init(tgtEnv);
 	if (sys_.tables) {
 		camera_.setSinTable(sys_.tables->sinTable.data());
 		sys_.game->setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (Game.h)
@@ -95,28 +113,10 @@ void GameContext::enterState_(StateId s) {
 		deathTimeMs_ = upTimeMs; // unused this phase (src/Canvas.cpp:1125-1131 analog)
 		break;
 	case StateId::Looting:
-		// Legacy setState hook -> LootingSystem::onEnterLooting
-		// (src/Canvas.cpp:1142-1143, src/LootingSystem.cpp:26-33): cache the
-		// pose + facing and restart the 500 ms clock, crouch phase first.
-		// The rewrite caches viewPitch (no destPitch slope machinery yet;
-		// identical value here). poolLoot runs immediately after setState
-		// (src/PlayingInputHandler.cpp:374-378): every eType-9 entity on the
-		// faced tile is marked looted and the list is built NOW, not at close.
+		// The session itself (pose latch + poolLoot) lives in LootSession;
+		// clearing the queued events stays state-machine business.
 		pendingActions_.clear();
-		lootDestX_ = sys_.player->viewX;
-		lootDestY_ = sys_.player->viewY;
-		lootDestZ_ = sys_.player->viewZ;
-		lootDestPitch_ = sys_.player->viewPitch;
-		lootStepX_ = sys_.player->viewStepX >> 6;
-		lootStepY_ = sys_.player->viewStepY >> 6;
-		lootTime_ = upTimeMs;
-		lootCrouch_ = true;
-		lootSettleSfx_ = false;                            // field_0xac5_ (:32)
-		{
-			int tx = (lootDestX_ + lootStepX_ * 64) >> 6;
-			int ty = (lootDestY_ + lootStepY_ * 64) >> 6;
-			sys_.game->poolLootCorpse(tx, ty, *sys_.loc, lootPool_);
-		}
+		loot_.begin();
 		break;
 	case StateId::Loading:
 		loadingPhase_ = 0;     // arm the loading-phase counter
@@ -176,7 +176,7 @@ void GameContext::tick() {
 			if (cinematic_.skipGateOpen()) cinematic_.requestSkip();
 			continue;
 		}
-		if (state_ == StateId::Looting) { handleLootingAction(a); continue; }
+		if (state_ == StateId::Looting) { loot_.handleAction(a); continue; }
 		if (blocked || state_ != StateId::Playing) break;
 		handlePlayingAction(a);
 	}
@@ -220,7 +220,7 @@ void GameContext::tick() {
 		// threads resume via their owners only (runScriptThreads gates above).
 		break;
 	case StateId::Camera:  tickCamera(); break;
-	case StateId::Looting: tickLooting(); break;
+	case StateId::Looting: loot_.tick(); break;
 	case StateId::Dialog:
 		// Lerps+doors ticked in the globals section above (legacy ST_DIALOG
 		// branch, src/Canvas.cpp:920-926); view/input updates do not.
@@ -481,129 +481,6 @@ void GameContext::tickDying() {
 	// (spec §11 out of scope). Health can only reach 0 via future combat.
 }
 
-// ---- loot-crouch camera (docs/research/2026-08-25-camera-pitch-loot.md) ----
-
-void GameContext::tickLooting() {
-	// LootingSystem::lootingState (src/LootingSystem.cpp:35-83): crouch lerp
-	// 500 ms -> dwell (settled crouch pose held every tick, sound 1055 once,
-	// loot menu drawn + input live) -> stand-up lerp 500 ms on close ->
-	// snap + advanceTurn. The pose is recomputed from scratch every tick,
-	// formulas verbatim (16.16 fraction n: remaining, n2: elapsed). Lerps and
-	// doors do NOT tick — legacy ST_LOOTING calls lootingState() only
-	// (src/Canvas.cpp:940-942).
-	Player& p = *sys_.player;
-	int t = (int)(upTimeMs - lootTime_);
-	if (t < kLootPhaseMs) {
-		int n = ((kLootPhaseMs - t) << 16) / kLootPhaseMs; // (:43)
-		int n2 = 65536 - n;
-		int h0 = getHeight(lootDestX_, lootDestY_);
-		int h1 = getHeight(lootDestX_ + lootStepX_ * 64, lootDestY_ + lootStepY_ * 64);
-		if (lootCrouch_) {                              // crouch down (:46-50)
-			int hb = (h0 > h1) ? h0 : ((h0 * n + h1 * n2) >> 16);
-			p.viewX = lootDestX_ + (48 + ((-48 * n) >> 16)) * lootStepX_;
-			p.viewY = lootDestY_ + (48 + ((-48 * n) >> 16)) * lootStepY_;
-			p.viewZ = hb + 26 + ((10 * n) >> 16);
-			p.viewPitch = std::max(-(64 - ((64 * n) >> 16)) + lootDestPitch_, -64);
-		} else {                                        // stand up (:53-57)
-			int hb = (h0 > h1) ? h0 : ((h0 * n2 + h1 * n) >> 16);
-			p.viewX = lootDestX_ + ((48 * n) >> 16) * lootStepX_;
-			p.viewY = lootDestY_ + ((48 * n) >> 16) * lootStepY_;
-			p.viewZ = hb + 36 + ((-10 * n) >> 16);
-			p.viewPitch = std::max(-((64 * n) >> 16) + lootDestPitch_, -64);
-		}
-		return;
-	}
-	if (lootCrouch_) {
-		// Crouch settled -> DWELL (:66-71): hold the end pose every tick and
-		// play sound 1055 once per session (field_0xac5_ latch :62-65). The
-		// clock is NOT restarted; closeLootSession (input) starts stand-up.
-		int h0 = getHeight(lootDestX_, lootDestY_);
-		int h1 = getHeight(lootDestX_ + lootStepX_ * 64, lootDestY_ + lootStepY_ * 64);
-		p.viewX = lootDestX_ + 48 * lootStepX_;
-		p.viewY = lootDestY_ + 48 * lootStepY_;
-		p.viewZ = std::max(h0, h1) + 26;
-		p.viewPitch = std::max(lootDestPitch_ - 64, -64);
-		if (!lootSettleSfx_) {
-			lootSettleSfx_ = true;
-			std::fprintf(stderr, "[loot] sound 1055\n");
-		}
-	} else {
-		// Stand-up expiry: snap home and close the session (:74-80); the turn
-		// is consumed only now.
-		p.viewX = lootDestX_;
-		p.viewY = lootDestY_;
-		p.viewZ = getHeight(lootDestX_, lootDestY_) + 36;
-		p.viewPitch = lootDestPitch_;
-		setState(StateId::Playing);
-		sys_.game->advanceTurn();
-	}
-}
-
-// ---- loot dwell session (src/LoothingSystem.cpp:85-150) ----
-
-void GameContext::handleLootingAction(Action a) {
-	if (!lootCrouch_ || upTimeMs <= lootTime_ + kLootPhaseMs) return;  // (:87)
-	int maxLine = std::max(Game::LootPool::lineCount(lootPool_) - 3, 0);
-	switch (a) {
-	case Action::Use:                                   // ACTION_FIRE
-		if (lootPool_.topLine >= maxLine) closeLootSession();
-		else lootPool_.topLine = std::min(lootPool_.topLine + 3, maxLine);
-		break;
-	case Action::Passturn:
-	case Action::BackKey:                closeLootSession(); break;
-	case Action::Forward:  lootPool_.topLine = std::max(lootPool_.topLine - 1, 0); break;
-	case Action::Back:     lootPool_.topLine = std::min(lootPool_.topLine + 1, maxLine); break;
-	case Action::TurnLeft:  lootPool_.topLine = 0; break;
-	case Action::TurnRight: lootPool_.topLine = maxLine; break;
-	default: break;                                     // other ids ignored
-	}
-}
-
-void GameContext::closeLootSession() {
-	sys_.game->giveLootPool(lootPool_, *sys_.player, sys_.tables);
-	lootCrouch_ = false;
-	lootTime_ = upTimeMs;                 // stand-up starts now, zero extra delay
-}
-
-namespace {
-
-void fillArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
-	g.fillRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
-}
-
-void rectArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
-	g.drawRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
-}
-
-} // namespace
-
-void GameContext::drawLootingMenu(Graphics2D& g) {
-	if (!(lootCrouch_ && upTimeMs > lootTime_ + kLootPhaseMs)) return; // (:121-122)
-	if (lootPool_.text.length() == 0 || sys_.font == nullptr) return;
-	constexpr int kViewY = 20;            // viewRect[1] (src/Canvas.cpp:124-127)
-	constexpr int kScrCx = 240;           // Canvas::SCR_CX
-	const int dx = 0, dy = kViewY + 16, dw = 480 - 1, dh = 48;   // dialogRect (:123-127)
-	fillArgb(g, dx, dy, dw, dh, 0xFF660000u);                    // body (:128-129)
-	fillArgb(g, dx, dy - 18, dw, 18, 0xFF000000u);               // title bar (:130-131)
-	rectArgb(g, dx, dy - 18, dw, 18, 0xFFFFFFFFu);               // (:132-133)
-	rectArgb(g, dx, dy, dw, dh, 0xFFFFFFFFu);                    // (:134)
-	Text title;                                                  // (:135-139)
-	title.append(sys_.loc->get(kTextMain, 227));
-	title.dehyphenate();
-	g.drawString(*sys_.font, title, kScrCx, dy - 16, Graphics2D::kAnchorHCenter, 16);
-	for (int i = 0; i < 3; ++i) {                                // (:140-144)
-		int line = i + lootPool_.topLine;
-		if (line < 0 || line >= Game::LootPool::kMaxLines) continue;
-		g.drawString(*sys_.font, lootPool_.text, dx + 5, dy + 1 + i * 16,
-		    Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft, 16,
-		    lootPool_.lineIndex[line * 2], lootPool_.lineIndex[line * 2 + 1]);
-	}
-	int total = Game::LootPool::lineCount(lootPool_);
-	if (total > 3)                                               // (:145-150)
-		sys_.dialogs->drawScrollBar(g, dx + dw, dy + 1, dh - 1, lootPool_.topLine,
-		    std::min(lootPool_.topLine + 3, total), total, 3);
-}
-
 // First-person view weapon (spec combat-stage1 §6.2; legacy Combat::drawWeapon
 // GL path src/Combat.cpp:621-844). The legacy anchors (196 + wpX + shakeX,
 // 131 - (wpY + shakeY)) and the v12 box are VIEWPORT-relative inputs
@@ -766,10 +643,11 @@ void GameContext::drawViewWeapon(Graphics2D& g) {
 // ---- cinematic camera (docs/original-code/cutscenes-camera.md §1-§3) ----
 
 void GameContext::tickCamera() {
-	cinematic_.tickCameraState();
 	// HUD message/subtitle timers run on the shared clock in legacy
-	// (gameTime advances in PLAYING + CAMERA, src/Game.cpp:3259).
-	sys_.hud->update(kTickMs);
+	// (gameTime advances in PLAYING + CAMERA, src/Game.cpp:3259). Skipped on a
+	// skip frame: tickCameraState() returns false there, as the pre-
+	// decomposition early return did.
+	if (cinematic_.tickCameraState()) sys_.hud->update(kTickMs);
 }
 
 // ---- playing action handlers ----
@@ -887,11 +765,11 @@ void GameContext::handlePlayingAction(Action a) {
 		const int weapon2 = p.ce.weapon;   // legacy reads ce->weapon (:197)
 		if (weapon2 >= 0 && !sys_.game->combat.active) {
 			int frac = 16384;
-			Entity* hit = electFireTarget(weapon2, &frac);
+			Entity* hit = targeting_.electFireTarget(weapon2, &frac);
 			const int dist2 = (hit != nullptr)
 				? sys_.game->entityDistFrom(hit, p.viewX, p.viewY) : 0;
 			// World slot carries no def and reads as eType 0 - same convention
-			// as electFireTarget (:1145); a plain nullptr means nothing was
+			// as electFireTarget (Targeting.cpp); a plain nullptr means nothing was
 			// elected at all.
 			const int hitType = (hit == nullptr) ? -1
 				: (hit->def != nullptr ? hit->def->eType : Enums::ET_WORLD);
@@ -911,11 +789,6 @@ void GameContext::handlePlayingAction(Action a) {
 			           dist2 <= sys_.game->combat.tileDistances[0]) {      // :467 gate
 				outcome = kWallPush;
 			}
-			// TEMP [dbg] election summary (remove after fire-path acceptance)
-			std::fprintf(stderr, "[fire] elected spr=%d type=%d frac=%d dist2=%d -> %s\n",
-				hit ? hit->getSprite() : -1, hitType, frac, dist2,
-				outcome == kElected ? "elect" :
-				outcome == kWallPush ? "wallpush" : "air");
 			if (outcome == kWallPush) {
 				// Within 1 tile of a wall: legacy shiftWeapon(true)+rockView
 				// and NO turn consumed (:467-487). The lower/raise lerp system
@@ -964,210 +837,6 @@ void GameContext::handlePlayingAction(Action a) {
 		break;
 	default:
 		break;
-	}
-}
-
-// Forward vector of the current player view in 16.16 (legacy -view[2]/-view[6],
-// src/MovementController.cpp:38, src/PlayingInputHandler.cpp:218). Same
-// derivation as the camera pull-back below (GameContext.cpp render block).
-void GameContext::viewForward(int& fwdX, int& fwdY) const {
-	const std::vector<int32_t>& sinTable = sys_.tables->sinTable;
-	const int a = sys_.player->viewAngle & 0x3FF;
-	fwdX = sinTable[(a + 256) & 0x3FF];        // cos
-	fwdY = -sinTable[a];                       // -sin
-}
-
-// Ordered target election over the sorted fire-trace hit list — port of the
-// ACTION_FIRE scan (src/PlayingInputHandler.cpp:218-385, docs/original-code/
-// combat.md §8). The legacy loot election (n6) can never fire here: lootable
-// corpses are preempted by findLootableCorpseFacing in Action::Use, so this
-// walk only elects attack targets. Deliberately NOT ported (silent legacy
-// special cases): barricade unlink (:387-393), sentry-bot pickup (:405-431),
-// water-spout refill (:433-447).
-Entity* GameContext::electFireTarget(int weapon, int* outFrac) {
-	Player& p = *sys_.player;
-	Combat& combat = sys_.game->combat;
-	const bool melee = Combat::checkWeaponMask(weapon, 2);  // WP_MELEEMASK = chainsaw only (src/Enums.h:155)
-	int mask = 13997;                                       // CONTENTS_WEAPONSOLID (src/Enums.h:31)
-	if (weapon == 2) mask |= 0x4100;                        // holy water: ENV_DAMAGE + DECOR_NOCLIP (:203-205)
-	if (melee) mask |= 0x10;                                // chainsaw: PLAYERCLIP (:212-215)
-	const int tiles = melee ? 1 : 6;                        // :208-215
-	int fwdX = 0, fwdY = 0;
-	viewForward(fwdX, fwdY);
-	const int endX = p.viewX + ((tiles * 64 * fwdX) >> 16); // :218 n7*-view[2]>>8 = n7 tiles
-	const int endY = p.viewY + ((tiles * 64 * fwdY) >> 16);
-	sys_.game->traceMove(*sys_.map, p.viewX, p.viewY, endX, endY,
-		sys_.game->playerEntity(), mask, 2, nullptr, nullptr);
-
-	Entity* entity = nullptr;
-	Entity* melee13 = nullptr;   // legacy entity2 (:249-254)
-	int frac = 16384;            // legacy n4
-	for (const auto& h : sys_.game->lastTraceHits()) {
-		Entity* ent = h.second;
-		if (ent == nullptr) continue;
-		const int f = h.first;
-		const int dist = sys_.game->entityDistFrom(ent, p.viewX, p.viewY);
-		// World slot carries no def and reads as eType 0 (Game.h:122).
-		const int et = (ent->def != nullptr) ? ent->def->eType : Enums::ET_WORLD;
-		const int sub = (ent->def != nullptr) ? ent->def->eSubType : 0;
-		if (et == Enums::ET_WORLD || et == Enums::ET_SPRITEWALL ||
-		    et == Enums::ET_PLAYERCLIP) {                       // :229-236
-			if (entity == nullptr) { entity = ent; frac = f; }
-			break;                                              // blocking: always ends the walk
-		}
-		if (et == Enums::ET_ATTACK_INTERACTIVE) {               // :238-247
-			if (((1 << sub) & 0x1) == 0 || weapon == 1) {        // eSubType != 0 FURNITURE, or chainsaw
-				entity = ent; frac = f;
-				break;
-			}
-			continue;
-		}
-		if (et == Enums::ET_NONOBSTRUCTING_SPRITEWALL) {        // :248-254
-			if (melee) melee13 = ent;
-			continue;
-		}
-		if (et == Enums::ET_NPC) {                              // :255-263
-			if (dist >= 8192) { entity = ent; frac = f; break; }// adjacent NPCs are transparent
-			continue;
-		}
-		if (et == Enums::ET_MONSTER) {                          // :264-269
-			entity = ent; frac = f;
-			break;                                              // wins over anything collected
-		}
-		if (et == Enums::ET_DOOR) {                             // :270-277
-			if (entity == nullptr) { entity = ent; frac = f; }
-			break;
-		}
-		if (et == Enums::ET_CORPSE) {                           // :278-334
-			// EXACT one-tile equality and NO break — an own-tile corpse
-			// (dist 0) is skipped so the monster behind it still wins
-			// (combat.md §8.4). The non-chainsaw branch elects a LOOT target
-			// (:318-334), already handled by findLootableCorpseFacing before
-			// the fire branch, so only the chainsaw attack pick lives here.
-			if (dist == combat.tileDistances[0] && weapon == 1) {
-				if (entity == nullptr || entity->def == nullptr ||
-				    entity->def->eType != Enums::ET_CORPSE ||
-				    entity->linkIndex < ent->linkIndex) {       // :306-311 highest linkIndex of the pile
-					entity = ent; frac = f;
-				}
-			}
-			continue;
-		}
-		if (et == Enums::ET_ENV_DAMAGE) {                       // :335-338
-			if (sub == 1 && weapon == 2 && p.ammo[3] >= 2) { entity = ent; frac = f; break; }
-			continue;
-		}
-		if (et == Enums::ET_DECOR) {                            // :339-343
-			const int si = ent->getSprite();
-			if (si >= 0 && si < sys_.map->numSprites &&
-			    (sys_.map->mapSpriteInfo[si] & 0xFF) == 0x95) { // TILENUM_PRACTICE_TARGET
-				entity = ent; frac = f;
-				break;
-			}
-			continue;
-		}
-		if (et == Enums::ET_DECOR_NOCLIP) {                     // :344-348
-			if (sub == 7 && dist == combat.tileDistances[0]) { entity = ent; frac = f; break; }
-			continue;
-		}
-		if (et != Enums::ET_ITEM && entity == nullptr) {        // :350 fallback (ITEM never elected)
-			entity = ent; frac = f;
-		}
-	}
-
-	int dist2 = combat.tileDistances[9];                        // :356-359
-	if (entity != nullptr) dist2 = sys_.game->entityDistFrom(entity, p.viewX, p.viewY);
-	// eType 10 out of weapon range (:379-381).
-	if (entity != nullptr && entity->def != nullptr &&
-	    entity->def->eType == Enums::ET_ATTACK_INTERACTIVE &&
-	    ((1 << entity->def->eSubType) & 0x1) == 0 &&
-	    combat.worldDistToTileDist(dist2) > combat.weaponField(weapon, Combat::kFieldRangeMax)) {
-		entity = nullptr;
-	}
-	// Melee promotion of the remembered eType 13 (:383-385).
-	if (melee13 != nullptr && (entity == nullptr || entity->def == nullptr ||
-	    (entity->def->eType != Enums::ET_MONSTER &&
-	     entity->def->eType != Enums::ET_CORPSE))) {
-		entity = melee13;
-	}
-	if (outFrac != nullptr) *outFrac = frac;
-	return entity;
-}
-
-// Facing probe feeding the health-bar readout — port of
-// MovementController::checkFacingEntity (src/MovementController.cpp:28-93,
-// docs/original-code/combat.md §7.1). Single 6-tile ray from the logical tile
-// centre pushed 28 units forward, mask 21741 (WORLD/MONSTER/NPC/DOOR/ITEM/
-// DECOR/ATTACK_INTERACTIVE/SPRITEWALL/DECOR_NOCLIP), radius 2. No Z check:
-// legacy tests Z only when zoomed in and there is no zoom system.
-void GameContext::updateFacingProbe() {
-	Player& p = *sys_.player;
-	constexpr int kFacingMask = 21741;         // src/MovementController.cpp:38
-	int fwdX = 0, fwdY = 0;
-	viewForward(fwdX, fwdY);
-	const int startX = p.destX + ((28 * fwdX) >> 16);   // :38 -view[2]*28 >> 14
-	const int startY = p.destY + ((28 * fwdY) >> 16);
-	const int endX = p.destX + ((384 * fwdX) >> 16);    // :38 6*-view[2] >> 8 = 6 tiles
-	const int endY = p.destY + ((384 * fwdY) >> 16);
-	Entity* hit = nullptr;
-	sys_.game->traceMove(*sys_.map, startX, startY, endX, endY,
-		sys_.game->playerEntity(), kFacingMask, 2, &hit, nullptr);
-	// Monster promotion re-scan (:41-86): entered only when the nearest hit is
-	// ITEM / MONSTERBLOCK_ITEM / SPRITEWALL / ATTACK_INTERACTIVE / DECOR_NOCLIP,
-	// then the sorted hit list is walked from index 0 (the nearest hit itself
-	// included) and the pick may move further along the ray. eType 11 is
-	// unreachable with this mask (legacy dead branch) but kept for fidelity.
-	if (hit != nullptr && hit->def != nullptr) {
-		const int t0 = hit->def->eType;
-		const int t0Sub = hit->def->eSubType;
-		if (t0 == Enums::ET_ITEM || t0 == Enums::ET_MONSTERBLOCK_ITEM ||
-		    t0 == Enums::ET_SPRITEWALL || t0 == Enums::ET_ATTACK_INTERACTIVE ||
-		    t0 == Enums::ET_DECOR_NOCLIP) {
-			for (const auto& h : sys_.game->lastTraceHits()) {
-				Entity* ent = h.second;
-				if (ent == nullptr) continue;
-				// World slot carries no def and reads as eType 0 (Game.h:122).
-				const int et = (ent->def != nullptr) ? ent->def->eType : Enums::ET_WORLD;
-				const int sub = (ent->def != nullptr) ? ent->def->eSubType : 0;
-				if (et == Enums::ET_MONSTER) {                          // :47-53
-					if (t0 != Enums::ET_SPRITEWALL) hit = ent;
-					break;
-				}
-				if (et == Enums::ET_DOOR || et == Enums::ET_PLAYERCLIP ||
-				    et == Enums::ET_WORLD) break;                       // :56-62
-				if (et == Enums::ET_SPRITEWALL) {                       // :63-65
-					const int li = ent->linkIndex;
-					if (li >= 0 && li < (int)sys_.map->mapFlags.size() &&
-					    (sys_.map->mapFlags[li] & 0x2) != 0) break;  // opaque tile flag
-					continue;
-				}
-				if (et == Enums::ET_DECOR) {                            // :66-72
-					if (t0 == Enums::ET_SPRITEWALL) hit = ent;
-					break;
-				}
-				if (et == Enums::ET_DECOR_NOCLIP) {                     // :74-79
-					if (t0Sub != 6) { hit = ent; break; }
-					continue;
-				}
-				if (et == Enums::ET_ATTACK_INTERACTIVE &&
-				    (sub == 1 || sub == 2 || sub == 3)) {               // :80-83
-					if (t0 != Enums::ET_ITEM) { hit = ent; break; }
-					continue;
-				}
-			}
-		}
-	}
-	p.facingEntity = hit;
-	if (p.facingEntity != nullptr && p.facingEntity->def != nullptr) {
-		// Distance gate (:88-93): non-monsters beyond Chebyshev^2 36864 (3 tiles)
-		// drop; monsters are never distance-gated. showHelp branches absent.
-		// DEVIATION: legacy measures from destX/destY, we use the interpolated
-		// eye (identical while idle, <=1 tile apart mid-lerp).
-		const int dist = sys_.game->entityDistFrom(p.facingEntity, p.viewX, p.viewY);
-		if (p.facingEntity->def->eType != Enums::ET_MONSTER &&
-		    dist > sys_.game->combat.tileDistances[2]) {
-			p.facingEntity = nullptr;
-		}
 	}
 }
 
@@ -1361,28 +1030,10 @@ void GameContext::render(AppContext& app) {
 		// Legacy call site: Hud::draw forces the probe right before drawTopBar
 		// while ST_PLAYING (src/Hud.cpp:735-742). facingDirty stays as an
 		// advisory latch (many sites set it) but no longer gates the probe.
-		updateFacingProbe();
+		targeting_.updateFacingProbe();
 		sys_.game->facingDirty = false;
 	}
-	{
-		int feedId = -1, feedHp = 0, feedMaxHp = 0;
-		bool feedLowBar = false, feedBoss = false;
-		Entity* fe = sys_.player->facingEntity;
-		if (fe != nullptr && fe->monster != nullptr && fe->isMonster() &&
-		    (fe->info & Entity::kInfoActive) != 0) {
-			feedHp = fe->monster->ce.getStat(Enums::STAT_HEALTH);
-			if (feedHp > 0) {
-				feedId = fe->getSprite();
-				feedMaxHp = fe->monster->ce.getStat(Enums::STAT_MAX_HEALTH);
-				// n3 = 50 for a PINKY with parm 0 (src/Hud.cpp:866-868);
-				// n4 += 1 for a boss (:874, Entity::isBoss()).
-				feedLowBar = fe->def != nullptr && fe->def->eSubType == 5 &&
-					fe->def->parm == 0;
-				feedBoss = Game::isBossDef(fe->def);
-			}
-		}
-		sys_.hud->feedMonsterHealth(feedId, feedHp, feedMaxHp, feedLowBar, feedBoss);
-	}
+	targeting_.feedHealthBar();
 	if (state_ == StateId::Playing || state_ == StateId::Looting ||
 	    state_ == StateId::Dialog) {
 		sys_.hud->drawTopBar(g, *sys_.font, 480);
@@ -1397,7 +1048,7 @@ void GameContext::render(AppContext& app) {
 
 	// Loot list overlay during the dwell window — paints OVER world+HUD
 	// (src/Canvas.cpp:414-417,469-472).
-	if (state_ == StateId::Looting) drawLootingMenu(g);
+	if (state_ == StateId::Looting) loot_.draw(g);
 
 	renderer.endFrame(app.window());
 }

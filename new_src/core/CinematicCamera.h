@@ -51,7 +51,10 @@ public:
 	bool started() const { return activeCameraKey_ >= 0; }
 
 	void tickClock();        // key-boundary engine (src/MayaCamera.cpp:46-148, :335-374)
-	void tickCameraState();  // ST_CAMERA per-frame order (src/Canvas.cpp:949-958)
+	// ST_CAMERA per-frame order (src/Canvas.cpp:949-958). Returns false when
+	// the skip path was taken: the caller must then NOT tick the HUD, matching
+	// the pre-decomposition early return in GameContext::tickCamera().
+	bool tickCameraState();
 
 	void requestSkip() { skipCinematic_ = true; }
 	void clearSkipRequest() { skipCinematic_ = false; }

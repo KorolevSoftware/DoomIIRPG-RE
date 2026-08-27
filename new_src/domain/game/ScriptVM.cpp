@@ -629,7 +629,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				env_.game->activate(ent, true, false, false, true);   // :2236-2238 silent
 			}
 			std::fprintf(stderr, "[script] AIGOAL aiThink deferred (Stage 2)\n");
-			if (goalType == 3 && env_.game->combatMonsters != nullptr) {
+			if (goalType == 3 && env_.game->monsters.combatMonsters != nullptr) {
 				// Queued-attack re-run (:2241-2246): combatMonsters is always
 				// empty in Stage 1 — unreachable; logged for safety.
 				std::fprintf(stderr, "[script] AIGOAL type-3 queued attack skipped\n");

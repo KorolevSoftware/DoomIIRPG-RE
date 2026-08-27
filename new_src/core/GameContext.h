@@ -6,8 +6,9 @@
 
 #include "core/CinematicCamera.h"
 #include "core/GameStates.h"
-#include "core/MayaCamera.h"
+#include "core/LootSession.h"
 #include "domain/game/Game.h"
+#include "domain/game/Targeting.h"
 #include "render/Camera3D.h"
 
 namespace newcore {
@@ -36,8 +37,6 @@ class GameContext : public StateHost {
 public:
 	static constexpr int kTickMs = 15;   // one fixed-step quantum
 	static constexpr int kNumStateVars = 9;
-	static constexpr int kLootPhaseMs = 500;  // LOOTING_CROUCH_TIME (src/Canvas.h:46);
-	                                          // promoted from tickLooting's local constant
 
 	struct Init {
 		MapData* map = nullptr;
@@ -115,18 +114,6 @@ private:
 
 	bool inputBlocked() const;
 	void handlePlayingAction(Action a);
-	// Player view forward vector in 16.16 (legacy -view[2]/-view[6],
-	// src/MovementController.cpp:38).
-	void viewForward(int& fwdX, int& fwdY) const;
-	void updateFacingProbe();            // health-bar feed probe (src/MovementController.cpp:28-93)
-	// Ordered target election over the sorted fire-trace hit list — port of
-	// src/PlayingInputHandler.cpp:218-385 (docs/original-code/combat.md §8).
-	// Returns the elected entity (nullptr = air shot) and writes its hit
-	// fraction to outFrac.
-	Entity* electFireTarget(int weapon, int* outFrac);
-	void handleLootingAction(Action a);  // src/LoothingSystem.cpp:85-117
-	void closeLootSession();             // grant + stand-up restart (:89-103)
-	void drawLootingMenu(Graphics2D& g); // src/LoothingSystem.cpp:121-150
 	// First-person weapon quad, drawn after drawBSP (spec combat-stage1 §6.2;
 	// legacy Combat::drawWeapon GL-path anchors, docs/research/
 	// 2026-08-26-hero-choice-and-weapon.md Part B).
@@ -135,7 +122,6 @@ private:
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)
 	void tickCamera();       // ST_CAMERA per-frame order (src/Canvas.cpp:949-958)
-	void tickLooting();      // ST_LOOTING pose driver (src/LootingSystem.cpp:35-83)
 	void tickDying();
 
 	void spawnPlayer();      // legacy Game::spawnPlayer (src/Game.cpp:941-972)
@@ -154,16 +140,11 @@ private:
 	CinematicCamera cinematic_;
 	StateId dialogPrevState_ = StateId::Playing; // dialog-close restore source (:541-554)
 
-	// Loot-crouch camera runtime (docs/research/2026-08-25-camera-pitch-loot.md;
-	// LootingSystem field analogs). lootDest* anchors the cached player pose
-	// the two 500 ms phases lerp away from and back to.
-	// Loot dwell session (legacy LootingSystem field analogs).
-	bool lootSettleSfx_ = false;              // field_0xac5_: sound 1055 once per session
-	Game::LootPool lootPool_;                 // pooled entries + lootText + lineIndex + lootLineNum
-	bool lootCrouch_ = false;             // crouchingForLoot (phase selector)
-	int64_t lootTime_ = 0;                // lootingTime (app->time latch)
-	int lootDestX_ = 0, lootDestY_ = 0, lootDestZ_ = 0, lootDestPitch_ = 0;
-	int lootStepX_ = 0, lootStepY_ = 0;   // facing unit steps (viewStep>>6, ±1/0)
+	// ST_LOOTING vertical slice (spec 2026-08-26-decomposition §P1-G3).
+	LootSession loot_;
+
+	// View forward / facing probe / fire election (spec §P1-G4).
+	Targeting targeting_;
 };
 
 } // namespace newcore

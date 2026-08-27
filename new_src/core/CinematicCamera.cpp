@@ -73,7 +73,7 @@ int CinematicCamera::keyDuration(int key) const {
 	return cam.keys[cam.numKeys * 6 + key] & 0xFFFF;
 }
 
-void CinematicCamera::tickCameraState() {
+bool CinematicCamera::tickCameraState() {
 	// ST_CAMERA per-frame order (src/Canvas.cpp:949-958): camera Update ->
 	// updateLerpSprites -> updateView. Lerps tick in the globals section
 	// (before the clock — legacy runs them after; within-tick difference
@@ -81,7 +81,7 @@ void CinematicCamera::tickCameraState() {
 	// input is what's parked.
 	if (skipCinematic_) {
 		skipCinematicNow();
-		return;
+		return false;              // caller skips hud->update, like the legacy early return
 	}
 	// TEMP [dbg] auto-skip (headless verification only; remove with the
 	// D2R_AUTOTEST driver): past the skip lockout, end the cinematic like a
@@ -90,6 +90,7 @@ void CinematicCamera::tickCameraState() {
 	if (autoSkip < 0) autoSkip = std::getenv("D2R_AUTOTEST") != nullptr ? 1 : 0;
 	if (autoSkip != 0 && *env_.gameTime >= cinUnpauseTime_ + 1000) skipCinematic_ = true;
 	tickClock();
+	return true;
 }
 
 void CinematicCamera::tickClock() {

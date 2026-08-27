@@ -195,7 +195,13 @@ public:
 	bool started() const { return activeCameraKey_ >= 0; }
 
 	void tickClock();                                      // :844-886 tickCinematicClock
-	void tickCameraState();                                // :822-843 minus hud->update
+	// CORRECTION 2026-08-27: returns false when it took the skip path, so the
+	// caller can SKIP hud->update — the pre-refactor tickCamera() returned
+	// early on skipCinematic_ BEFORE hud->update(kTickMs). A void version
+	// (as originally specced here, and as first implemented) advances the HUD
+	// message / cin-title / health-drain timers by 15 ms on every skip frame:
+	// a real behaviour change under the zero-change mandate. Caught in review.
+	bool tickCameraState();                                // :822-843 minus hud->update
 	void requestSkip();                                    // sets skipCinematic_
 	void clearSkipRequest();                               // exitState_ hook (:56-61)
 	bool skipGateOpen() const;                             // gameTime >= cinUnpauseTime_
@@ -217,7 +223,9 @@ private:
 - `tick()`: `cameraActive()` → `cinematic_.active()` (3 sites: gameTime gate at
   `:127-129`, lerp view-angle feed `:196-198`, camera-skip input branch
   `:161-165` → `if (cinematic_.skipGateOpen()) cinematic_.requestSkip();`).
-- `tickCamera()` shrinks to `cinematic_.tickCameraState(); sys_.hud->update(kTickMs);`
+- `tickCamera()` shrinks to `if (cinematic_.tickCameraState()) sys_.hud->update(kTickMs);`
+  (CORRECTION 2026-08-27: the earlier unconditional form dropped the pre-refactor early
+  `return` on `skipCinematic_` and advanced HUD timers 15 ms on every skip frame)
   (keep this exact order, `:840-842`).
 - `tickPlaying()` `:366` → `if (cinematic_.active()) cinematic_.tickClock();`.
 - `exitState_()` → `cinematic_.clearSkipRequest()`.

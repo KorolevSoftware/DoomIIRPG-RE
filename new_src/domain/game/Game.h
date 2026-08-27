@@ -7,8 +7,10 @@
 #include <vector>
 
 #include "domain/game/Combat.h"
+#include "domain/game/DoorSystem.h"
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
+#include "domain/game/MonsterSystem.h"
 #include "domain/game/Player.h"
 #include "domain/game/TraceSystem.h"
 #include "io/EntityDefs.h"
@@ -35,7 +37,6 @@ void composeArgs(std::string& text, const std::string* args, int numArgs);
 class Game {
 public:
 	static constexpr int kEntities = 275;
-	static constexpr int kOpenDoors = 6;
 
 	Game() = default;
 
@@ -128,50 +129,32 @@ public:
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
 	// Rebuilds the legacy pair view over trace.hits() for the consumers that
-	// still walk pairs (GameContext fire election + facing probe).
+	// still walk pairs (GameContext fire election + facing probe). The returned
+	// reference is valid only until the next call (mutable rebuild in place).
 	const std::vector<std::pair<int, Entity*>>& lastTraceHits() const;
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B1.
 	int traceCollisionX() const { return trace.collisionX(); }
 	int traceCollisionY() const { return trace.collisionY(); }
 
-	// Open/close a door entity (n=0 open, n=1 close). n2 is the legacy snap
-	// selector (src/Game.cpp:1153-1155): 0 = finish the animation instantly,
-	// 1 = animate fully, 2 = snap only when offscreen (turn auto-close passes
-	// 2, src/Game.cpp:1275) — cullBoundingBox is not ported so 2 animates
-	// like 1 (documented deviation). Player use passes n2=1
-	// (src/PlayingInputHandler.cpp:451); scripted opens pass the quiet-bit
-	// derived value (src/ScriptThread.cpp:751,760). A snapped open still
-	// registers the door in openDoors_ for auto-close (registration precedes
-	// the snap decision, src/Game.cpp:1141-1155). ownerThread names the
-	// script thread to resume when an OPEN animation completes (blocking
-	// EV_DOOROP); nullptr = fire-and-forget. The legacy mapping guarantees
-	// ownerThread == nullptr whenever n2 == 0.
-	bool performDoorEvent(int n, Entity* door, int n2, ScriptThread* ownerThread = nullptr);
-
-	// Plain-door use outcome (legacy hud msg44 / open+advanceTurn split,
-	// src/PlayingInputHandler.cpp:445-453).
-	enum class DoorUseResult { None, Opened, Locked };
-
-	// Legacy interact: trace along the view ray, first ET_DOOR hit within
-	// Chebyshev distance² <= tileDistances[0] = 4096 (1 tile)
-	// (src/PlayingInputHandler.cpp:445-459, src/Combat.cpp:42,
-	// src/Entity.cpp:1155-1158). Trace-free simplification: candidates are
-	// LINKED doors on the player's tile and on the adjacent tile in the
-	// facing direction (both satisfy dist² <= 4096 by construction); own
-	// tile wins (ray fraction ~0). Returns the outcome; locked doors are
-	// refused without animating.
-	DoorUseResult useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY);
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F2.
+	// Door open/close now lives in DoorSystem (see DoorSystem.h for the
+	// contracts); these keep the pre-P2-GB call sites compiling.
+	using DoorUseResult = DoorSystem::DoorUseResult;
+	bool performDoorEvent(int n, Entity* door, int n2, ScriptThread* ownerThread = nullptr) {
+		return doors.performDoorEvent(n, door, n2, ownerThread);
+	}
+	DoorUseResult useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY) {
+		return doors.useDoorFacing(map, px, py, stepX, stepY);
+	}
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
 	// Old bool + out-param shape of TraceSystem::trace; see TraceSystem.h for
-	// the contract. map is ignored (TraceSystem holds the same MapData).
+	// the contract. map is ignored: requires loadEntities() first, which is what
+	// sets the map TraceSystem::trace dereferences.
 	bool traceMove(const MapData& map, int x0, int y0, int x1, int y1,
 	               Entity* skipEnt, int mask, int radius,
 	               Entity** outEntity = nullptr, int* outFrac = nullptr);
-
-	// Door auto-close on turn advance (legacy CanCloseDoor + advanceTurn).
-	void advanceTurnDoors();
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F1.
 	void setPlayerPos(int x, int y) { trace.setPlayerPos(x, y); }
@@ -191,14 +174,6 @@ public:
 	Entity* findEntityBySprite(int sprite);
 
 	// ---- Corpse looting (docs/original-code/loot-inventory.md) ----
-
-	// Port of ScriptThread::corpsifyMonster (src/ScriptThread.cpp:2249-2266),
-	// visual/flag subset: death-frame overlay (spriteInfo bits 8-14 = 0x7000),
-	// reposition to the tile center at ground+32, corpse info bits
-	// (0x1000000|0x20000|0x400000), def swap to find(ET_CORPSE, subtype,
-	// parm), relink at the new tile. The inactiveMonsters ring, death sound
-	// and name refresh are not ported yet.
-	void corpsifyMonster(Entity* e, int x, int y);
 
 	// Port of Game::removeEntity (src/Game.cpp:183-193): hide the bound
 	// sprite (info bit 0x10000) and unlink it from entityDb. The
@@ -259,9 +234,13 @@ public:
 
 	// ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
 
-	// Kill-XP state/presentation bridges (spec deviation 14): Player owns the
-	// XP state, Game composes msg 103. Wired once from Main.cpp.
-	void setXPSystems(Player* player, const Localization* loc, Hud* hud);
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3.
+	// Kill-XP bridges live on MonsterSystem now; player_ is kept here for
+	// removeEntity's facingEntity clear (moves with EntityDb in P2-GF).
+	void setXPSystems(Player* player, const Localization* loc, Hud* hud) {
+		monsters.setXPSystems(player, loc, hud);
+		player_ = player;
+	}
 
 	// Turn/script coordination fields (legacy Game members).
 	int monstersTurn = 0;
@@ -272,71 +251,47 @@ public:
 	int spawnParam = -1;            // -1 = use the map header spawn
 	int eventFlags_[2] = { 0, 0 };
 
-	// Monster rings + combat-seq owner (legacy Game::activeMonsters /
-	// inactiveMonsters / combatMonsters / interpolatingMonsters,
-	// src/Game.cpp:884-939). combatMonsters is the Stage-2 pending-attack
-	// queue head — declared only. Nothing sets interpolatingMonsters in
-	// Stage 1, so its advanceTurn guard is a defensive log-only branch.
-	Entity* activeMonsters = nullptr;
-	Entity* inactiveMonsters = nullptr;
-	Entity* combatMonsters = nullptr;
-	bool interpolatingMonsters = false;
 	bool facingDirty = false;       // canvas updateFacingEntity latch analog (src/Entity.cpp:527)
 
 	Combat combat;                  // peer subsystem (ADR 0008)
 	TraceSystem trace;              // peer subsystem (spec §P2-GA); wired in loadEntities
+	DoorSystem doors;               // peer subsystem (spec §P2-GB); wired in loadEntities
+	MonsterSystem monsters;         // peer subsystem (spec §P2-GC); wired in loadEntities
 
-	// Faithful ring moves (src/Game.cpp:752-808, :825-855). activate ports:
-	// runStaticFunc fires SCR_MONSTER_ACTIVATE on MFLAG_TRIGGERONACTIVATE,
-	// rangeCheck gates at tileDistances[3], alertSound logs (no audio),
-	// b4 unused like legacy.
-	void activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4);
-	void deactivate(Entity* e);
-
-	// Per-frame monster phase (src/Game.cpp:2458-2474): Stage-1 stub whose
-	// only job is closing the monstersTurn window (no AI, no lerps — spec §B).
-	void updateMonsters();
-	void endMonstersTurn();         // src/Game.cpp:2452-2456
-	void snapMonsters(bool b);      // Stage-1 stub (spec §0.B)
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3.
+	// Monster wake/turn/pain/death live in MonsterSystem now (see
+	// MonsterSystem.h for the contracts); these keep the pre-P2-GC call
+	// sites compiling.
+	void activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4) {
+		monsters.activate(e, runStaticFunc, rangeCheck, alertSound, b4);
+	}
+	void updateMonsters() { monsters.updateMonsters(); }
+	void endMonstersTurn() { monsters.endMonstersTurn(); }
+	bool painMonster(Entity* e, int dmg, int attackerWeaponId) {
+		return monsters.painMonster(e, dmg, attackerWeaponId);
+	}
+	void diedMonster(Entity* e, bool giveXP) { monsters.diedMonster(e, giveXP); }
+	void corpsifyMonster(Entity* e, int x, int y) { monsters.corpsifyMonster(e, x, y); }
+	static bool isBossDef(const EntityDef* def) { return MonsterSystem::isBossDef(def); }
 
 	// Difficulty source: ScriptVM vars[12], default 2 when no VM is wired
 	// (spec §1 difficulty note).
 	int difficulty() const;
 
-	// eSubType in [FIRSTBOSS..LASTBOSS] (src/Entity.cpp:1399 shape).
-	static bool isBossDef(const EntityDef* def);
-
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
 	int entityDistFrom(const Entity* e, int x, int y) const { return trace.distFrom(e, x, y); }
 
-	// Entity::pain ET_MONSTER non-boss subset (src/Entity.cpp:281-394):
-	// MFLAG_NOKILL floor, pain/death pose overlay + frameTime hold,
-	// resetGoal unless holy-water attacker. Boss phase staticFuncs deferred.
-	bool painMonster(Entity* e, int dmg, int attackerWeaponId);
-
-	// Entity::died ET_MONSTER subset (src/Entity.cpp:459-521): death pose,
-	// corpse info bits, def swap to ET_CORPSE, deactivate, optional XP.
-	void diedMonster(Entity* e, bool giveXP);
-
-	// checkMonsterDeath(b=true) XP half (src/Entity.cpp:407-413) with the
-	// message composition split out of Player::addXP (spec deviation 14).
-	void awardKillXP(const EntityMonster& m);
-
 private:
-	void updateDoors();
 	void freeLerpSprite(SpriteLerp* ls);       // completion snap + slot free (src/Game.cpp:3078-3243, subset)
 
-	// Fixed monster payload pool (legacy entityMonsters[80], Error 37 on
-	// overflow src/Game.cpp:430-436 — rewrite logs and skips). Lifetime is
-	// one map load; loadEntities resets numMonsters_.
-	static constexpr int kMaxMonsters = 80;
-	EntityMonster entityMonsters_[kMaxMonsters];
-	int numMonsters_ = 0;
+	// snapLerpSprites(sprite) (src/Game.cpp:1149-1166): force-complete every
+	// active lerp of one sprite. Fed to MonsterSystem::Env until P2-GD makes
+	// SpriteLerps its owner.
+	void snapSpriteLerps(int sprite);
 
-	// setXPSystems wiring targets.
-	Player* xpPlayer_ = nullptr;
-	const Localization* xpLoc_ = nullptr;
-	Hud* xpHud_ = nullptr;
+	// removeEntity's facingEntity clear (src/Game.cpp:192); set by
+	// setXPSystems.
+	Player* player_ = nullptr;
 
 	// Script sprite lerp pool (legacy Game::lerpSprites[16]).
 	SpriteLerp spriteLerps_[kMaxLerpSprites];
@@ -352,28 +307,6 @@ private:
 
 	// FORWARDER scratch (spec §3.1): pair view rebuilt by lastTraceHits().
 	mutable std::vector<std::pair<int, Entity*>> legacyTraceHits_;
-
-	struct DoorAnim {
-		Entity* door = nullptr;
-		int sprite = -1;
-		int srcX = 0, srcY = 0, dstX = 0, dstY = 0; // slide position (canvas units)
-		int startScale = 64, endScale = 0;
-		int t = 0;
-		int dur = 750;
-		bool active = false;
-		bool opening = false; // true = opening, false = closing
-		ScriptThread* ownerThread = nullptr; // resumed once when the OPEN completes
-	};
-	DoorAnim doorAnims_[kOpenDoors];
-	// Open doors that can auto-close (legacy openDoors[6]).
-	Entity* openDoors_[kOpenDoors] = { nullptr };
-	void unlinkDoor(Entity* door);
-	bool doorRegistered(Entity* door) const;
-	void registerOpenDoor(Entity* door);
-	void unregisterOpenDoor(Entity* door);
-
-	// Door auto-close on turn advance (legacy CanCloseDoor + advanceTurn).
-	bool canCloseDoor(Entity* door);
 };
 
 } // namespace newcore
