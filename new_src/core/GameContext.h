@@ -9,7 +9,7 @@
 #include "core/LootSession.h"
 #include "domain/game/Game.h"
 #include "domain/game/Targeting.h"
-#include "render/Camera3D.h"
+#include "render/SceneRenderer.h"
 #include "ui/ViewWeapon.h"
 
 namespace newcore {
@@ -127,7 +127,6 @@ private:
 
 	Init sys_;
 	StateId state_ = StateId::Loading;
-	Camera3D camera_;
 	int loadingPhase_ = 0;
 	int64_t lastTurnTime_ = 0;
 	int64_t deathTimeMs_ = 0;
@@ -145,6 +144,9 @@ private:
 
 	// First-person weapon quad, drawn after drawBSP (spec §P1-G5).
 	ViewWeapon viewWeapon_;
+
+	// World pass: viewport, camera, sky, BSP, sprite classification (spec §P1-G6).
+	SceneRenderer scene_;
 };
 
 } // namespace newcore

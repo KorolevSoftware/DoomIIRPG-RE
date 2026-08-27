@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "domain/game/Combat.h"
+#include "domain/game/CorpseLoot.h"
 #include "domain/game/DoorSystem.h"
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
@@ -135,41 +136,20 @@ public:
 	// ported).
 	void removeEntity(Entity* e);
 
-	// Faced lootable corpse: legacy ACTION_FIRE traces forward and selects an
-	// ET_CORPSE candidate exactly one tile away (dist == tileDistances[0])
-	// that is not yet looted and owns a lootSet (src/PlayingInputHandler.cpp:
-	// 279-335). Trace-free simplification mirroring useDoorFacing: candidates
-	// are LINKED corpses on the adjacent tile in the facing direction (own
-	// tile is dist 0, never selected by legacy).
-	Entity* findLootableCorpseFacing(int px, int py, int stepX, int stepY);
-
-	// Pooled corpse-loot display state — legacy LootingSystem fields folded
-	// into one struct (lootPool / numPoolItems / numLootItems /
-	// lootPoolCredits / lootText / lootPoolIndices / lootLineNum).
-	struct LootPool {
-		static constexpr int kMaxLines = 9;      // lootPoolIndices[18] / 2 pairs
-		int entries[Entity::kMaxCorpseLoot] = { 0, 0, 0 }; // packed u16 (cls<<12|idx<<6|cnt)
-		int numEntries = 0;                      // numPoolItems (incl. class-6 flavor lines)
-		int numItems   = 0;                      // numLootItems (stat only, counts pre-merge)
-		int credits   = 0;                       // lootPoolCredits
-		Text text;                               // lootText: '|'-separated lines
-		short lineIndex[2 * kMaxLines] = { 0 };  // lootPoolIndices: <start,len> per line
-		int topLine = 0;                         // lootLineNum (scroll pos, reset by pool)
-		static int lineCount(const LootPool& p) { return p.numEntries + (p.credits != 0); }
-	};
-
-	// Mark-looted + pool + compose the loot list for ALL eType==9 entities on
-	// tile (tx,ty) (src/LoothingSystem.cpp:154-278). Marks BEFORE reading
-	// loot sets, per entity: prop ++param (skip when already != 0), monster
-	// flag 0x800 (unified into ++param — see Deviations #1 of spec
-	// 2026-08-25-loot-dwell-ui), info |= kInfoActivated.
-	void poolLootCorpse(int tx, int ty, const Localization& loc, LootPool& out);
-
-	// Grant pass (src/LoothingSystem.cpp:281-307): give() per non-class-6
-	// entry, weapon starter ammo max(usage,10) of tables.weaponData[idx*9+4],
-	// credits give(0,24,credits), foundLoot stderr stub, resets pool counters
-	// + text. tables may be null (skips starter ammo).
-	void giveLootPool(LootPool& pool, Player& player, const Tables* tables);
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F5.
+	// The loot sets, the faced-corpse lookup, the pooling and the grant pass
+	// live in CorpseLoot now (see CorpseLoot.h for the contracts); these keep
+	// the pre-P2-GE call sites (GameContext use chain, LootSession) compiling.
+	using LootPool = CorpseLoot::Pool;
+	Entity* findLootableCorpseFacing(int px, int py, int stepX, int stepY) {
+		return loot.findLootableCorpseFacing(px, py, stepX, stepY);
+	}
+	void poolLootCorpse(int tx, int ty, const Localization& loc, LootPool& out) {
+		loot.poolLootCorpse(tx, ty, loc, out);
+	}
+	void giveLootPool(LootPool& pool, Player& player, const Tables* tables) {
+		loot.giveLootPool(pool, player, tables);
+	}
 
 
 	// Arrival tile hook (legacy touchTile -> automap uncover/pickups);
@@ -212,6 +192,7 @@ public:
 	DoorSystem doors;               // peer subsystem (spec §P2-GB); wired in loadEntities
 	MonsterSystem monsters;         // peer subsystem (spec §P2-GC); wired in loadEntities
 	SpriteLerps lerps;              // peer subsystem (spec §P2-GD); wired in loadEntities
+	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3.
 	// Monster wake/turn/pain/death live in MonsterSystem now (see

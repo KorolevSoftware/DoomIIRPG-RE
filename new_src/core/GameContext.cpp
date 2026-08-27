@@ -14,11 +14,9 @@
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
-#include "io/Media.h"
 #include "io/Tables.h"
 #include "render/Graphics2D.h"
 #include "render/RenderBackend.h"
-#include "render/World3D.h"
 #include "text/Font.h"
 #include "ui/Hud.h"
 
@@ -62,8 +60,17 @@ void GameContext::init(const Init& sys) {
 	wpEnv.hud = sys_.hud;
 	wpEnv.gameTime = &gameTime;
 	viewWeapon_.init(wpEnv);
+	SceneRenderer::Env sceneEnv;
+	sceneEnv.map = sys_.map;
+	sceneEnv.media = sys_.media;
+	sceneEnv.world = sys_.world;
+	sceneEnv.game = sys_.game;
+	sceneEnv.player = sys_.player;
+	sceneEnv.hud = sys_.hud;
+	sceneEnv.tables = sys_.tables;
+	sceneEnv.upTimeMs = &upTimeMs;
+	scene_.init(sceneEnv);                     // takes over camera_.setSinTable (spec §P1-G6)
 	if (sys_.tables) {
-		camera_.setSinTable(sys_.tables->sinTable.data());
 		sys_.game->setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (Game.h)
 	}
 }
@@ -702,149 +709,21 @@ void GameContext::debugGiveKeycards() {
 
 // ---- render orchestration ----
 
-// Floater family (src/Render.cpp:3023-3025): Sentinel/Lost Soul/Cacodemon.
-// Legacy diverts these to renderFloaterAnim before the shared anim switch
-// (src/Render.cpp:3157-3161); drawCharacter has no counterpart, so they stay
-// on the billboard path (ADR 0007).
-static bool isFloaterTile(int n) {
-	return (n >= Enums::TILENUM_MONSTER_SENTINEL && n <= Enums::TILENUM_MONSTER_SENTINEL3) ||
-	       (n >= Enums::TILENUM_MONSTER_LOST_SOUL && n <= Enums::TILENUM_MONSTER_LOST_SOUL3) ||
-	       (n >= Enums::TILENUM_MONSTER_CACODEMON && n <= Enums::TILENUM_MONSTER_CACODEMON3);
-}
-
-// Special-boss family (src/Render.cpp:3027-3029): Mastermind/Arachnotron/
-// Boss Pinky/VIOS, diverted to renderSpecialBossAnim (src/Render.cpp:3162-3166).
-static bool isSpecialBossTile(int n) {
-	return n == Enums::TILENUM_BOSS_MASTERMIND || n == Enums::TILENUM_MONSTER_ARACHNOTRON ||
-	       n == Enums::TILENUM_BOSS_PINKY ||
-	       (n >= Enums::TILENUM_BOSS_VIOS && n <= Enums::TILENUM_BOSS_VIOS5);
-}
-
 void GameContext::render(AppContext& app) {
 	RenderBackend& renderer = app.renderer();
 	renderer.beginFrame(app.window());
 	Graphics2D& g = renderer.g2d();
-
-	sys_.world->setTime((int)upTimeMs);
-
-	// World band, used by BOTH gameplay and cinematics: the GL path snaps the
-	// viewport to glViewport(1, 65, 478, 248) = canvas rect (1, 7, 478, 248),
-	// centre (240,131), whatever y the raster rect carried
-	// (src/GLES.cpp:119-127 discards it, src/TinyGL.cpp:149-167;
-	// rendering.md §6.1, ADR 0009). The cinematic letterbox is not a viewport
-	// change either: it is two opaque black fills painted over the finished
-	// world band (src/Hud.cpp:455-456, see the StateId::Camera block below).
-	static constexpr int kWorldRect[4] = { 1, 7, 478, 248 };
 
 	// Single source of truth for "a cinematic owns the world this frame":
 	// one value, produced by one owner, feeding fov, cockpit overlay and
 	// view-weapon suppression (spec 2026-08-26-decomposition §P1-G2). Also
 	// performs the display-rate pose resample.
 	const MayaPose* cinePose = cinematic_.renderPose();
+	// fov 290 while a dialog runs inside the cinematic, 315 otherwise
+	// (src/MayaCamera.cpp:305-310 canvas->state == ST_DIALOG).
+	const bool underDialog = state_ == StateId::Dialog;
 
-	// Screen shake offsets (src/Render.cpp:2265-2270): lateral offset along
-	// the view right vector + vertical offset, canvas units -> <<4 render
-	// units. Applied to whichever view renders this frame — player OR maya
-	// camera, both go through legacy Render::render (:2208).
-	const std::vector<int32_t>& sinTable = sys_.tables->sinTable;
-	int shakeX = sys_.hud->shakeX();
-	int shakeY = sys_.hud->shakeY();
-
-	// Camera from the player view + render pull-back (src/Render.cpp:2279-
-	// 2282; magnitude <= 2.5 map units). Gameplay keeps using player view coords.
-	if (cinePose != nullptr) {
-		// Cinematic takeover (legacy MayaCamera::Render, src/MayaCamera.cpp:
-		// 302-310): the maya pose IS the view; FOV 315 (290 under a dialog).
-		const MayaPose& mp = *cinePose;
-		int cyaw = mp.yaw & 0x3FF;
-		int msin = sinTable[cyaw];
-		int mcos = sinTable[(cyaw + 256) & 0x3FF];
-		int mx = mp.x + 8 - (160 * mcos >> 16);
-		int my = mp.y + 8 + (160 * msin >> 16);
-		int mz = mp.z + 8;
-		if (shakeX != 0 || shakeY != 0) {
-			mx += (shakeX << 4) * sinTable[(cyaw + 512) & 0x3FF] >> 16;
-			my += (shakeX << 4) * -msin >> 16;
-			mz += shakeY << 4;
-		}
-		// viewAspect over the same 478x248 viewport as gameplay
-		// (src/Render.cpp:2223).
-		// fov 290 while a dialog runs inside the cinematic, 315 otherwise
-		// (src/MayaCamera.cpp:305-310 canvas->state == ST_DIALOG).
-		int fov = (state_ == StateId::Dialog) ? 290 : 315;
-		camera_.setView(mx, my, mz, cyaw, mp.pitch, mp.roll, fov,
-			(fov << 14) / ((478 << 14) / 248));
-	} else {
-	int yaw = sys_.player->viewAngle & 0x3FF;
-	int viewSin = sinTable[yaw];
-	int viewCos = sinTable[(yaw + 256) & 0x3FF];
-	int rvx = (sys_.player->viewX << 4) + 8 - (160 * viewCos >> 16);
-	int rvy = (sys_.player->viewY << 4) + 8 + (160 * viewSin >> 16);
-	int rvz = (sys_.player->viewZ << 4) + 8;
-	if (shakeX != 0 || shakeY != 0) {
-		rvx += (shakeX << 4) * sinTable[(yaw + 512) & 0x3FF] >> 16;
-		rvy += (shakeX << 4) * -viewCos >> 16;
-		rvz += shakeY << 4;
-	}
-	// Pitch feeds the view matrix (positive = up; the loot crouch writes
-	// player->viewPitch). FOV stays at the documented 290: legacy widened by
-	// |pitch| only on the mvp2D billboard path (src/TinyGL.cpp:195-200), the
-	// world/GL projection kept viewFov — the rewrite has a single projection.
-	// viewAspect over the 478x248 world viewport (src/Render.cpp:2223).
-	camera_.setView(rvx, rvy, rvz, sys_.player->viewAngle, sys_.player->viewPitch, 0, 290,
-		(290 << 14) / ((478 << 14) / 248));
-	}
-
-	if (sys_.world->initialized() && sys_.map->numNodes > 0) {
-		renderer.setCanvasViewport(kWorldRect[0], kWorldRect[1], kWorldRect[2], kWorldRect[3]);
-		sys_.world->drawSky(camera_);
-		// Per-sprite sort-bias hooks (src/Render.cpp:856-862): corpse/linked
-		// entities draw nearer (+1), monsters (-1).
-		std::vector<int> spriteSortBias(sys_.map->numSprites, 0);
-		// Stacked-character classification (ADR 0005/0007, spec
-		// 2026-08-26 §1): entity-def driven — live NPCs, monsters whose tile
-		// is outside the diverted floater/special-boss families (their
-		// renderers are not ported), corpsified NPCs whose art tile stayed in
-		// the NPC range after the def swap (src/Game.cpp:567-569), and
-		// corpsified monsters via the kInfoCorpse clause below. Legacy gate:
-		// renderSpriteAnim runs for every entity with monster != nullptr
-		// (src/Render.cpp:1622-1626); ET_MONSTER is its exact proxy
-		// (allocated iff eType == 2, src/Game.cpp:430-436).
-		std::vector<uint8_t> spriteCharClass(sys_.map->numSprites, 0);
-		for (const Entity& ent : sys_.game->entities()) {
-			int si = ent.getSprite();
-			if (!ent.def || si < 0 || si >= sys_.map->numSprites) continue;
-			if (ent.info & 0x1010000) spriteSortBias[si] = +1;
-			else if (ent.def->eType == Enums::ET_MONSTER) spriteSortBias[si] = -1;
-			const int tile = sys_.map->mapSpriteInfo[si] & 0xFF; // monsters never carry SPRITE_FLAG_TILE (+257)
-			if (ent.def->eType == Enums::ET_NPC ||
-			    (ent.def->eType == Enums::ET_CORPSE &&
-			     tile >= Enums::TILENUM_FIRST_NPC &&
-			     tile <= Enums::TILENUM_LAST_NPC)) {
-				spriteCharClass[si] = 1;
-			}
-			// Corpsified monsters keep their character-sheet art tile, so the
-			// death pose must render through the stacked path's MANIM_DEAD
-			// single-corpse-quad branch (src/Render.cpp:3466-3475); the
-			// billboard fallback would clamp frame 0x70 back onto the
-			// standing base frame (bug: "standing imp remains"). Gated on
-			// the died-marker so placed corpse props stay on the billboard
-			// path.
-			else if ((ent.info & Entity::kInfoCorpse) != 0 &&
-			         ((sys_.map->mapSpriteInfo[si] >> 8) & Enums::MANIM_MASK) == Enums::MANIM_DEAD) {
-				spriteCharClass[si] = 1;
-			}
-			else if (ent.def->eType == Enums::ET_MONSTER &&
-			         !isFloaterTile(tile) && !isSpecialBossTile(tile)) {
-				spriteCharClass[si] = 1;
-			}
-		}
-		sys_.world->drawBSP(*sys_.map, *sys_.media, camera_, spriteSortBias.data(),
-		                    spriteCharClass.data());
-		renderer.restoreCanvasViewport(app.window());
-	} else {
-		g.fillRect(0, 0, 480, 320, 32, 32, 64);
-	}
+	scene_.drawWorld(renderer, app.window(), cinePose, underDialog);
 
 	// View weapon paints over the world in full canvas space; its legacy
 	// anchors already include the world viewport origin (ADR 0009). The two
@@ -856,9 +735,9 @@ void GameContext::render(AppContext& app) {
 	// weapon is the cinematicWeapon != -1 branch (src/MayaCamera.cpp:311-314),
 	// deliberately deferred in the rewrite.
 	const bool gameplayView = state_ == StateId::Playing ||
-	                          state_ == StateId::Looting || state_ == StateId::Dialog;
+	                          state_ == StateId::Looting || underDialog;
 	if (cinePose == nullptr && !cinematic_.active() && gameplayView) {
-		viewWeapon_.draw(g, camera_);
+		viewWeapon_.draw(g, scene_.camera());
 	}
 
 	// Cockpit overlay while a cinematic renders with the raw toggle set
@@ -895,8 +774,7 @@ void GameContext::render(AppContext& app) {
 		sys_.game->facingDirty = false;
 	}
 	targeting_.feedHealthBar();
-	if (state_ == StateId::Playing || state_ == StateId::Looting ||
-	    state_ == StateId::Dialog) {
+	if (gameplayView) {
 		sys_.hud->drawTopBar(g, *sys_.font, 480);
 	}
 
