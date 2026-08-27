@@ -510,7 +510,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				env_.map->mapSpriteInfo[sprite] |= 0x10000;
 				Entity* ent = env_.game->db.findEntityBySprite(sprite);
 				if (ent != nullptr) {
-					ent->info |= Entity::kInfoActivated;
+					ent->info |= Entity::kInfoDirty;
 					env_.game->db.unlinkEntity(ent);
 					const EntityDef* def = ent->def;
 					// foundLoot/destroyedObject/corpseify side effects logged only (spec §7.4).
@@ -527,7 +527,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 						// effect: the monster VANISHES (no visible corpse).
 						env_.game->monsters.corpsifyMonster(ent, ent->linkIndex % 32, ent->linkIndex / 32);
 						env_.game->db.removeEntity(ent);
-						ent->info |= Entity::kInfoActivated;           // :839 (0x400000)
+						ent->info |= Entity::kInfoDirty;               // :839
 						std::fprintf(stderr, "[script] HIDE sprite=%d corpsify+remove\n", sprite);
 					}
 				}
@@ -591,7 +591,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				std::fprintf(stderr, "[script] ENTITY_FRAME sprite=%d frame=%d\n", sprite, frame);
 				Entity* ent = env_.game->db.findEntityBySprite(sprite); // S_ENT lookup analog (src/Game.h:98)
 				if (ent != nullptr) {
-					ent->info |= Entity::kInfoActivated;
+					ent->info |= Entity::kInfoDirty;
 					// monster->frameTime = 0x7FFFFFFF anim-freeze (:679-681) omitted —
 					// EntityMonster does not exist yet.
 				}
@@ -709,8 +709,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (ls == nullptr) break;
 			ls->dstX = 32 + (dstTileX << 6);       // tile centers (:361-362)
 			ls->dstY = 32 + (dstTileY << 6);
-			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= 0x400000 (:364-371)
-			if (ent != nullptr) ent->info |= 0x400000;
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= kInfoDirty (:364-371)
+			if (ent != nullptr) ent->info |= Entity::kInfoDirty;
 			ls->dstZ = env_.map->heightAt(ls->dstX, ls->dstY) + dstZrel;   // (:370)
 			const MapData& m = *env_.map;
 			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
@@ -751,8 +751,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (ls == nullptr) break;
 			ls->dstX = dstX;
 			ls->dstY = dstY;
-			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= 0x400000 (+MFLAG_LERP_SHADOW n/a)
-			if (ent != nullptr) ent->info |= 0x400000;
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= kInfoDirty (+MFLAG_LERP_SHADOW n/a)
+			if (ent != nullptr) ent->info |= Entity::kInfoDirty;
 			ls->dstZ = env_.map->heightAt(dstX, dstY) + dstZrel;  // (:1410)
 			const MapData& m = *env_.map;
 			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
@@ -998,14 +998,16 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		// target yet.
 		case Enums::EV_ENTITY_BREATHES: {  // src/ScriptThread.cpp:1907-1920
 			// Sits between the squad walk-in and the imp parabola of camera 5;
-			// consuming it keeps that thread alive (info bit 0x20000000 has no
+			// consuming it keeps that thread alive (kInfoNoBreathe has no
 			// rewrite consumer yet).
+			// Inverted argument: mode 1 ("breathe") CLEARS the bit, mode 0
+			// sets it (src/ScriptThread.cpp:1915-1918).
 			int sprite = readUByte(t);
 			int mode = readUByte(t);
 			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			if (ent != nullptr) {
-				if (mode == 1) ent->info &= ~0x20000000;
-				else if (mode == 0) ent->info |= 0x20000000;
+				if (mode == 1) ent->info &= ~Entity::kInfoNoBreathe;
+				else if (mode == 0) ent->info |= Entity::kInfoNoBreathe;
 			}
 			break;
 		}
@@ -1227,7 +1229,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			ls->srcScale = m.mapSprites[sprite + 8 * m.numSprites];
 			ls->dstScale = scaleByte << 1;         // 64 = 1.0 (:1468)
 			Entity* ent = env_.game->db.findEntityBySprite(sprite);
-			if (ent != nullptr) ent->info |= 0x400000;   // (:1469-1472)
+			if (ent != nullptr) ent->info |= Entity::kInfoDirty;   // (:1469-1472)
 			ls->startTime = env_.game->lerps.clockMs();
 			ls->travelTime = timeMs;
 			ls->flags = lsFlags & 0x3;
@@ -1268,8 +1270,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			const MapData& m = *env_.map;
 			ls->dstX = 32 + (dstTileX << 6);       // (:1662-1663)
 			ls->dstY = 32 + (dstTileY << 6);
-			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= 0x400000; monster shadow bit CLEARED (:1672,1982)
-			if (ent != nullptr) ent->info |= 0x400000;
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= kInfoDirty; monster shadow bit CLEARED (:1672,1982)
+			if (ent != nullptr) ent->info |= Entity::kInfoDirty;
 			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
 			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
 			// Stored Z is raw-relative; rebake to legacy space (src/Render.cpp:2464).

@@ -115,6 +115,9 @@ void Combat::performAttack(Entity* target, int attackX, int attackY, bool script
 	// player->updateStats / lastCombatTurn / inCombat skipped: no rewrite
 	// consumers (:63-75).
 	if (curTarget != nullptr) {
+		// info bit 0x200000: write-only in the original (set here and on
+		// splash-damage victims, never read anywhere), meaning unknown, so it
+		// stays a literal — docs/original-code/entities.md §5.
 		curTarget->info |= 0x200000;                   // :69-71
 		targetType = curTarget->def ? curTarget->def->eType : 0;      // :77
 		targetSubType = curTarget->def ? curTarget->def->eSubType : 0; // :78
@@ -204,7 +207,11 @@ bool Combat::tick() {
 			env_.player->ce.calcCombat(*this, env_.player->ce, curTarget,
 				false, worldDist, targetSubType);                // :227
 			if ((crFlags & 0x1007) != 0) {                       // :228
-				curTarget->info |= 0x4000000;                    // :229 highlight marker
+				// info bit 0x4000000: write-only in the original (set on a hit
+				// roll, cleared when the attack animation leaves stage 1;
+				// nothing in src/ ever reads it), meaning unknown, so it stays
+				// a literal — docs/original-code/entities.md §5.
+				curTarget->info |= 0x4000000;                    // :229
 				if ((crFlags & 0x2) != 0) {                      // :230-233
 					gotCrit = true;
 					hitType = 2;
@@ -293,6 +300,7 @@ bool Combat::tick() {
 		// dynamite flags (:369-370) and targetType-9/17 executeTile (:375-378)
 		// have no Stage-1 consumers; BFG check (:379-381) is out of scope.
 		if (targetType == Enums::ET_MONSTER) {
+			// Clears the write-only 0x4000000 mark set at :229 (see above).
 			curTarget->info &= ~0x4000000;                       // :372-374
 		}
 		if (targetKilled ||

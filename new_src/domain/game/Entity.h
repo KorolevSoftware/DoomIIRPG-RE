@@ -18,12 +18,24 @@ class Game;
 // def and per-entity state.
 class Entity {
 public:
-	// info flags.
+	// info flags. This word is NOT mapSpriteInfo: its low 16 bits are the
+	// sprite index + 1, so a bit value coinciding with a SPRITE_FLAG_* value
+	// means something else entirely (docs/original-code/entities.md §5.4).
 	static constexpr int kInfoActive = 0x20000;      // alive / takes damage
 	static constexpr int kInfoOnActiveList = 0x40000; // on activeMonsters ring (src/Game.cpp:798)
 	static constexpr int kInfoLinked = 0x100000;     // linked in entityDb
-	static constexpr int kInfoActivated = 0x400000;  // activated/changed
+	// State differs from the map default, so a full save record must be
+	// written (src/Entity.cpp:1816-1821: without it the record is short and
+	// non-statue ET_DECOR is skipped). Unrelated to mapSpriteInfo's
+	// SPRITE_FLAG_TILE, which has the same value.
+	static constexpr int kInfoDirty = 0x400000;
 	static constexpr int kInfoCorpse = 0x1000000;    // died corpse marker
+	// Idle breathing/bob is SUPPRESSED while this bit is SET. Note the
+	// inversion: the EV_ENTITY_BREATHES opcode argument 1 ("breathe") CLEARS
+	// it, argument 0 sets it (src/ScriptThread.cpp:1915-1918). Readers zero
+	// the idle bob (src/Render.cpp:3195-3198) and the fear-eye Z offset
+	// (src/Render.cpp:3054).
+	static constexpr int kInfoNoBreathe = 0x20000000;
 	static constexpr int kInfoHidden = 0x10000;      // hidden/dead sprite flag
 
 	Entity() = default;

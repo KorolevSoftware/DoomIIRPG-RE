@@ -68,7 +68,7 @@ void MonsterSystem::activate(Entity* e, bool runStaticFunc, bool rangeCheck, boo
 	                  env_.combat->tileDistSq(4)) {
 		return;                                // :763-765 (> 4 tiles)
 	}
-	e->info |= Entity::kInfoActivated;         // :766
+	e->info |= Entity::kInfoDirty;             // :766
 	// noclip early-out (:767-769): no noclip cheat in the rewrite.
 	if ((e->info & Entity::kInfoOnActiveList) != 0) {
 		return;                                // :770-772 already active
@@ -195,7 +195,7 @@ void MonsterSystem::diedMonster(Entity* e, bool giveXP) {
 	if (sprite < 0 || sprite >= env_.map->numSprites) return;
 	if (!(e->info & Entity::kInfoActive)) return;              // :431 guard
 	e->info &= ~Entity::kInfoActive;                           // :434
-	e->info |= Entity::kInfoActivated;                         // :460
+	e->info |= Entity::kInfoDirty;                             // :460
 	m->resetGoal();                                            // :461
 	// Snap script lerps of this sprite (corpsifyMonster pattern,
 	// src/Game.cpp:620-631) so a running lerp can't fight the death pose.
@@ -267,9 +267,9 @@ void MonsterSystem::corpsifyMonster(Entity* e, int x, int y) {
 	env_.map->mapSprites[s + 2 * n] = 32;
 
 	// Corpse entity info: keep the sprite id, add corpse/inactive marker +
-	// active visibility + activated (src/ScriptThread.cpp:2258-2259).
+	// active visibility + needs-save (src/ScriptThread.cpp:2258-2259).
 	e->info = (e->info & 0xFFFF) | Entity::kInfoCorpse | Entity::kInfoActive |
-		Entity::kInfoActivated;
+		Entity::kInfoDirty;
 
 	// Def swap: same subtype/parm, now an ET_CORPSE def
 	// (src/ScriptThread.cpp:2261-2263).

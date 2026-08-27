@@ -1107,7 +1107,7 @@ void World3D::drawCharacter(const MapData& map, const MediaLoader& media, int i)
 	int shadowScale = scaleFactor * (256 - min) / 256;
 
 	// Idle bob, phase-staggered per sprite (src/Render.cpp:3195-3199). The
-	// entity->info & 0x20000000 suppression has no carrier in the rewrite.
+	// Entity::kInfoNoBreathe suppression has no carrier in the rewrite.
 	int bob = (((timeMs_ + i * 1337) / 1024) & 1) * 26;
 
 	// Camera-right step for lateral sway (canvas units; src/Render.cpp:2276-2278).

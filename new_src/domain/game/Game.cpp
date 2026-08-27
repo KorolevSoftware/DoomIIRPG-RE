@@ -137,7 +137,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		} else {
 			// Placed corpse props spawn with info |= 0x420000
 			// (src/Entity.cpp:96-98); generalized to every monster/corpse.
-			e.info |= Entity::kInfoActive | Entity::kInfoActivated;
+			e.info |= Entity::kInfoActive | Entity::kInfoDirty;
 			// ET_NPC construction sets param = 1 -> chat-icon overhead in
 			// legacy (src/Entity.cpp:99-101); the icon itself is not rendered
 			// this cycle (spec 2026-08-25-character-animation §1 elision).

@@ -60,7 +60,7 @@ public:
 	// tile (tx,ty) (src/LoothingSystem.cpp:154-278). Marks BEFORE reading
 	// loot sets, per entity: prop ++param (skip when already != 0), monster
 	// flag 0x800 (unified into ++param — see Deviations #1 of spec
-	// 2026-08-25-loot-dwell-ui), info |= kInfoActivated.
+	// 2026-08-25-loot-dwell-ui), info |= kInfoDirty.
 	void poolLootCorpse(int tx, int ty, const Localization& loc, Pool& out);
 
 	// Grant pass (src/LoothingSystem.cpp:281-307): give() per non-class-6

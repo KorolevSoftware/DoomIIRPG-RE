@@ -99,7 +99,7 @@ void CorpseLoot::poolLootCorpse(int tx, int ty, const Localization& loc, Pool& o
 		// EntityMonster is not ported, so both markers unify into ++param
 		// (spec Deviations #1).
 		++e->param;
-		e->info |= Entity::kInfoActivated;               // (:179)
+		e->info |= Entity::kInfoDirty;                   // (:179)
 
 		if (!e->hasLootSet) continue;                    // lootSet == nullptr analog
 		for (int i = 0; i < Entity::kMaxCorpseLoot; ++i) {

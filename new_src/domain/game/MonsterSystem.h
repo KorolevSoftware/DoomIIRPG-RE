@@ -98,7 +98,7 @@ public:
 	// Port of ScriptThread::corpsifyMonster (src/ScriptThread.cpp:2249-2266),
 	// visual/flag subset: death-frame overlay (spriteInfo bits 8-14 = 0x7000),
 	// reposition to the tile center at ground+32, corpse info bits
-	// (0x1000000|0x20000|0x400000), def swap to find(ET_CORPSE, subtype,
+	// (kInfoCorpse|kInfoActive|kInfoDirty), def swap to find(ET_CORPSE, subtype,
 	// parm), relink at the new tile. The inactiveMonsters ring, death sound
 	// and name refresh are not ported yet.
 	void corpsifyMonster(Entity* e, int x, int y);

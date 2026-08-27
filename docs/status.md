@@ -137,8 +137,24 @@ Phase 1: 7/7, Phase 2: 6/6. `GameContext.cpp` 1626 -> 535, `Game.cpp` 1565 -> 30
 Thirteen modules, pointwise `Env` injection, no singleton or context back-references.
 All five duplicated entityDb helper copies collapsed into `EntityDb` (P2-GF).
 
-Remaining, optional Phase 3: `TraceHit` to its last consumers (`PlayerActions` still decodes
-`def == nullptr`), named content masks and weapon-table fields, forwarder sweep in `Game.h`.
+Phase 3 also COMPLETE (2026-08-27, each group user-confirmed):
+- B2: `TraceHit` is the only carrier of trace results; the hand-decode of `def == nullptr` that
+  produced the dead wall-push branch is gone (acceptance grep empty).
+- C2: weapon tables are parsed structs (`WeaponDef`/`WeaponPose`) instead of a byte vector read
+  through field-index arithmetic; identity proven against the shipped `tables.bin` for all rows.
+- C1/C3: content masks (`Contents::*`) and tile/sprite encodings (`MapBits.h`) are composed from
+  named bits and pinned; `13997`/`21741`/`13501`/`0xF000000`/`0x3000000` appear only on asserts.
+- C4: `Combat::tileDistSq(tiles)` removes the off-by-one of `tileDistances[n]`.
+- F sweep: all 15 forwarders gone from `Game.h` (115 lines, was 236). `setXPSystems` stays as a
+  deliberate composite of two peer wirings.
+
+Sizes: `GameContext.cpp` 1626 -> 535, `Game.cpp` 1565 -> 288, `Game.h` 236 -> 115.
+
+Entity `info` bits: `0x20000000` (breathing suppressed, inverted setter) and `0x400000`
+(dirty/needs-save) are CONFIRMED and named; `0x200000` and `0x4000000` are write-only in the
+original with no reader anywhere and stay unnamed on purpose (our "highlight marker" comment
+was refuted). The entity word does NOT share `mapSpriteInfo`'s layout, and a third colliding
+bitfield exists (the `getSaveHandle` result) — see `docs/original-code/entities.md` §5.
 
 ### Original plan (kept for reference)
 
