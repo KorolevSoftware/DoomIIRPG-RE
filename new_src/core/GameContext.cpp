@@ -133,6 +133,7 @@ void GameContext::enterState_(StateId s) {
 		// letterboxes the viewport (src/Canvas.cpp:1207-1216); the queued
 		// events analog is cleared here, viewport swap is a render concern.
 		pendingActions_.clear();
+		sys_.hud->clearMessages();       // msgCount = 0 (src/Canvas.cpp:1208)
 		sys_.hud->clearCinematicText();
 		break;
 	case StateId::Dying:

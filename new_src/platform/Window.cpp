@@ -168,11 +168,9 @@ void Window::computeViewport(int& x, int& y, int& w, int& h) const {
 	y = (drawableHeight_ - h) / 2;
 }
 
-void Window::screenToCanvas(int sx, int sy, int& cx, int& cy) const {
-	int vx, vy, vw, vh;
-	computeViewport(vx, vy, vw, vh);
-	cx = static_cast<int>((sx - vx) * static_cast<float>(kCanvasWidth) / static_cast<float>(vw));
-	cy = static_cast<int>((sy - vy) * static_cast<float>(kCanvasHeight) / static_cast<float>(vh));
+void Window::windowToDrawable(int wx, int wy, int& px, int& py) const {
+	px = wx * drawableWidth_ / (winWidth_ > 0 ? winWidth_ : 1);
+	py = wy * drawableHeight_ / (winHeight_ > 0 ? winHeight_ : 1);
 }
 
 void Window::swapBuffers() { SDL_GL_SwapWindow(window_); }

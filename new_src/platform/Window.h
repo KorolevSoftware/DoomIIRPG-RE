@@ -49,8 +49,10 @@ public:
 	// Letterboxed viewport (in drawable pixels) that preserves canvas aspect.
 	void computeViewport(int& x, int& y, int& w, int& h) const;
 
-	// Transform a drawable-pixel coordinate back into canvas space.
-	void screenToCanvas(int sx, int sy, int& cx, int& cy) const;
+	// SDL window (screen) coordinates -> drawable pixels. Identity unless the
+	// display is HiDPI. The rest of the way to canvas space is
+	// RenderBackend::drawableToCanvas.
+	void windowToDrawable(int wx, int wy, int& px, int& py) const;
 
 	SDL_Window* nativeHandle() const { return window_; }
 	void swapBuffers();

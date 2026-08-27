@@ -394,12 +394,47 @@ void Hud::drawCenterMessage(Graphics2D& g, const Font& font, const Text& text, u
 	}
 }
 
-void Hud::showCenterMessage(const std::string& text, uint32_t color, int durationMs) {
-	centerText_ = text;
-	centerColor_ = color;
-	centerDuration_ = durationMs;
-	centerTime_ = 0;
-	hasCenterMessage_ = true;
+void Hud::showCenterMessage(const std::string& text, uint32_t color, int /*durationMs*/) {
+	addMessage(text, color, kMsgFlagCenter);
+}
+
+// Hud::addMessage(Text*, flags) (src/Hud.cpp:163-200).
+void Hud::addMessage(const std::string& text, uint32_t color, int flags) {
+	if (text.empty()) return;
+	if (flags & kMsgFlagForce) messages_.clear();
+	// compareTo against the newest entry drops an exact repeat (:172-174).
+	if (!messages_.empty() && messages_.back().text == text) return;
+	if ((int)messages_.size() == kMaxMessages) shiftMsgs();
+
+	messages_.push_back(Message{text, color, flags});
+	if (messages_.size() == 1) {
+		calcMsgTime();
+		// MSG_FLAG_FORCE doubles the duration of the first message (:197-199).
+		if (flags & kMsgFlagForce) msgDuration_ *= 2;
+	}
+}
+
+// calcMsgTime (src/Hud.cpp:122-136): 700 ms for a short line, else 50 ms per
+// character, capped at 1500 ms for a centered one.
+void Hud::calcMsgTime() {
+	msgTime_ = 0;
+	const int length = (int)messages_[0].text.size();
+	if (length <= kMenuHelpMaxChars) {
+		msgDuration_ = 700;
+	} else {
+		msgDuration_ = length * 50;
+		if ((messages_[0].flags & kMsgFlagCenter) != 0 && msgDuration_ > 1500) {
+			msgDuration_ = 1500;
+		}
+	}
+}
+
+// shiftMsgs (src/Hud.cpp:101-119): drop the head, restart the clock for the
+// new one. The legacy canvas->invalidateRect() for a centered head has no
+// counterpart here (the rewrite repaints every frame).
+void Hud::shiftMsgs() {
+	messages_.erase(messages_.begin());
+	if (!messages_.empty()) calcMsgTime();
 }
 
 void Hud::setSubtitle(const std::string& text, int durationMs) {
@@ -467,14 +502,17 @@ void Hud::drawBubbleText(Graphics2D& g, const Font& font, int scrCx, int viewTop
 // Dialog boxes are drawn by DialogSystem::draw (spec GROUP 1); Hud only
 // carries the messages below.
 void Hud::drawMessages(Graphics2D& g, const Font& font) {
-	if (hasImportant_) {
+	// Only messages_[0] is ever drawn and the two variants are mutually
+	// exclusive, important winning (src/Hud.cpp:256-280, ui.md 18.1).
+	if (!messages_.empty()) {
+		const Message& m = messages_.front();
 		Text t;
-		t.append(importantText_);
-		drawImportantMessage(g, font, t, 0xFF7F0000);
-	} else if (hasCenterMessage_ && centerTime_ >= 0) {
-		Text t;
-		t.append(centerText_);
-		drawCenterMessage(g, font, t, centerColor_);
+		t.append(m.text);
+		if (m.flags & kMsgFlagImportant) {
+			drawImportantMessage(g, font, t, m.color);
+		} else {
+			drawCenterMessage(g, font, t, m.color);
+		}
 	}
 	// Cinematic text (drawCinematicText analog, src/Hud.cpp:461-487):
 	// title top-center at y=1 (drawString flags=1), subtitle bottom-center
@@ -494,17 +532,18 @@ void Hud::drawMessages(Graphics2D& g, const Font& font) {
 }
 
 void Hud::update(int timeMs) {
-	if (hasCenterMessage_) {
-		centerTime_ += timeMs;
-		if (centerTime_ >= centerDuration_ + 100) {
-			hasCenterMessage_ = false;
-		}
+	// Head expiry + shift; legacy does it at the top of drawTopBar
+	// (src/Hud.cpp:249-251).
+	if (!messages_.empty()) {
+		msgTime_ += timeMs;
+		if (msgTime_ > msgDuration_ + 100) shiftMsgs();
 	}
-	if (hasImportant_) {
-		importantTime_ += timeMs;
-		if (importantTime_ >= kImportantDurationMs) hasImportant_ = false;
+	// Speech bubble: legacy disposes it in drawBubbleText once
+	// app->time >= bubbleTextTime (src/Hud.cpp:942-948).
+	if (!bubbleText_.empty()) {
+		bubbleTextTime_ += timeMs;
+		if (bubbleTextTime_ >= bubbleTextDuration_) bubbleText_.clear();
 	}
-	if (!bubbleText_.empty()) bubbleTextTime_ += timeMs;
 	// Health-bar drain clock (src/Hud.cpp:854 threshold): past 250 ms the
 	// bar snaps to the fed hp instead of easing.
 	if (monsterId_ >= 0) monsterChangeTime_ += timeMs;

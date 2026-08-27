@@ -36,6 +36,31 @@ void RenderBackend::applyViewport(Window& window) {
 	canvasVp_[2] = vw;
 	canvasVp_[3] = vh;
 	glViewport(vx, vy, vw, vh);
+	// The batch draws in canvas coords; its scissor needs the letterbox rect.
+	batch_.setLetterbox(vx, vy, vw, vh);
+}
+
+void RenderBackend::letterboxRect(int& x, int& y, int& w, int& h) const {
+	x = canvasVp_[0];
+	y = canvasVp_[1];
+	w = canvasVp_[2];
+	h = canvasVp_[3];
+}
+
+bool RenderBackend::drawableToCanvas(int px, int py, int& cx, int& cy) const {
+	if (canvasVp_[2] <= 0 || canvasVp_[3] <= 0) {
+		cx = -1;
+		cy = -1;
+		return false;
+	}
+	const int dx = px - canvasVp_[0];
+	const int dy = py - canvasVp_[1];
+	// Integer division truncates toward zero, so a single negative pixel would
+	// map to 0 and read as "inside"; report the bar instead.
+	cx = dx < 0 ? -1 : dx * Window::kCanvasWidth / canvasVp_[2];
+	cy = dy < 0 ? -1 : dy * Window::kCanvasHeight / canvasVp_[3];
+	return cx >= 0 && cx < Window::kCanvasWidth &&
+		cy >= 0 && cy < Window::kCanvasHeight;
 }
 
 void RenderBackend::setCanvasViewport(int x, int y, int w, int h) {

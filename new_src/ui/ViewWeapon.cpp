@@ -45,10 +45,9 @@ constexpr int kWeaponCanvasCx = 240, kWeaponCanvasCy = 131;
 // (1,7,478,248) — the viewport that clips the billboard on the GL path.
 // Source texels are always the top-left 176x176 of the 256x256 weapon media
 // (src/GLES.cpp:539-542).
-// WARNING: Graphics2D::setClip cannot be used for that clip — it is a no-op
-// for the sprite batch (it only records the rect, nothing scissors,
-// new_src/render/Graphics2D.cpp:17-29). Hence both the destination quad and
-// its source sub-rect are trimmed by hand below.
+// Graphics2D::setClip (a GL scissor) is deliberately NOT used here: the band
+// clip must trim the source sub-rect as well as the destination quad, which a
+// scissor cannot do on magnified art. Both are trimmed by hand below.
 static void drawWeaponQuad(Graphics2D& g, const Texture& tex, int x, int y, int v12,
 	uint8_t tint, float magX, float magY) {
 	constexpr int kSrc = 176;
@@ -60,8 +59,7 @@ static void drawWeaponQuad(Graphics2D& g, const Texture& tex, int x, int y, int 
 	const int yt = (int)std::floor(fyt), yb = (int)std::floor(fyb);
 	const int dw = xr - xl, dh = yb - yt;
 	if (dw <= 0 || dh <= 0) return;
-	// Band clip; Graphics2D::setClip is not honoured by the sprite batch, so
-	// the quad and its source rect are trimmed by hand.
+	// Band clip: the quad and its source rect are trimmed together (see above).
 	const int cx0 = std::max(xl, 1), cx1 = std::min(xr, 1 + 478);
 	const int cy0 = std::max(yt, 7), cy1 = std::min(yb, 7 + 248);
 	if (cx1 <= cx0 || cy1 <= cy0) return;

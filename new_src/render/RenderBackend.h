@@ -36,6 +36,14 @@ public:
 	// Restores the full letterboxed canvas viewport.
 	void restoreCanvasViewport(Window& window);
 
+	// The letterboxed canvas rect in drawable pixels, as latched by the last
+	// applyViewport (sub-viewports do not change it).
+	void letterboxRect(int& x, int& y, int& w, int& h) const;
+
+	// Drawable-pixel point -> canvas point. Returns false when the point falls
+	// in the letterbox bars; cx/cy are still written (not clamped).
+	bool drawableToCanvas(int px, int py, int& cx, int& cy) const;
+
 	// Flushes all pending draw calls to the back buffer without presenting.
 	// Used for readback/tests before the swap.
 	void flushFrame();

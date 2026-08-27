@@ -56,7 +56,9 @@ public:
 	void drawMonsterHealth(Graphics2D& g, int scrCx, int viewTop);
 	void drawWeaponSelection(Graphics2D& g, const Font& font);
 	void drawBubbleText(Graphics2D& g, const Font& font, int scrCx, int viewTop, int viewRight);
-	void setBubbleText(const std::string& text, uint32_t color, int durationMs = 3000);
+	// BUBBLE_TEXT_TIME = 1500 ms (src/Hud.h:38, ui.md 18).
+	static constexpr int kBubbleDurationMs = 1500;
+	void setBubbleText(const std::string& text, uint32_t color, int durationMs = kBubbleDurationMs);
 	void setBubbleText(int durationMs) { if (bubbleText_.empty()) bubbleTextTime_ = 0; else bubbleTextTime_ = durationMs; }
 
 	// Demo damage effects (red vignette + attack direction arrow).
@@ -73,14 +75,21 @@ public:
 	void setArrowPressed(int a) { arrowPressed_ = a; }
 	void setShowArrows(bool on) { showArrows_ = on; }
 
-	// Demo message API (temporary stand-in for the real message queue).
-	void showCenterMessage(const std::string& text, uint32_t color, int durationMs = 700);
+	// Message queue (legacy Hud::addMessage, src/Hud.cpp:163-200). Flag bits
+	// as in the original: 1 = FORCE (flush the queue, double the duration of
+	// the resulting head), 2 = CENTER, 4 = IMPORTANT (src/Hud.cpp:171-199,
+	// ui.md 18).
+	static constexpr int kMsgFlagForce = 1;
+	static constexpr int kMsgFlagCenter = 2;
+	static constexpr int kMsgFlagImportant = 4;
+	void addMessage(const std::string& text, uint32_t color, int flags);
+	// durationMs is ignored: the queue derives every duration from the text
+	// length like the original calcMsgTime. Kept as an argument only because
+	// the existing gameplay call sites still pass a literal.
+	void showCenterMessage(const std::string& text, uint32_t color, int durationMs = 0);
 	void showImportantMessage(const std::string& text) {
-		importantText_ = text;
-		hasImportant_ = true;
-		importantTime_ = 0;
+		addMessage(text, 0xFF7F0000, kMsgFlagImportant);
 	}
-	void clearImportantMessage() { hasImportant_ = false; importantText_.clear(); }
 
 	// Cinematic text (EV_CAMERA_STR target, legacy hud->subTitleID/
 	// subTitleTime + cinTitleID/cinTitleTime: set by src/ScriptThread.cpp:
@@ -93,7 +102,8 @@ public:
 	void clearCinematicText();
 
 	void update(int timeMs);
-	void clearMessages() { hasCenterMessage_ = false; importantText_.clear(); }
+	// msgCount = 0 (menu open / ST_CAMERA entry, src/Canvas.cpp:1208).
+	void clearMessages() { messages_.clear(); }
 
 	// Draws only the center-message + important-banner; works while the
 	// cockpit/HUD stay hidden (spec 2026-08-23-phase5-skeleton §2).
@@ -135,6 +145,9 @@ public:
 
 private:
 	void drawArrowControls(Graphics2D& g);
+	// calcMsgTime / shiftMsgs (src/Hud.cpp:100-135).
+	void calcMsgTime();
+	void shiftMsgs();
 	void drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
 	void drawCenterMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
 
@@ -181,16 +194,19 @@ private:
 	int keys_ = 0; // 0=none, 1=red, 2=blue, 3=both
 	int playerRow_ = 0; // face row based on health
 
-	// Demo messages.
-	bool hasCenterMessage_ = false;
-	uint32_t centerColor_ = 0xAA000000;
-	std::string centerText_;
-	int centerTime_ = 0;
-	int centerDuration_ = 700;
-	std::string importantText_;
-	bool hasImportant_ = false;
-	int importantTime_ = 0;          // style-3 messages auto-expire like the legacy queue
-	static constexpr int kImportantDurationMs = 3500;
+	// Message queue: only messages_[0] is drawn, and it expires
+	// msgDuration_ + 100 ms after becoming the head (src/Hud.cpp:249-251).
+	struct Message {
+		std::string text;
+		uint32_t color = 0;
+		int flags = 0;
+	};
+	// canvas->menuHelpMaxChars, the short-message threshold in calcMsgTime
+	// (src/Hud.cpp:128-130, ui.md 18).
+	static constexpr int kMenuHelpMaxChars = 49;
+	std::vector<Message> messages_;
+	int msgTime_ = 0;      // ms since the head became current (legacy msgTime stamp)
+	int msgDuration_ = 0;
 
 	// Monster health-bar feed state (legacy lastTarget / monsterStartHealth /
 	// monsterDestHealth / monsterHealthChangeTime, src/Hud.cpp:822-899):
@@ -216,7 +232,7 @@ private:
 	std::string bubbleText_;
 	uint32_t bubbleColor_ = 0xFF002864;
 	int bubbleTextTime_ = 0;
-	int bubbleTextDuration_ = 3000;
+	int bubbleTextDuration_ = kBubbleDurationMs;
 
 	// Demo damage effect state.
 	int damageDir_ = -1;

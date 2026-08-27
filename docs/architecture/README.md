@@ -16,6 +16,7 @@ Namespace for everything: `newcore`._
 | `GameStates.h` | **(planned, ADR 0010 / spec `specs/2026-08-26-decomposition.md` P1-G1)** `StateId` + `Action` enums moved out of `GameContext.h`, plus the `StateHost` interface (`state()` / `requestState()`) — the only thing a module may know about the state machine. |
 | `CinematicCamera.h/.cpp` | **(planned, P1-G2)** owns `MayaCamera` + the cinematic clock: `startCinematic`, `advanceCameraKey` parking, key boundaries/Snap, skip, `renderPose()` (nullptr = no cinematic owns the view — the single source of truth for fov / cockpit overlay / view-weapon suppression). |
 | `LootSession.h/.cpp` | **(planned, P1-G3)** ST_LOOTING slice: crouch/dwell/stand pose clock, loot-pool session state, `handleAction`, loot menu overlay. |
+| `UiInputCollector.h/.cpp` | **(planned, ADR 0012, G3)** the single SDL -> `UiInput` normalizer (cursor in canvas coords, press/release edges, `Nav`, wheel) plus the moved keyboard->`Action` switch; keys and mouse both end up in `GameContext::pendingActions_`. |
 | `PlayerActions.h/.cpp` | **(planned, P1-G7)** playing input (move/turn/use/fire commit), arrival hooks `finishMovement`/`finishRotationFired`, `flagForFacingDir`, `spawnPlayer`, the script GOTO handshake fields. |
 
 ### domain/game/
@@ -69,14 +70,14 @@ Namespace for everything: `newcore`._
 |---|---|
 | `FileSystem` | Base/save paths via SDL_GetBasePath, archive search, whole-file read, atomic write. |
 | `InputSystem` | SDL event pump → single callback (:5-15); action-mapping pipeline is future work. |
-| `Window` | SDL2 window + GL 3.3 core context (Apple) / compatibility (:42-50); letterbox viewport (:159-169); canvas fixed 480x320 (:25-26). |
+| `Window` | SDL2 window + GL 3.3 core context (Apple) / compatibility (:42-50); letterbox viewport (:159-169); canvas fixed 480x320 (:25-26). **(planned, ADR 0012, G1)** `screenToCanvas` (:171-176, no callers) replaced by `windowToDrawable`; the canvas half of the inverse lives in `RenderBackend`. |
 
 ### render/
 | File | Responsibility |
 |---|---|
 | `Camera3D` | Faithful 14.14 fixed view/projection/MVP via 1024-entry sin table (:15-62); GLES BeginFrame projection tweaks (:83-92); float + int matrix accessors. |
-| `Graphics2D` | Canvas-space 2D over SpriteBatch: rects/lines, blits with rotateModes 0-8, anchors, scaled draws, `drawString` with `^N` colors/buff icons; clip recorded but not applied (:20-24). |
-| `RenderBackend` | Frame owner: beginFrame clear + letterbox viewport + batch begin (:37-47); endFrame flush+swap (:49-52); `setCanvasViewport/restoreCanvasViewport` scope the 3D band — ONE world rect (1,7,478,248) for gameplay and cinematics alike (ADR 0009 + its 2026-08-26 amendment: `src/GLES.cpp:119-127` hardcodes the GL y for both, the cinematic letterbox is the cockpit overlay at canvas y = 42, not a viewport); both flush the sprite batch first. |
+| `Graphics2D` | Canvas-space 2D over SpriteBatch: rects/lines, blits with rotateModes 0-8, anchors, scaled draws, `drawString` with `^N` colors/buff icons; clip recorded but not applied (:20-24) — **(planned, ADR 0012, G1)** `setClip`/`clearClip` become a real GL scissor through `SpriteBatch::setScissorCanvas`, single level (nesting is `Ui::pushClip`'s job). |
+| `RenderBackend` | Frame owner: beginFrame clear + letterbox viewport + batch begin (:37-47); endFrame flush+swap (:49-52); `setCanvasViewport/restoreCanvasViewport` scope the 3D band — ONE world rect (1,7,478,248) for gameplay and cinematics alike (ADR 0009 + its 2026-08-26 amendment: `src/GLES.cpp:119-127` hardcodes the GL y for both, the cinematic letterbox is the cockpit overlay at canvas y = 42, not a viewport); both flush the sprite batch first; **(planned, G1)** latches the letterbox rect into `SpriteBatch` and exposes its inverse (`letterboxRect`, `drawableToCanvas`) for cursor mapping. |
 | `SceneRenderer` | **(planned, ADR 0010, P1-G6)** the world pass: viewport band, camera setup (player view or cinematic `MayaPose`), screen shake, per-sprite sort-bias/character classification, `drawSky`+`drawBSP`; owns `Camera3D`. |
 | `World3D` | GL 3.3 world renderer: palette-LUT textures (:202+), sky (:399-454), polys (:329+), BSP walkNode painter's algorithm with per-leaf sprites (:788-881), billboard/wall/flat/slip-door sprites + RLE (:100+, :507-746), eye-space fog (:180-200), time animation (:78), per-sprite sort-bias hook on `drawBSP`. Stacked characters (ADR 0005): NPC branches + monster-family ATTACK deltas (ADR 0007, spec `specs/2026-08-26-monsters-stack-flicker.md`); floater/special-boss families still excluded. |
 
@@ -85,7 +86,7 @@ Namespace for everything: `newcore`._
 |---|---|
 | `GlCommon.h` | Platform GL header selection (:4-11). |
 | `Shader` | RAII program wrapper, uniform setters incl. mat4. |
-| `SpriteBatch` | Batched quad renderer (4096 max, :18-19); three programs: indexed-palette, RGBA, flat color (:64-66). |
+| `SpriteBatch` | Batched quad renderer (4096 max, :18-19); three programs: indexed-palette, RGBA, flat color (:64-66). **(planned, ADR 0012, G1)** canvas-space scissor (`setLetterbox`/`setScissorCanvas`/`clearScissor`) following the `setBlendMode` compare-flush-assign precedent (:145-149); GL y measured from the bottom. |
 | `Texture` | Move-only texture: indexed R8 + RGBA8 palette LUT with 0xF81F kill, optional GL_REPEAT (:33), plain RGBA8 (:37). |
 
 ### text/
@@ -97,8 +98,17 @@ Namespace for everything: `newcore`._
 ### ui/
 | File | Responsibility |
 |---|---|
-| `ViewWeapon` | **(planned, ADR 0010, P1-G5)** first-person weapon quad + muzzle flash: legacy viewport-relative anchors magnified by the live projection, hand-clipped to the world band (`Graphics2D::setClip` does not scissor the sprite batch). |
-| `Hud` | Loads ~24 BMP textures (`startup()` :72-106); status bars, cockpit, weapon select (:211-233), bubbles, vignette (:136-169), arrows, monster bar (:180-209), messages. Currently demo-state driven. |
+| `ViewWeapon` | First-person weapon quad + muzzle flash: legacy viewport-relative anchors magnified by the live projection, hand-clipped to the world band by hand (quad + source sub-rect — scissor cannot reproduce it). **(planned, ADR 0012, G6)** takes a `ViewWeaponModel` instead of reading `Player`/`Combat`; the `flashDone` latch moves to `Combat::tick`. |
+| `Hud` | Loads ~24 BMP textures (`startup()` :72-106); status bars, cockpit, weapon select (:211-233), bubbles, vignette (:136-169), arrows, monster bar (:180-209), messages, bottom bar (:533-565). Demo fields still exist (`Hud.h:166-172`). **(planned, ADR 0012, G4)** all `draw*` move to `HudView`; `Hud` keeps only the non-drawing producer runtime (shake, monster-bar drain, cockpit toggle). |
+| `UiTypes.h` | **(planned, ADR 0012, G2)** `UiId` / `UiAction` / `Nav` enums, `UiInput`, `UiRect`, `UiResult`. |
+| `UiState.h/.cpp` | **(planned, G2)** the ONLY retained UI state: `activeId`, per-region scroll offsets, text wrap cache (`<start,len>` tables). Nothing else may be added. |
+| `Ui.h/.cpp` | **(planned, G2)** immediate-mode primitives (`panel`, `image`, `number3`, `label`, `textRows`, `textBlock`, `button`, `softKey`, `listHit`, `scrollBar`, `face`, `weaponIcon`, `keys`, `pushClip`) + the press/release hit-test rule. All constants come from the caller. `scrollBar` is the moved `DialogSystem::drawScrollBar`. |
+| `UiAssets.h/.cpp` | **(planned, G2)** owner of the UI BMP sheets (moved `Hud::startup`), loaded through an injected `ResourceReader` so `ui/` stops including `core/AppContext.h`. |
+| `HudModel.h` | **(planned, G4)** `HudModel` / `TextSlot` / `MonsterBarModel` — per-frame structs rebuilt by `GameContext`, never stored. |
+| `HudView.h/.cpp` | **(planned, G4)** `UiResult drawHud(Ui&, const HudModel&)`; bottom-bar geometry per `docs/original-code/ui.md` §1-§6. |
+| `LootView.h/.cpp` | **(planned, G5)** `drawLootList` — moved verbatim from `LootSession::draw`; 3×16 px rows, no scissor. |
+| `DialogView.h/.cpp` | **(planned, G7)** `drawDialog` — the drawing half of `DialogSystem` only. |
+| `MenuView.h/.cpp` | **(planned, G8, blocked on `docs/original-code/ui.md` menu research)** `drawMenu` + `MenuModel`. |
 
 ## Wiring (startup → frame)
 
@@ -131,7 +141,7 @@ first, then door use.
 3. ~~`Game::useDoorNear` declared but never defined~~ — resolved 2026-08-23 (replaced by `useDoorFacing`, see spec `specs/2026-08-23-fix-doors-sprite-placement.md`, ADR 0001).
 4. Debug helper `saveIndexedBmp` unreferenced (World3D.cpp:16-55).
 5. Hardcoded test values: fog (Main.cpp:207-209), FOV 290 (:225-227/:380-382), HUD demo fields (Hud.h:111-118), demo weapons mask (Hud.cpp:217-218), fake timestep `+=15` (Main.cpp:283).
-6. `Graphics2D::setClip` records but scissor never applied (Graphics2D.cpp:20-24) — callers must clip by hand (`ViewWeapon`); making it real is explicitly out of scope of spec `specs/2026-08-26-decomposition.md` §0.
+6. `Graphics2D::setClip` records but scissor never applied (Graphics2D.cpp:20-24) — callers must clip by hand (`ViewWeapon`); scheduled as GROUP 1 of spec `specs/2026-08-27-ui-layer.md` (ADR 0012). `ViewWeapon`'s hand clipping stays on purpose (deviation D1).
 7. Spawn math duplicated for camera and player (Main.cpp:213-228 vs :234-246).
 8. `SDL_WINDOW_ALWAYS_ON_TOP` leftover (Window.cpp:55-56).
 
@@ -142,6 +152,7 @@ _See [adr/](adr/):_
 - [0001 — Faced-door use without a trace system](adr/0001-faced-door-use-without-trace.md) (2026-08-23)
 - [0002 — Faithful swept-capsule collision trace](adr/0002-faithful-player-collision-trace.md) (2026-08-23; amends 0001)
 - [0003 — GameContext state machine + standalone ScriptVM](adr/0003-game-context-state-machine-and-script-vm.md) (2026-08-23)
+- [0004 — Dialog module and cinematic states](adr/0004-dialog-module-and-cinematic-states.md) (2026-08-24)
 - [0005 — Character detection & stacked-billboard rendering boundary](adr/0005-character-detection-stacked-billboards.md) (2026-08-25)
 - [0006 — Loot dwell UI without a LootingSystem module](adr/0006-loot-ui.md) (2026-08-25)
 - [0007 — Monsters join the entity-driven stacked-character path](adr/0007-monsters-stacked-character-path.md) (2026-08-26; amends 0005)
@@ -149,6 +160,7 @@ _See [adr/](adr/):_
 - [0009 — Restore the legacy world viewport (canvas 1,7,478,248)](adr/0009-legacy-world-viewport.md) (2026-08-26; amended 2026-08-26 — deviation D1 refuted, cinematics share the same viewport, aspect 163)
 - [0010 — Decompose `GameContext` and `Game` into peer modules with narrow `Env` injection](adr/0010-module-decomposition-and-injection.md) (2026-08-26)
 - [0011 — Typed trace result (`TraceHit`) and named legacy encodings](adr/0011-typed-trace-result-and-named-encodings.md) (2026-08-26)
+- [0012 — Immediate-mode UI layer with per-frame models, and no game logic in `ui/`](adr/0012-immediate-mode-ui-layer.md) (2026-08-27)
 
 ## Specs
 
@@ -163,3 +175,4 @@ _See [adr/](adr/):_
 - [2026-08-26 — Cinematic camera key-0 fix: legacy tri-state startup (delta on 2026-08-24 intro sequence)](specs/2026-08-26-camera-key0.md)
 - [2026-08-26 — Combat Stage 1 fixes: facing probe, fire-target election, world viewport + view weapon (supersedes parts of the combat-stage1 spec)](specs/2026-08-26-combat-stage1-fixes.md)
 - [2026-08-26 — Decomposition: GameContext + Game split, typed TraceHit, named legacy encodings](specs/2026-08-26-decomposition.md)
+- [2026-08-27 — UI layer: immediate-mode framework (`Ui`/`UiState`/models) + migration of HUD, loot list, dialogs, view weapon](specs/2026-08-27-ui-layer.md)

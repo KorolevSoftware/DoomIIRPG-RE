@@ -14,8 +14,7 @@ void Graphics2D::setBlendMode(int mode) {
 	if (batch_) batch_->setBlendMode(mode);
 }
 
-// WARNING: no-op for the sprite batch (see the header): the rect is recorded
-// and nothing scissors. Do not rely on it to clip drawImage/fillRect.
+// One clip level only; nesting belongs to the UI layer.
 void Graphics2D::setClip(int x, int y, int w, int h) {
 	clipX_ = x;
 	clipY_ = y;
@@ -23,17 +22,15 @@ void Graphics2D::setClip(int x, int y, int w, int h) {
 	clipH_ = h;
 	hasClip_ = true;
 
-	if (batch_) {
-		// Convert canvas clip to scissor coords. The batch flushes first so the
-		// previous draw calls land, then we enable scissor.
-		// (Scissor applied by the caller frame; here we just record the region.)
-	}
+	if (batch_) batch_->setScissorCanvas(x, y, w, h);
 }
 
 void Graphics2D::clearClip() {
 	hasClip_ = false;
 	clipW_ = 0;
 	clipH_ = 0;
+
+	if (batch_) batch_->clearScissor();
 }
 
 void Graphics2D::fillRect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {

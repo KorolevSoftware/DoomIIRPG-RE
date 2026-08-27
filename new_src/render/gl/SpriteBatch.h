@@ -59,6 +59,18 @@ public:
 	// RENDER_ADD50 (SRC_ALPHA/ONE, src/GLES.cpp:660-664). Flushes on change.
 	void setBlendMode(int mode);
 
+	// Latched by RenderBackend::applyViewport: the full letterboxed canvas rect
+	// in drawable pixels. Needed because vertices are canvas-space while the
+	// letterbox lives in the GL viewport.
+	void setLetterbox(int x, int y, int w, int h);
+
+	// Scissor in CANVAS coordinates (480x320, origin top-left). w <= 0 or
+	// h <= 0 clips everything away (empty rect, NOT "no clip"). Flushes on
+	// change, like setBlendMode: quads rasterize at flush time.
+	void setScissorCanvas(int x, int y, int w, int h);
+	void clearScissor();
+	bool scissorActive() const { return scissorActive_; }
+
 	int canvasWidth() const { return canvasWidth_; }
 	int canvasHeight() const { return canvasHeight_; }
 
@@ -67,6 +79,7 @@ private:
 	void flushIndexed();
 	void ensureCapacity(int quads);
 	void emitQuad(const Vertex* v);
+	void applyScissor();
 
 	Shader indexedShader_;
 	Shader rgbaShader_;
@@ -90,6 +103,11 @@ private:
 	int canvasWidth_ = 0;
 	int canvasHeight_ = 0;
 	int blendMode_ = 0;
+	// Letterboxed canvas rect in drawable pixels (x, y, w, h).
+	int letterbox_[4] = { 0, 0, 0, 0 };
+	// Requested scissor rect in canvas coords (x, y, w, h).
+	int scissorRect_[4] = { 0, 0, 0, 0 };
+	bool scissorActive_ = false;
 	bool initialized_ = false;
 	bool begun_ = false;
 };

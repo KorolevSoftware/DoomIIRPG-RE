@@ -1,5 +1,6 @@
 #include "render/gl/SpriteBatch.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace newcore {
@@ -128,6 +129,9 @@ void SpriteBatch::begin() {
 	boundIndexed_ = false;
 	blendMode_ = 0;
 	begun_ = true;
+	// No frame may inherit a clip from the previous one.
+	scissorActive_ = false;
+	glDisable(GL_SCISSOR_TEST);
 
 	glDisable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
@@ -138,6 +142,9 @@ void SpriteBatch::begin() {
 
 void SpriteBatch::end() {
 	flush();
+	// Drop any clip a screen left behind, so the next frame starts clean.
+	scissorActive_ = false;
+	glDisable(GL_SCISSOR_TEST);
 	glBindVertexArray(0);
 	begun_ = false;
 }
@@ -146,6 +153,66 @@ void SpriteBatch::setBlendMode(int mode) {
 	if (mode == blendMode_) return;
 	flush();
 	blendMode_ = mode;
+}
+
+void SpriteBatch::setLetterbox(int x, int y, int w, int h) {
+	if (letterbox_[0] == x && letterbox_[1] == y &&
+		letterbox_[2] == w && letterbox_[3] == h) return;
+	// Only matters for a live scissor: the pending quads were meant to be
+	// clipped in the old frame of reference, so flush before moving it.
+	if (scissorActive_) flush();
+	letterbox_[0] = x;
+	letterbox_[1] = y;
+	letterbox_[2] = w;
+	letterbox_[3] = h;
+	if (scissorActive_) applyScissor();
+}
+
+void SpriteBatch::setScissorCanvas(int x, int y, int w, int h) {
+	if (scissorActive_ && scissorRect_[0] == x && scissorRect_[1] == y &&
+		scissorRect_[2] == w && scissorRect_[3] == h) return;
+	// Same shape as setBlendMode above: quads rasterize at flush time, so the
+	// already-batched ones must land under the previous clip.
+	flush();
+	scissorRect_[0] = x;
+	scissorRect_[1] = y;
+	scissorRect_[2] = w;
+	scissorRect_[3] = h;
+	scissorActive_ = true;
+	applyScissor();
+}
+
+void SpriteBatch::clearScissor() {
+	if (!scissorActive_) return;
+	flush();
+	scissorActive_ = false;
+	glDisable(GL_SCISSOR_TEST);
+}
+
+void SpriteBatch::applyScissor() {
+	const int x = scissorRect_[0];
+	const int y = scissorRect_[1];
+	const int w = scissorRect_[2];
+	const int h = scissorRect_[3];
+
+	glEnable(GL_SCISSOR_TEST);
+	if (w <= 0 || h <= 0 || canvasWidth_ <= 0 || canvasHeight_ <= 0) {
+		// Degenerate rect clips everything away (not "no clip").
+		glScissor(0, 0, 0, 0);
+		return;
+	}
+
+	const float sx = (float)letterbox_[2] / (float)canvasWidth_;
+	const float sy = (float)letterbox_[3] / (float)canvasHeight_;
+	// GL y grows upwards, canvas y downwards: same flip as the sub-viewport
+	// expression at new_src/render/RenderBackend.cpp:50.
+	const int gx = letterbox_[0] + (int)lroundf(x * sx);
+	const int gy = letterbox_[1] + (int)lroundf((canvasHeight_ - (y + h)) * sy);
+	int gw = (int)lroundf(w * sx);
+	int gh = (int)lroundf(h * sy);
+	if (gw < 0) gw = 0;
+	if (gh < 0) gh = 0;
+	glScissor(gx, gy, gw, gh);
 }
 
 void SpriteBatch::emitQuad(const Vertex* v) {
