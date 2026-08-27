@@ -34,7 +34,7 @@ public:
 	static void populateDefaultLootSet(Entity& e);
 
 	// Faced lootable corpse: legacy ACTION_FIRE traces forward and selects an
-	// ET_CORPSE candidate exactly one tile away (dist == tileDistances[0])
+	// ET_CORPSE candidate exactly one tile away (dist == tileDistSq(1))
 	// that is not yet looted and owns a lootSet (src/PlayingInputHandler.cpp:
 	// 279-335). Trace-free simplification mirroring useDoorFacing: candidates
 	// are LINKED corpses on the adjacent tile in the facing direction (own

@@ -32,7 +32,7 @@ public:
 		MapData* map = nullptr;
 		const EntityDefs* defs = nullptr;
 		ScriptVM* vm = nullptr;
-		const Combat* combat = nullptr;      // shotsFired + tileDistances
+		const Combat* combat = nullptr;      // shotsFired + tileDistSq
 		const TraceSystem* trace = nullptr;  // player pos + distFrom
 		int* monstersTurn = nullptr;
 		bool* facingDirty = nullptr;
@@ -68,7 +68,7 @@ public:
 
 	// Faithful ring moves (src/Game.cpp:752-808, :825-855). activate ports:
 	// runStaticFunc fires SCR_MONSTER_ACTIVATE on MFLAG_TRIGGERONACTIVATE,
-	// rangeCheck gates at tileDistances[3], alertSound logs (no audio),
+	// rangeCheck gates at tileDistSq(4), alertSound logs (no audio),
 	// b4 unused like legacy.
 	void activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4);
 	void deactivate(Entity* e);

@@ -65,8 +65,8 @@ void MonsterSystem::activate(Entity* e, bool runStaticFunc, bool rangeCheck, boo
 		return;                                // :760-762 back-turned wake guard
 	}
 	if (rangeCheck && env_.trace->distFrom(e, env_.trace->playerX(), env_.trace->playerY()) >
-	                  env_.combat->tileDistances[3]) {
-		return;                                // :763-765 (> tileDistances[3] = 4 tiles)
+	                  env_.combat->tileDistSq(4)) {
+		return;                                // :763-765 (> 4 tiles)
 	}
 	e->info |= Entity::kInfoActivated;         // :766
 	// noclip early-out (:767-769): no noclip cheat in the rewrite.

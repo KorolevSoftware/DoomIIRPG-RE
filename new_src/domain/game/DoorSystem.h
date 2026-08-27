@@ -36,7 +36,7 @@ public:
 	enum class DoorUseResult { None, Opened, Locked };
 
 	// Legacy interact: trace along the view ray, first ET_DOOR hit within
-	// Chebyshev distance² <= tileDistances[0] = 4096 (1 tile)
+	// Chebyshev distance² <= tileDistSq(1) = 4096 (1 tile)
 	// (src/PlayingInputHandler.cpp:445-459, src/Combat.cpp:42,
 	// src/Entity.cpp:1155-1158). Trace-free simplification: candidates are
 	// LINKED doors on the player's tile and on the adjacent tile in the

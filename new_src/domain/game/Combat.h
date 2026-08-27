@@ -94,6 +94,11 @@ public:
 	static int getWeaponTileNum(int n);       // src/Combat.cpp:1766-1784
 	short getWeaponWeakness(int w, int sub, int parm) const;  // src/Combat.cpp:29-31
 	int worldDistToTileDist(int n) const;     // src/Combat.cpp:1235-1242
+
+	// Chebyshev^2 distance of `tiles` tiles (tiles >= 1), i.e.
+	// tileDistances[tiles - 1] = (64*tiles)^2 (src/Combat.cpp:41-44). Exists
+	// because the raw array is off by one: tileDistances[0] means ONE tile.
+	int tileDistSq(int tiles) const;
 	uint32_t nextByte();                      // src/App.cpp:506-512
 
 	// Accessors for the CombatEntity stat-math trio (they replace legacy's

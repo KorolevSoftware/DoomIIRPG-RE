@@ -36,8 +36,8 @@ void Combat::init(const Env& env) {
 	} else {
 		std::fprintf(stderr, "[combat] monsterStats table missing, templates not built\n");
 	}
-	std::fprintf(stderr, "[combat] init: %zu templates, td[0]=%d td[3]=%d\n",
-		monsterTemplates.size(), tileDistances[0], tileDistances[3]);
+	std::fprintf(stderr, "[combat] init: %zu templates, td(1)=%d td(4)=%d\n",
+		monsterTemplates.size(), tileDistSq(1), tileDistSq(4));
 }
 
 // ---- helpers ----
@@ -64,6 +64,11 @@ int Combat::worldDistToTileDist(int n) const {
 		if (n < tileDistances[i]) return i;
 	}
 	return kMaxTileDistances - 1;
+}
+
+int Combat::tileDistSq(int tiles) const {
+	const int idx = std::clamp(tiles, 1, kMaxTileDistances) - 1;
+	return tileDistances[idx];
 }
 
 int Combat::getWeaponTileNum(int n) {

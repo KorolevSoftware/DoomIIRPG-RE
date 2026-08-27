@@ -92,7 +92,7 @@ TraceHit Targeting::electFireTarget(int weapon) {
 			// (combat.md §8.4). The non-chainsaw branch elects a LOOT target
 			// (:318-334), already handled by findLootableCorpseFacing before
 			// the fire branch, so only the chainsaw attack pick lives here.
-			if (dist == combat.tileDistances[0] && weapon == 1) {
+			if (dist == combat.tileDistSq(1) && weapon == 1) {
 				// isWorld() is the transfer of the old null-def test on the
 				// elected entity; it is provably redundant here (the world
 				// branch always breaks above) but kept so the condition still
@@ -120,7 +120,7 @@ TraceHit Targeting::electFireTarget(int weapon) {
 			continue;
 		}
 		if (et == Enums::ET_DECOR_NOCLIP) {                     // :344-348
-			if (sub == 7 && dist == combat.tileDistances[0]) { elected = h; break; }
+			if (sub == 7 && dist == combat.tileDistSq(1)) { elected = h; break; }
 			continue;
 		}
 		if (et != Enums::ET_ITEM && !elected.blocks()) {        // :350 fallback (ITEM never elected)
@@ -128,7 +128,7 @@ TraceHit Targeting::electFireTarget(int weapon) {
 		}
 	}
 
-	int dist2 = combat.tileDistances[9];                        // :356-359
+	int dist2 = combat.tileDistSq(10);                          // :356-359
 	if (elected.blocks()) dist2 = trace.distFrom(elected, p.viewX, p.viewY);
 	// eType 10 out of weapon range (:379-381).
 	if (elected.isEntity() &&                                   // was: entity != nullptr && entity->def != nullptr
@@ -217,7 +217,7 @@ void Targeting::updateFacingProbe() {
 		// eye (identical while idle, <=1 tile apart mid-lerp).
 		const int dist = trace.distFrom(hit, p.viewX, p.viewY);
 		if (hit.eType != Enums::ET_MONSTER &&
-		    dist > env_.game->combat.tileDistances[2]) {
+		    dist > env_.game->combat.tileDistSq(3)) {
 			p.facingEntity = nullptr;
 		}
 	}
@@ -240,7 +240,7 @@ void Targeting::feedHealthBar() const {
 			// n4 += 1 for a boss (:874, Entity::isBoss()).
 			feedLowBar = fe->def != nullptr && fe->def->eSubType == 5 &&
 				fe->def->parm == 0;
-			feedBoss = Game::isBossDef(fe->def);
+			feedBoss = MonsterSystem::isBossDef(fe->def);
 		}
 	}
 	env_.hud->feedMonsterHealth(feedId, feedHp, feedMaxHp, feedLowBar, feedBoss);

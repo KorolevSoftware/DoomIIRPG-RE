@@ -209,7 +209,7 @@ int SpriteLerps::updateLerpSprite(SpriteLerp* ls) {
 		    (dx | dy) != 0) {
 			// NO angle-wrap normalization — verbatim legacy (:2910).
 			int delta = std::abs((lerpViewAngle_ & 0x3FF) - vecToDir(dx, dy));
-			// tileDistances[1] = (64*2)^2 = 16384: ">1 tile" Chebyshev test
+			// tileDistSq(2) = (64*2)^2 = 16384: ">1 tile" Chebyshev test
 			// (src/Combat.cpp:42, src/Game.cpp:2911).
 			if (std::max(dx * dx, dy * dy) >= 16384 && delta < 256) {
 				anim = Enums::MANIM_WALK_BACK;

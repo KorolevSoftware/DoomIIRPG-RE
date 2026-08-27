@@ -44,14 +44,6 @@ public:
 	// script sprite lerps (LERP* opcodes).
 	void update(int dtMs);
 
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F2 once
-	// core/PlayerActions.cpp is free (that file is the only caller left, and
-	// it is being edited by another group).
-	using DoorUseResult = DoorSystem::DoorUseResult;
-	DoorUseResult useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY) {
-		return doors.useDoorFacing(map, px, py, stepX, stepY);
-	}
-
 	// ---- Phase 5 additions ----
 
 	// Locked<->unlocked def swap: flips bit0 of the sprite-info tileNum and
@@ -64,13 +56,6 @@ public:
 	void advanceTurn();
 
 	// ---- Corpse looting (docs/original-code/loot-inventory.md) ----
-
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F5 once
-	// core/PlayerActions.cpp is free (that file is the only caller left, and
-	// it is being edited by another group).
-	Entity* findLootableCorpseFacing(int px, int py, int stepX, int stepY) {
-		return loot.findLootableCorpseFacing(px, py, stepX, stepY);
-	}
 
 	// Arrival tile hook (legacy touchTile -> automap uncover/pickups);
 	// stub this phase.
@@ -115,11 +100,6 @@ public:
 	MonsterSystem monsters;         // peer subsystem (spec §P2-GC); wired in loadEntities
 	SpriteLerps lerps;              // peer subsystem (spec §P2-GD); wired in loadEntities
 	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
-
-	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3 once
-	// domain/game/Targeting.cpp is free (that file and Game.cpp's own
-	// difficulty roll are the only callers left).
-	static bool isBossDef(const EntityDef* def) { return MonsterSystem::isBossDef(def); }
 
 	// Difficulty source: ScriptVM vars[12], default 2 when no VM is wired
 	// (spec §1 difficulty note).

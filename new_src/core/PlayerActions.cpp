@@ -175,7 +175,7 @@ void PlayerActions::handleAction(Action a) {
 		// ATTACK target (gib) instead of a loot session
 		// (src/PlayingInputHandler.cpp:280-317 vs :318-334).
 		Entity* corpse = (p.ce.weapon == 1) ? nullptr
-			: env_.game->findLootableCorpseFacing(
+			: env_.game->loot.findLootableCorpseFacing(
 				p.viewX, p.viewY, p.viewStepX, p.viewStepY);
 		if (corpse != nullptr) {
 			env_.host->requestState(StateId::Looting);
@@ -193,11 +193,12 @@ void PlayerActions::handleAction(Action a) {
 			consumed = true;                           // script ran -> legacy return true (:395-404)
 			if (!env_.game->skipAdvanceTurn) env_.game->advanceTurn();
 		} else {
-			Game::DoorUseResult dr = env_.game->useDoorFacing(*env_.map, p.viewX, p.viewY, p.viewStepX, p.viewStepY);
-			if (dr == Game::DoorUseResult::Opened) {
+			DoorSystem::DoorUseResult dr = env_.game->doors.useDoorFacing(
+				*env_.map, p.viewX, p.viewY, p.viewStepX, p.viewStepY);
+			if (dr == DoorSystem::DoorUseResult::Opened) {
 				env_.game->advanceTurn();                  // opened doors consume the turn (:451-452)
 				consumed = true;
-			} else if (dr == Game::DoorUseResult::Locked) {
+			} else if (dr == DoorSystem::DoorUseResult::Locked) {
 				std::fprintf(stderr, "[use] door locked\n"); // hud->addMessage(44) analog (:447-449)
 				consumed = true;                       // legacy door branch return true consumes the press (:445-457)
 			}
@@ -226,7 +227,7 @@ void PlayerActions::handleAction(Action a) {
 			    elected.eType == Enums::ET_NONOBSTRUCTING_SPRITEWALL) {
 				outcome = kElected;
 			} else if ((elected.eType == Enums::ET_WORLD || elected.eType == Enums::ET_SPRITEWALL) &&
-			           dist2 <= env_.game->combat.tileDistances[0]) {      // :467 gate
+			           dist2 <= env_.game->combat.tileDistSq(1)) {         // :467 gate
 				outcome = kWallPush;
 			}
 			if (outcome == kWallPush) {

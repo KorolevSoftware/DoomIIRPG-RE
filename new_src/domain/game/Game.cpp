@@ -105,7 +105,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 				continue;
 			}
 			e.monster->reset();                              // :436
-			if ((std::rand() & 1) == 0 && !isBossDef(def)) { // :438-441 (nextByte analog)
+			if ((std::rand() & 1) == 0 && !MonsterSystem::isBossDef(def)) { // :438-441 (nextByte analog)
 				map.mapSpriteInfo[i] |= Enums::SPRITE_FLAG_FLIP_HORIZONTAL;
 			}
 			const int tmplIdx = def->eSubType * 3 + (int8_t)def->parm;  // src/Entity.cpp:60
@@ -118,7 +118,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 					tmplIdx, def->eSubType, def->parm);
 			}
 			const int diff = difficulty();                   // :62-67 (+25% hp)
-			if (diff == 4 || (diff == 2 && !isBossDef(def))) {
+			if (diff == 4 || (diff == 2 && !MonsterSystem::isBossDef(def))) {
 				const int stat = e.monster->ce.getStat(1);
 				const int n2 = stat + (stat >> 2);
 				e.monster->ce.setStat(1, n2);
