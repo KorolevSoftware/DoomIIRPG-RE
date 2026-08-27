@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <string>
 
+#include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Player.h"
 #include "io/EntityDefs.h"
@@ -29,13 +30,6 @@ enum {
 
 void CorpseLoot::init(const Env& env) {
 	env_ = env;
-}
-
-// ---- entityDb tile-list access (copy of Game's; see CorpseLoot.h) ----
-
-Entity* CorpseLoot::findMapEntity(int x, int y) const {
-	if (x < 0 || y < 0 || x >= 32 || y >= 32) return nullptr;
-	return env_.entityDb[y * 32 + x];
 }
 
 // Port of Entity::populateDefaultLootSet (src/Entity.cpp:1997-2048). The
@@ -65,7 +59,7 @@ void CorpseLoot::populateDefaultLootSet(Entity& e) {
 Entity* CorpseLoot::findLootableCorpseFacing(int px, int py, int stepX, int stepY) {
 	int tx = (px + stepX) >> 6;
 	int ty = (py + stepY) >> 6;
-	for (Entity* e = findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
+	for (Entity* e = env_.db->findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
 		if (!e->isCorpse()) continue;
 		if (!(e->info & Entity::kInfoLinked)) continue;   // unlinked = not traceable
 		// Looted gate: prop corpses count prior loots in param
@@ -97,7 +91,7 @@ void CorpseLoot::poolLootCorpse(int tx, int ty, const Localization& loc, Pool& o
 	out.topLine = 0;
 	out.text.setLength(0);
 
-	for (Entity* e = findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
+	for (Entity* e = env_.db->findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
 		if (!e->isCorpse()) continue;                    // eType == 9 only (:164)
 		if (e->param != 0) continue;                     // prop already looted (:166-169)
 		// Monster corpses carry a separate flag 0x800 in legacy (:172-177);

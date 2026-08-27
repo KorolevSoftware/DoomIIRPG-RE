@@ -8,6 +8,7 @@
 
 namespace newcore {
 
+class EntityDb;
 class MapData;
 
 // Peer subsystem owning the swept-capsule traces (spec
@@ -15,12 +16,10 @@ class MapData;
 // behavioural addition is that the hit list is typed (TraceHit, ADR 0011).
 class TraceSystem {
 public:
-	// Non-owning views on the entity database. entities is the entity array
-	// (slot 0 = world), entityDb the 1024 tile heads. P2-GF replaces both
-	// with one EntityDb*.
+	// Non-owning views on the world. db is the entity database: the entity
+	// array (slot 0 = world) plus the 1024 tile heads (spec §P2-GF).
 	struct Env {
-		std::vector<Entity>* entities = nullptr;
-		Entity** entityDb = nullptr;
+		EntityDb* db = nullptr;
 		MapData* map = nullptr;
 	};
 

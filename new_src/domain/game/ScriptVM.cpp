@@ -422,7 +422,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int ty = (packed >> 5) & 0x1F;
 			int dst = readUByte(t);                // uint8_t destination (src/ScriptThread.cpp:461); guard drops OOB like legacy UB
 			short empty = 1;
-			for (Entity* e = env_.game->findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
+			for (Entity* e = env_.game->db.findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
 				// Empty iff every linked entity has eType==12 or 1<<eType & 0x6240
 				// (src/ScriptThread.cpp:456-475).
 				if (e->def && e->def->eType != 12 && (1 << e->def->eType & 0x6240) == 0) {
@@ -458,7 +458,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			static const char* kActNames[4] = { "open", "unlock+close", "lock", "unlock" };
 			std::fprintf(stderr, "[script] DOOROP sprite=%d %s%s\n",
 				args & 0x3FF, kActNames[act], interactive ? " (blocking)" : "");
-			Entity* ent = env_.game->findEntityBySprite(args & 0x3FF);
+			Entity* ent = env_.game->db.findEntityBySprite(args & 0x3FF);
 			if (ent == nullptr) break;             // silent, src/ScriptThread.cpp:753-779
 			if (act == 0 || act == 1) {
 				if (act == 1 && ent->isDoor()) env_.game->setLineLocked(ent, false);
@@ -506,10 +506,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int sprite = readUByte(t);
 			if (sprite < env_.map->numSprites) {
 				env_.map->mapSpriteInfo[sprite] |= 0x10000;
-				Entity* ent = env_.game->findEntityBySprite(sprite);
+				Entity* ent = env_.game->db.findEntityBySprite(sprite);
 				if (ent != nullptr) {
 					ent->info |= Entity::kInfoActivated;
-					env_.game->unlinkEntity(ent);
+					env_.game->db.unlinkEntity(ent);
 					const EntityDef* def = ent->def;
 					// foundLoot/destroyedObject/corpseify side effects logged only (spec §7.4).
 					if (def && def->eType == 10 && def->eSubType != 3) {
@@ -524,7 +524,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 						// removeEntity re-hides the sprite and unlinks — net
 						// effect: the monster VANISHES (no visible corpse).
 						env_.game->corpsifyMonster(ent, ent->linkIndex % 32, ent->linkIndex / 32);
-						env_.game->removeEntity(ent);
+						env_.game->db.removeEntity(ent);
 						ent->info |= Entity::kInfoActivated;           // :839 (0x400000)
 						std::fprintf(stderr, "[script] HIDE sprite=%d corpsify+remove\n", sprite);
 					}
@@ -587,7 +587,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				env_.map->mapSpriteInfo[sprite] =
 					(env_.map->mapSpriteInfo[sprite] & 0xFFFF00FF) | (frame << 8);
 				std::fprintf(stderr, "[script] ENTITY_FRAME sprite=%d frame=%d\n", sprite, frame);
-				Entity* ent = env_.game->findEntityBySprite(sprite); // S_ENT lookup analog (src/Game.h:98)
+				Entity* ent = env_.game->db.findEntityBySprite(sprite); // S_ENT lookup analog (src/Game.h:98)
 				if (ent != nullptr) {
 					ent->info |= Entity::kInfoActivated;
 					// monster->frameTime = 0x7FFFFFFF anim-freeze (:679-681) omitted —
@@ -611,7 +611,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int goalType = (packed >> 12) & 0xF;
 			int goalSprite = packed & 0xFFF;
 			int goalArg = readUByte(t);
-			Entity* ent = env_.game->findEntityBySprite(goalSprite);
+			Entity* ent = env_.game->db.findEntityBySprite(goalSprite);
 			if (ent == nullptr || ent->monster == nullptr) {
 				// Legacy Error(76) ERR_EV_AIGOAL (:1272); bring-up logs.
 				std::fprintf(stderr, "[script] AIGOAL sprite=%d Err76 (%s)\n",
@@ -641,7 +641,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int packed = readUShort(t);
 			int weapon = (packed >> 12) & 0xF;
 			int sprite = packed & 0xFFF;
-			Entity* ent = env_.game->findEntityBySprite(sprite);
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			if (ent != nullptr) {
 				env_.player->ce.weapon = weapon;
 				env_.game->combat.performAttack(ent, 0, 0, true);
@@ -707,7 +707,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (ls == nullptr) break;
 			ls->dstX = 32 + (dstTileX << 6);       // tile centers (:361-362)
 			ls->dstY = 32 + (dstTileY << 6);
-			Entity* ent = env_.game->findEntityBySprite(sprite);   // info |= 0x400000 (:364-371)
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= 0x400000 (:364-371)
 			if (ent != nullptr) ent->info |= 0x400000;
 			ls->dstZ = env_.map->heightAt(ls->dstX, ls->dstY) + dstZrel;   // (:370)
 			const MapData& m = *env_.map;
@@ -749,7 +749,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if (ls == nullptr) break;
 			ls->dstX = dstX;
 			ls->dstY = dstY;
-			Entity* ent = env_.game->findEntityBySprite(sprite);   // info |= 0x400000 (+MFLAG_LERP_SHADOW n/a)
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= 0x400000 (+MFLAG_LERP_SHADOW n/a)
 			if (ent != nullptr) ent->info |= 0x400000;
 			ls->dstZ = env_.map->heightAt(dstX, dstY) + dstZrel;  // (:1410)
 			const MapData& m = *env_.map;
@@ -923,7 +923,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 
 		case Enums::EV_WAKEMONSTER: {              // src/ScriptThread.cpp:876-892
 			int sprite = readUByte(t);
-			Entity* ent = env_.game->findEntityBySprite(sprite);
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			if (ent == nullptr || ent->monster == nullptr) {
 				// Legacy Error(23) ERR_MISC_SCRIPT (:880-882); bring-up logs.
 				std::fprintf(stderr, "[script] WAKEMONSTER sprite=%d Err23 (no monster entity)\n", sprite);
@@ -941,7 +941,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int sprite = readUByte(t);
 			int dmg = readByte(t);
 			std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d dmg=%d\n", sprite, dmg);
-			Entity* ent = env_.game->findEntityBySprite(sprite);
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			if (ent == nullptr) {
 				std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d skipped (no entity)\n", sprite);
 				break;
@@ -977,7 +977,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int sprite = readUShort(t) & 0xFFF;
 			int dstX = readUByte(t);                 // dst tile x
 			int dstY = readUByte(t);                 // dst tile y
-			Entity* ent = env_.game->findEntityBySprite(sprite);
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			// Legacy corpsifies only entities with a Monster struct
 			// (:1618-1620), else silent no-op; EntityMonster is not ported,
 			// the monster-family def check stands in.
@@ -1000,7 +1000,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			// rewrite consumer yet).
 			int sprite = readUByte(t);
 			int mode = readUByte(t);
-			Entity* ent = env_.game->findEntityBySprite(sprite);
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			if (ent != nullptr) {
 				if (mode == 1) ent->info &= ~0x20000000;
 				else if (mode == 0) ent->info |= 0x20000000;
@@ -1224,7 +1224,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				+ env_.game->spriteZBias(sprite, ls->srcX, ls->srcY);
 			ls->srcScale = m.mapSprites[sprite + 8 * m.numSprites];
 			ls->dstScale = scaleByte << 1;         // 64 = 1.0 (:1468)
-			Entity* ent = env_.game->findEntityBySprite(sprite);
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			if (ent != nullptr) ent->info |= 0x400000;   // (:1469-1472)
 			ls->startTime = env_.game->clockMs();
 			ls->travelTime = timeMs;
@@ -1266,7 +1266,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			const MapData& m = *env_.map;
 			ls->dstX = 32 + (dstTileX << 6);       // (:1662-1663)
 			ls->dstY = 32 + (dstTileY << 6);
-			Entity* ent = env_.game->findEntityBySprite(sprite);   // info |= 0x400000; monster shadow bit CLEARED (:1672,1982)
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);   // info |= 0x400000; monster shadow bit CLEARED (:1672,1982)
 			if (ent != nullptr) ent->info |= 0x400000;
 			ls->srcX = m.mapSprites[sprite + 0 * m.numSprites];
 			ls->srcY = m.mapSprites[sprite + 1 * m.numSprites];
@@ -1309,7 +1309,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			// none); operands are consumed regardless, entries only stored
 			// when the entity owns a lootSet (initspawn keeps it alive for
 			// monsters/corpses only), remaining slots zero-filled.
-			Entity* ent = env_.game->findEntityBySprite(sprite);
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
 			bool store = ent != nullptr && ent->hasLootSet;
 			int entries[Entity::kMaxCorpseLoot] = { 0, 0, 0 };
 			for (int i = 0; i < count; ++i) {

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapData.h"
@@ -13,41 +14,6 @@ namespace newcore {
 void SpriteLerps::init(const Env& env) {
 	env_ = env;
 	for (auto& ls : spriteLerps_) ls.hSprite = 0;
-}
-
-// ---- entityDb access (copies of Game's; see SpriteLerps.h) ----
-
-Entity* SpriteLerps::findEntityBySprite(int sprite) {
-	if (env_.entities == nullptr) return nullptr;
-	for (Entity& e : *env_.entities) {
-		if (e.def != nullptr && e.getSprite() == sprite) return &e;
-	}
-	return nullptr;
-}
-
-void SpriteLerps::linkEntity(Entity* e, int tx, int ty) {
-	if (tx < 0 || ty < 0 || tx >= 32 || ty >= 32) return;
-	unlinkEntity(e);
-	int idx = ty * 32 + tx;
-	e->nextOnTile = env_.entityDb[idx];
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e;
-	e->prevOnTile = nullptr;
-	env_.entityDb[idx] = e;
-	e->linkIndex = (short)idx;
-	e->info |= Entity::kInfoLinked;
-}
-
-void SpriteLerps::unlinkEntity(Entity* e) {
-	if (!(e->info & Entity::kInfoLinked)) return;
-	if (e->prevOnTile) e->prevOnTile->nextOnTile = e->nextOnTile;
-	else {
-		int idx = e->linkIndex;
-		if (idx >= 0 && idx < 1024 && env_.entityDb[idx] == e)
-			env_.entityDb[idx] = e->nextOnTile;
-	}
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e->prevOnTile;
-	e->nextOnTile = e->prevOnTile = nullptr;
-	e->info &= ~Entity::kInfoLinked;
 }
 
 // ---- Script sprite lerps (docs/original-code/lerp-opcodes.md) ----
@@ -144,7 +110,7 @@ SpriteLerps::SpriteLerp* SpriteLerps::allocLerpSprite(ScriptThread* thread, int 
 		// mid-walk flicker (RF candidate 2). ls->flags still holds the OLD
 		// slot flags here — the async/block bits are OR'd in below, matching
 		// legacy read order.
-		Entity* ent = findEntityBySprite(sprite);
+		Entity* ent = env_.db->findEntityBySprite(sprite);
 		if (ent != nullptr && ent->def != nullptr &&
 		    ent->def->eType == Enums::ET_MONSTER) {
 			int n3 = (env_.map->mapSpriteInfo[sprite] >> 8) & 0xF0;
@@ -229,7 +195,7 @@ int SpriteLerps::updateLerpSprite(SpriteLerp* ls) {
 	// Walk-state writer (src/Game.cpp:2903-2944): distance-driven anim byte
 	// for NPC/monster sprites. The monster half stays dormant until the
 	// EntityMonster unit enables stacked monster rendering (ADR 0005).
-	Entity* ent = findEntityBySprite(sprite);
+	Entity* ent = env_.db->findEntityBySprite(sprite);
 	if (ent != nullptr && ent->def != nullptr &&
 	    !(env_.map->mapSpriteInfo[sprite] & Enums::SPRITE_FLAG_HIDDEN) &&
 	    (ent->def->eType == Enums::ET_NPC || ent->def->eType == Enums::ET_MONSTER)) {
@@ -268,7 +234,7 @@ int SpriteLerps::updateLerpSprite(SpriteLerp* ls) {
 	if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0) {
 		int tx = x >> 6, ty = y >> 6;
 		if ((ent->linkIndex % 32) != tx || (ent->linkIndex / 32) != ty) {
-			linkEntity(ent, tx, ty);
+			env_.db->linkEntity(ent, tx, ty);
 		}
 	}
 	return 0;
@@ -286,10 +252,10 @@ void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 		env_.map->mapSprites[sprite + 2 * n] =
 			(int16_t)(ls->dstZ - spriteZBias(sprite, ls->dstX, ls->dstY));
 		env_.map->mapSprites[sprite + 8 * n] = (int16_t)ls->dstScale;
-		Entity* ent = findEntityBySprite(sprite);
+		Entity* ent = env_.db->findEntityBySprite(sprite);
 		if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0 &&
 		    ((ent->linkIndex % 32) != (ls->dstX >> 6) || (ent->linkIndex / 32) != (ls->dstY >> 6))) {
-			linkEntity(ent, ls->dstX >> 6, ls->dstY >> 6);
+			env_.db->linkEntity(ent, ls->dstX >> 6, ls->dstY >> 6);
 		}
 		// Completion idle restore (src/Game.cpp:3101-3111): back-facing walks
 		// without AUTO_FACE park in IDLE_BACK, everything else in IDLE.

@@ -7,6 +7,7 @@
 namespace newcore {
 
 class Combat;
+class EntityDb;
 class Hud;
 class Localization;
 class MapData;
@@ -22,13 +23,12 @@ struct EntityDef;
 // (spec 2026-08-26-decomposition §P2-GC). Moved verbatim out of Game.
 class MonsterSystem {
 public:
-	// Non-owning views on the world. entityDb holds the 1024 tile heads
-	// (P2-GF replaces it with one EntityDb*); monstersTurn / facingDirty
-	// point at the Game fields those flags still live on (P2-GF keeps them
-	// on Game); the pose-hold time base is the SpriteLerps clock
-	// (spec 2026-08-26-combat-stage1 deviation D-6).
+	// Non-owning views on the world. db owns the entity array and the 1024
+	// tile heads (spec §P2-GF); monstersTurn / facingDirty point at the Game
+	// fields those flags still live on; the pose-hold time base is the
+	// SpriteLerps clock (spec 2026-08-26-combat-stage1 deviation D-6).
 	struct Env {
-		Entity** entityDb = nullptr;
+		EntityDb* db = nullptr;
 		MapData* map = nullptr;
 		const EntityDefs* defs = nullptr;
 		ScriptVM* vm = nullptr;
@@ -114,12 +114,6 @@ private:
 	Player* xpPlayer_ = nullptr;
 	const Localization* xpLoc_ = nullptr;
 	Hud* xpHud_ = nullptr;
-
-	// entityDb tile-list access. Copies of Game::findMapEntity /
-	// linkEntity / unlinkEntity until P2-GF makes EntityDb their single
-	// owner; do not add logic here.
-	void linkEntity(Entity* e, int tx, int ty);
-	void unlinkEntity(Entity* e);
 };
 
 } // namespace newcore

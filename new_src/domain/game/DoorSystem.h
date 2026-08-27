@@ -5,6 +5,7 @@
 
 namespace newcore {
 
+class EntityDb;
 class MapData;
 class ScriptVM;
 class TraceSystem;
@@ -17,11 +18,11 @@ class DoorSystem {
 public:
 	static constexpr int kOpenDoors = 6;
 
-	// Non-owning views on the world. entityDb holds the 1024 tile heads
-	// (P2-GF replaces it with one EntityDb*); trace is the single owner of
-	// the player position read by the auto-close checks (spec §P2-GA).
+	// Non-owning views on the world. db owns the entity array and the 1024
+	// tile heads (spec §P2-GF); trace is the single owner of the player
+	// position read by the auto-close checks (spec §P2-GA).
 	struct Env {
-		Entity** entityDb = nullptr;
+		EntityDb* db = nullptr;
 		MapData* map = nullptr;
 		ScriptVM* vm = nullptr;
 		const TraceSystem* trace = nullptr;
@@ -90,13 +91,6 @@ private:
 
 	// Door auto-close on turn advance (legacy CanCloseDoor + advanceTurn).
 	bool canCloseDoor(Entity* door);
-
-	// entityDb tile-list access. Copies of Game::findMapEntity /
-	// linkEntity / unlinkEntity until P2-GF makes EntityDb their single
-	// owner; do not add logic here.
-	Entity* findMapEntity(int x, int y) const;
-	void linkEntity(Entity* e, int tx, int ty);
-	void unlinkEntity(Entity* e);
 };
 
 } // namespace newcore

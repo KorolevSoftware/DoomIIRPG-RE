@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
 #include "domain/world/MapData.h"
 
@@ -109,7 +110,7 @@ void TraceSystem::pushHit(int frac, Entity* ent) {
 void TraceSystem::traceEntityHits(const MapData& map, Entity* skipEnt, int mask, int radius) {
 	for (int i = traceBBox_[0] >> 6; i < (traceBBox_[2] >> 6) + 1; ++i) {        // :216
 		for (int j = traceBBox_[1] >> 6; j < (traceBBox_[3] >> 6) + 1; ++j) {    // :217
-			for (Entity* ent = env_.entityDb[i + 32 * j]; ent; ent = ent->nextOnTile) { // :218-220
+			for (Entity* ent = env_.db->tileHead(i + 32 * j); ent; ent = ent->nextOnTile) { // :218-220
 				if (ent == skipEnt) continue;                                   // :221
 				if (ent->def == nullptr || (mask & (1 << ent->def->eType)) == 0) continue; // :221
 				if (ent->def->eType == Enums::ET_WORLD) continue;               // :222
@@ -200,7 +201,7 @@ TraceHit TraceSystem::trace(int x0, int y0, int x1, int y1,
 	if (mask & 0x1) {                                                           // :297 ET_WORLD gate
 		const int wf = traceWorldFrac(map, mask, radius * radius);              // :298
 		if (wf < 16384) {
-			pushHit(wf, &(*env_.entities)[0]);                                  // :299-301 (entities[0] = world slot)
+			pushHit(wf, env_.db->worldEntity());                                // :299-301 (entities[0] = world slot)
 			traceCollisionX_ = x0 + ((wf * (x1 - x0)) >> 14);                   // :302-304 contact point
 			traceCollisionY_ = y0 + ((wf * (y1 - y0)) >> 14);
 		} else {

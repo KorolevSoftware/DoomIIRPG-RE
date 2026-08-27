@@ -6,6 +6,7 @@
 
 namespace newcore {
 
+class EntityDb;
 class EntityDefs;
 class Localization;
 class Player;
@@ -17,10 +18,10 @@ class Tables;
 // Moved verbatim out of Game. See docs/original-code/loot-inventory.md.
 class CorpseLoot {
 public:
-	// Non-owning views on the world. entityDb holds the 1024 tile heads
-	// (P2-GF replaces it with one EntityDb*); defs resolves item long names.
+	// Non-owning views on the world. db owns the entity array and the 1024
+	// tile heads (spec §P2-GF); defs resolves item long names.
 	struct Env {
-		Entity** entityDb = nullptr;
+		EntityDb* db = nullptr;
 		const EntityDefs* defs = nullptr;
 	};
 
@@ -69,10 +70,6 @@ public:
 	void giveLootPool(Pool& pool, Player& player, const Tables* tables);
 
 private:
-	// entityDb tile-list access. Copy of Game::findMapEntity until P2-GF
-	// makes EntityDb their single owner; do not add logic here.
-	Entity* findMapEntity(int x, int y) const;
-
 	Env env_;
 };
 

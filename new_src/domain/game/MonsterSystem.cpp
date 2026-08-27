@@ -4,6 +4,7 @@
 #include <string>
 
 #include "domain/game/Combat.h"
+#include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
@@ -27,33 +28,6 @@ void MonsterSystem::init(const Env& env) {
 	activeMonsters = inactiveMonsters = nullptr;
 	combatMonsters = nullptr;
 	interpolatingMonsters = false;
-}
-
-// ---- entityDb tile-list access (copies of Game's; see MonsterSystem.h) ----
-
-void MonsterSystem::linkEntity(Entity* e, int tx, int ty) {
-	if (tx < 0 || ty < 0 || tx >= 32 || ty >= 32) return;
-	unlinkEntity(e);
-	int idx = ty * 32 + tx;
-	e->nextOnTile = env_.entityDb[idx];
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e;
-	e->prevOnTile = nullptr;
-	env_.entityDb[idx] = e;
-	e->linkIndex = (short)idx;
-	e->info |= Entity::kInfoLinked;
-}
-
-void MonsterSystem::unlinkEntity(Entity* e) {
-	if (!(e->info & Entity::kInfoLinked)) return;
-	if (e->prevOnTile) e->prevOnTile->nextOnTile = e->nextOnTile;
-	else {
-		int idx = e->linkIndex;
-		if (idx >= 0 && idx < 1024 && env_.entityDb[idx] == e)
-			env_.entityDb[idx] = e->nextOnTile;
-	}
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e->prevOnTile;
-	e->nextOnTile = e->prevOnTile = nullptr;
-	e->info &= ~Entity::kInfoLinked;
 }
 
 // ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
@@ -305,7 +279,7 @@ void MonsterSystem::corpsifyMonster(Entity* e, int x, int y) {
 	if (corpseDef != nullptr) e->def = corpseDef;
 
 	// Relink at the new tile (:2264-2265). checkMonsterDeath sound omitted.
-	linkEntity(e, x >> 6, y >> 6);
+	env_.db->linkEntity(e, x >> 6, y >> 6);
 	// TEMP [dbg] corpsify audit (remove after user confirms): exactly ONE
 	// solid blocker (this linked corpse) must remain on the tile.
 	std::fprintf(stderr,

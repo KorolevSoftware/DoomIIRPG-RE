@@ -6,7 +6,6 @@
 
 #include "domain/game/Enums.h"
 #include "domain/game/ScriptVM.h"
-#include "ui/Hud.h"
 
 namespace newcore {
 
@@ -18,51 +17,19 @@ enum {
 	kBossMastermind = 14,
 };
 
-// ---- entityDb (32x32 tile lists) ----
-
-Entity* Game::findMapEntity(int x, int y) {
-	if (x < 0 || y < 0 || x >= 32 || y >= 32) return nullptr;
-	return entityDb_[y * 32 + x];
-}
-
-void Game::linkEntity(Entity* e, int tx, int ty) {
-	if (tx < 0 || ty < 0 || tx >= 32 || ty >= 32) return;
-	unlinkEntity(e);
-	int idx = ty * 32 + tx;
-	e->nextOnTile = entityDb_[idx];
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e;
-	e->prevOnTile = nullptr;
-	entityDb_[idx] = e;
-	e->linkIndex = (short)idx;
-	e->info |= Entity::kInfoLinked;
-}
-
-void Game::unlinkEntity(Entity* e) {
-	if (!(e->info & Entity::kInfoLinked)) return;
-	if (e->prevOnTile) e->prevOnTile->nextOnTile = e->nextOnTile;
-	else {
-		int idx = e->linkIndex;
-		if (idx >= 0 && idx < 1024 && entityDb_[idx] == e)
-			entityDb_[idx] = e->nextOnTile;
-	}
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e->prevOnTile;
-	e->nextOnTile = e->prevOnTile = nullptr;
-	e->info &= ~Entity::kInfoLinked;
-}
-
 // ---- Level load ----
 
 void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	map_ = &map;
 	defs_ = &defs;
-	trace.init({ &entities_, entityDb_, &map });   // peer subsystem wiring (spec §P2-GA)
-	doors.init({ entityDb_, &map, vm_, &trace });  // peer subsystem wiring (spec §P2-GB)
-	monsters.init({ entityDb_, &map, &defs, vm_, &combat, &trace, &monstersTurn,
+	db.init({ &map });                             // peer subsystem wiring (spec §P2-GF)
+	trace.init({ &db, &map });                     // peer subsystem wiring (spec §P2-GA)
+	doors.init({ &db, &map, vm_, &trace });        // peer subsystem wiring (spec §P2-GB)
+	monsters.init({ &db, &map, &defs, vm_, &combat, &trace, &monstersTurn,
 	                &facingDirty, &lerps });                            // spec §P2-GC
-	lerps.init({ &entities_, entityDb_, &map, vm_ });   // peer subsystem wiring (spec §P2-GD)
-	loot.init({ entityDb_, &defs });                    // peer subsystem wiring (spec §P2-GE)
-	entities_.clear();
-	entities_.resize(kEntities);
+	lerps.init({ &db, &map, vm_ });                     // peer subsystem wiring (spec §P2-GD)
+	loot.init({ &db, &defs });                          // peer subsystem wiring (spec §P2-GE)
+	db.resetEntities();
 	monstersTurn = 0;
 	queueAdvanceTurn = false;
 
@@ -107,7 +74,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	// traceMove blocking).
 	int nextSlot = 2; // entities[0]=world, entities[1]=player (reserved)
 	for (int i = 0; i < map.numSprites; ++i) {
-		if (nextSlot >= kEntities) break;
+		if (nextSlot >= EntityDb::kEntities) break;
 		int info = map.mapSpriteInfo[i];
 		if (info & 0x10000) continue; // hidden
 		if (info & Enums::SPRITE_FLAG_NOENTITY) continue; // no-entity sprites never spawn entities (src/Game.cpp:398-400)
@@ -122,7 +89,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 			continue;
 		}
 
-		Entity& e = entities_[nextSlot++];
+		Entity& e = db.entities()[nextSlot++];
 		e.def = def;
 		e.setSprite(i);
 		if (def->eType == Enums::ET_DOOR) {
@@ -180,7 +147,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		}
 		int x = map.mapSprites[i + 0 * map.numSprites];
 		int y = map.mapSprites[i + 1 * map.numSprites];
-		linkEntity(&e, x >> 6, y >> 6);
+		db.linkEntity(&e, x >> 6, y >> 6);
 		if (def->eType == Enums::ET_MONSTER) {
 			// :441 - legacy sets 0x40000 so spawn deactivate() links the monster onto the inactive ring (src/Game.cpp:441-443)
 			e.info |= Entity::kInfoOnActiveList;
@@ -256,26 +223,6 @@ void Game::advanceTurn() {
 	if (vm_) vm_->executeStaticFunc(Enums::SCR_PER_TURN); // PER_TURN hook (:1279)
 }
 
-Entity* Game::findEntityBySprite(int sprite) {
-	for (Entity& e : entities_) {
-		if (e.def != nullptr && e.getSprite() == sprite) return &e;
-	}
-	return nullptr;
-}
-
-// Port of Game::removeEntity (src/Game.cpp:183-193); see Game.h.
-void Game::removeEntity(Entity* e) {
-	if (!e || !map_) return;
-	int s = e->getSprite();
-	if ((e->info & 0xFFFF) != 0 && s >= 0 && s < map_->numSprites) {   // :186-188
-		map_->mapSpriteInfo[s] |= 0x10000;
-	}
-	if ((e->info & Entity::kInfoLinked) != 0) {                        // :189-191
-		unlinkEntity(e);
-	}
-	if (player_ != nullptr) player_->facingEntity = nullptr;           // :192
-}
-
 // ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
 
 int Game::difficulty() const {
@@ -340,7 +287,7 @@ void Game::update(int dtMs) {
 	// guards as the walk writer: hidden sprites skipped, knockback-flagged
 	// monsters keep their pose (:1600).
 	if (map_ == nullptr) return;
-	for (Entity& ent : entities_) {
+	for (Entity& ent : db.entities()) {
 		if (ent.monster == nullptr || ent.def == nullptr) continue;
 		const int s = ent.getSprite();
 		if (s < 0 || s >= map_->numSprites) continue;

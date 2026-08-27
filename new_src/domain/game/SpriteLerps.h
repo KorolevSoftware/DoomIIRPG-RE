@@ -4,10 +4,9 @@
 #include <cstdint>
 #include <vector>
 
-#include "domain/game/Entity.h"
-
 namespace newcore {
 
+class EntityDb;
 class MapData;
 class ScriptVM;
 struct ScriptThread;
@@ -18,12 +17,11 @@ struct ScriptThread;
 // Moved verbatim out of Game. See docs/original-code/lerp-opcodes.md.
 class SpriteLerps {
 public:
-	// Non-owning views on the world. entities feeds findEntityBySprite,
-	// entityDb holds the 1024 tile heads (P2-GF replaces both with one
-	// EntityDb*); vm resumes the owner thread of a completed blocking lerp.
+	// Non-owning views on the world. db owns the entity array (it feeds
+	// findEntityBySprite) and the 1024 tile heads (spec §P2-GF); vm resumes
+	// the owner thread of a completed blocking lerp.
 	struct Env {
-		std::vector<Entity>* entities = nullptr;
-		Entity** entityDb = nullptr;
+		EntityDb* db = nullptr;
 		MapData* map = nullptr;
 		ScriptVM* vm = nullptr;
 	};
@@ -104,14 +102,6 @@ public:
 
 private:
 	void freeLerpSprite(SpriteLerp* ls);       // completion snap + slot free (src/Game.cpp:3078-3243, subset)
-
-	Entity* findEntityBySprite(int sprite);
-
-	// entityDb tile-list access. Copies of Game::linkEntity /
-	// unlinkEntity until P2-GF makes EntityDb their single owner; do not
-	// add logic here.
-	void linkEntity(Entity* e, int tx, int ty);
-	void unlinkEntity(Entity* e);
 
 	Env env_;
 

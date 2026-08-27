@@ -129,7 +129,7 @@ void PlayerActions::handleAction(Action a) {
 		if (env_.game->abortMove) break;
 		Entity* hitEnt = nullptr; int hitFrac = 0;
 		bool clear = env_.game->traceMove(*env_.map, p.viewX, p.viewY, tx, ty,
-			env_.game->playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16,
+			env_.game->db.playerEntity(), Enums::CONTENTS_PLAYERSOLID, 16,
 			&hitEnt, &hitFrac);
 		// DEVIATION (blue-door block bug): an ET_NPC whose circle contains
 		// the trace START (frac < 0) is the scripted-greeter overlap state;
@@ -251,7 +251,7 @@ void PlayerActions::handleAction(Action a) {
 				// their sprite coords (legacy passes calcPosition/
 				// traceCollision coords, :509-536). The air-shot impact point is
 				// the trace contact point, not the player (:532-536).
-				Entity* target = outcome == kElected ? hit : env_.game->worldEntity();
+				Entity* target = outcome == kElected ? hit : env_.game->db.worldEntity();
 				int ax = env_.game->traceCollisionX();
 				int ay = env_.game->traceCollisionY();
 				if (outcome == kElected) {

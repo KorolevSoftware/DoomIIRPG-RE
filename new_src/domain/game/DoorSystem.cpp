@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/game/TraceSystem.h"
@@ -14,38 +15,6 @@ void DoorSystem::init(const Env& env) {
 	env_ = env;
 	for (auto& a : doorAnims_) { a.active = false; a.door = nullptr; a.ownerThread = nullptr; }
 	for (auto& d : openDoors_) d = nullptr;
-}
-
-// ---- entityDb tile-list access (copies of Game's; see DoorSystem.h) ----
-
-Entity* DoorSystem::findMapEntity(int x, int y) const {
-	if (x < 0 || y < 0 || x >= 32 || y >= 32) return nullptr;
-	return env_.entityDb[y * 32 + x];
-}
-
-void DoorSystem::linkEntity(Entity* e, int tx, int ty) {
-	if (tx < 0 || ty < 0 || tx >= 32 || ty >= 32) return;
-	unlinkEntity(e);
-	int idx = ty * 32 + tx;
-	e->nextOnTile = env_.entityDb[idx];
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e;
-	e->prevOnTile = nullptr;
-	env_.entityDb[idx] = e;
-	e->linkIndex = (short)idx;
-	e->info |= Entity::kInfoLinked;
-}
-
-void DoorSystem::unlinkEntity(Entity* e) {
-	if (!(e->info & Entity::kInfoLinked)) return;
-	if (e->prevOnTile) e->prevOnTile->nextOnTile = e->nextOnTile;
-	else {
-		int idx = e->linkIndex;
-		if (idx >= 0 && idx < 1024 && env_.entityDb[idx] == e)
-			env_.entityDb[idx] = e->nextOnTile;
-	}
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e->prevOnTile;
-	e->nextOnTile = e->prevOnTile = nullptr;
-	e->info &= ~Entity::kInfoLinked;
 }
 
 // Legacy interact (see DoorSystem.h): LINKED doors on the player's tile and on
@@ -60,7 +29,7 @@ DoorSystem::DoorUseResult DoorSystem::useDoorFacing(const MapData& map, int px, 
 		{ (px + stepX) >> 6, (py + stepY) >> 6 },
 	};
 	for (auto& t : tiles) {
-		for (Entity* e = findMapEntity(t[0], t[1]); e; e = e->nextOnTile) {
+		for (Entity* e = env_.db->findMapEntity(t[0], t[1]); e; e = e->nextOnTile) {
 			if (!e->isDoor()) continue;
 			if (!(e->info & Entity::kInfoLinked)) continue;
 			if (e->def->eSubType == Enums::DOOR_LOCKED) return DoorUseResult::Locked;
@@ -109,7 +78,7 @@ bool DoorSystem::performDoorEvent(int n, Entity* door, int n2, ScriptThread* own
 	// Closing a door-family door becomes SOLID AGAIN IMMEDIATELY at close
 	// start (src/Game.cpp:1076-1081).
 	if (n == 1 && !linked && family) {
-		linkEntity(door, door->linkIndex % 32, door->linkIndex / 32);
+		env_.db->linkEntity(door, door->linkIndex % 32, door->linkIndex / 32);
 	}
 
 	// NOTE: legacy also snaps when n2 == 2 and the door midpoint is culled
@@ -208,7 +177,7 @@ void DoorSystem::unregisterOpenDoor(Entity* door) {
 
 void DoorSystem::unlinkDoor(Entity* door) {
 	if (env_.map && door->info & Entity::kInfoLinked) {
-		unlinkEntity(door);
+		env_.db->unlinkEntity(door);
 	}
 }
 
@@ -226,7 +195,7 @@ bool DoorSystem::canCloseDoor(Entity* door) {
 		// src/Game.cpp:741-743; identical to viewX/viewY at advanceTurn times).
 		if (env_.trace->playerX() >= 0 && (env_.trace->playerX() >> 6) == (x >> 6) &&
 		    (env_.trace->playerY() >> 6) == (y >> 6)) return true;
-		for (Entity* e = findMapEntity(x >> 6, y >> 6); e; e = e->nextOnTile)
+		for (Entity* e = env_.db->findMapEntity(x >> 6, y >> 6); e; e = e->nextOnTile)
 			if (e->def && e->def->eType == Enums::ET_MONSTER) return true; // mask 6 = player|monster (src/Game.cpp:1224)
 		return false;
 	};

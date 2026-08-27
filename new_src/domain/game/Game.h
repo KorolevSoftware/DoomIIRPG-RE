@@ -10,6 +10,7 @@
 #include "domain/game/CorpseLoot.h"
 #include "domain/game/DoorSystem.h"
 #include "domain/game/Entity.h"
+#include "domain/game/EntityDb.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/MonsterSystem.h"
 #include "domain/game/Player.h"
@@ -17,7 +18,6 @@
 #include "domain/game/TraceSystem.h"
 #include "io/EntityDefs.h"
 #include "domain/world/MapData.h"
-#include "text/Text.h"
 
 namespace newcore {
 
@@ -38,8 +38,6 @@ void composeArgs(std::string& text, const std::string* args, int numArgs);
 // subset (doors + items). Monsters/combat come later.
 class Game {
 public:
-	static constexpr int kEntities = 275;
-
 	Game() = default;
 
 	// Builds door/item entities from the map's sprite table. Must be called
@@ -66,21 +64,6 @@ public:
 	void setSinTable(const std::vector<int32_t>* sinTable) { lerps.setSinTable(sinTable); }
 	void setLerpViewAngle(int a) { lerps.setLerpViewAngle(a); }
 	static int vecToDir(int dx, int dy) { return SpriteLerps::vecToDir(dx, dy); }
-
-	// Returns the player entity (entities[1]).
-	Entity* playerEntity() { return entities_.empty() ? nullptr : &entities_[1]; }
-
-	// Entities at a world tile (head of list).
-	Entity* findMapEntity(int x, int y);
-	void linkEntity(Entity* e, int tx, int ty);
-	void unlinkEntity(Entity* e);
-
-	const std::vector<Entity>& entities() const { return entities_; }
-
-	// Air-shot/world-slot entity (legacy app->game->entities[0],
-	// src/PlayingInputHandler.cpp:515,:536): def == nullptr so combat math
-	// reads it as eType 0 (spec 2026-08-26-combat-stage1 deviation 13).
-	Entity* worldEntity() { return entities_.empty() ? nullptr : &entities_[0]; }
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-B2.
 	// Rebuilds the legacy pair view over trace.hits() for the consumers that
@@ -125,16 +108,7 @@ public:
 	// bookkeeping are placeholders until those systems exist).
 	void advanceTurn();
 
-	// Entity bound to a map sprite (legacy S_ENT lookup analog).
-	Entity* findEntityBySprite(int sprite);
-
 	// ---- Corpse looting (docs/original-code/loot-inventory.md) ----
-
-	// Port of Game::removeEntity (src/Game.cpp:183-193): hide the bound
-	// sprite (info bit 0x10000) and unlink it from entityDb. The
-	// player->facingEntity clear has no counterpart (facingEntity not
-	// ported).
-	void removeEntity(Entity* e);
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F5.
 	// The loot sets, the faced-corpse lookup, the pooling and the grant pass
@@ -169,11 +143,11 @@ public:
 	// ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3.
-	// Kill-XP bridges live on MonsterSystem now; player_ is kept here for
-	// removeEntity's facingEntity clear (moves with EntityDb in P2-GF).
+	// Kill-XP bridges live on MonsterSystem now; the same Player feeds
+	// EntityDb::removeEntity's facingEntity clear (spec §P2-GF).
 	void setXPSystems(Player* player, const Localization* loc, Hud* hud) {
 		monsters.setXPSystems(player, loc, hud);
-		player_ = player;
+		db.setPlayer(player);
 	}
 
 	// Turn/script coordination fields (legacy Game members).
@@ -188,6 +162,7 @@ public:
 	bool facingDirty = false;       // canvas updateFacingEntity latch analog (src/Entity.cpp:527)
 
 	Combat combat;                  // peer subsystem (ADR 0008)
+	EntityDb db;                    // peer subsystem (spec §P2-GF); wired in loadEntities
 	TraceSystem trace;              // peer subsystem (spec §P2-GA); wired in loadEntities
 	DoorSystem doors;               // peer subsystem (spec §P2-GB); wired in loadEntities
 	MonsterSystem monsters;         // peer subsystem (spec §P2-GC); wired in loadEntities
@@ -218,12 +193,6 @@ public:
 	int entityDistFrom(const Entity* e, int x, int y) const { return trace.distFrom(e, x, y); }
 
 private:
-	// removeEntity's facingEntity clear (src/Game.cpp:192); set by
-	// setXPSystems.
-	Player* player_ = nullptr;
-
-	std::vector<Entity> entities_;
-	Entity* entityDb_[1024] = { nullptr }; // 32x32 tile lists
 	MapData* map_ = nullptr;
 	const EntityDefs* defs_ = nullptr;     // set in loadEntities
 	ScriptVM* vm_ = nullptr;

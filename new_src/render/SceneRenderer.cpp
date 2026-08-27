@@ -124,7 +124,7 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 		// (src/Render.cpp:1622-1626); ET_MONSTER is its exact proxy
 		// (allocated iff eType == 2, src/Game.cpp:430-436).
 		spriteCharClass_.assign(env_.map->numSprites, 0);
-		for (const Entity& ent : env_.game->entities()) {
+		for (const Entity& ent : env_.game->db.entities()) {
 			int si = ent.getSprite();
 			if (!ent.def || si < 0 || si >= env_.map->numSprites) continue;
 			if (ent.info & 0x1010000) spriteSortBias_[si] = +1;

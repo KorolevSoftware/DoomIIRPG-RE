@@ -46,7 +46,7 @@ Entity* Targeting::electFireTarget(int weapon, int* outFrac) {
 	const int endX = p.viewX + ((tiles * 64 * fwdX) >> 16); // :218 n7*-view[2]>>8 = n7 tiles
 	const int endY = p.viewY + ((tiles * 64 * fwdY) >> 16);
 	env_.game->traceMove(*env_.map, p.viewX, p.viewY, endX, endY,
-		env_.game->playerEntity(), mask, 2, nullptr, nullptr);
+		env_.game->db.playerEntity(), mask, 2, nullptr, nullptr);
 
 	Entity* entity = nullptr;
 	Entity* melee13 = nullptr;   // legacy entity2 (:249-254)
@@ -160,7 +160,7 @@ void Targeting::updateFacingProbe() {
 	const int endY = p.destY + ((384 * fwdY) >> 16);
 	Entity* hit = nullptr;
 	env_.game->traceMove(*env_.map, startX, startY, endX, endY,
-		env_.game->playerEntity(), kFacingMask, 2, &hit, nullptr);
+		env_.game->db.playerEntity(), kFacingMask, 2, &hit, nullptr);
 	// Monster promotion re-scan (:41-86): entered only when the nearest hit is
 	// ITEM / MONSTERBLOCK_ITEM / SPRITEWALL / ATTACK_INTERACTIVE / DECOR_NOCLIP,
 	// then the sorted hit list is walked from index 0 (the nearest hit itself
