@@ -1,5 +1,6 @@
 #include "domain/world/MapParser.h"
 
+#include "domain/world/MapBits.h"
 #include "io/DataReader.h"
 
 namespace newcore {
@@ -143,7 +144,7 @@ bool MapParser::parse(const std::vector<uint8_t>& data, MapData& out) {
 	for (auto& v : out.tileEvents) v = r.readInt();
 	for (int i = 0; i < out.numTileEvents; ++i) {
 		int index = out.tileEvents[i << 1] & 0x3FF;
-		if (index >= 0 && index < 1024) out.mapFlags[index] |= 0x40;
+		if (index >= 0 && index < 1024) out.mapFlags[index] |= TileFlag::HAS_EVENT;
 	}
 	skipMarker(r);
 

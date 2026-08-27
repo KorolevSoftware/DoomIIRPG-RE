@@ -4,6 +4,7 @@
 
 #include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
+#include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 
 namespace newcore {
@@ -138,14 +139,14 @@ void TraceSystem::traceEntityHits(const MapData& map, Entity* skipEnt, int mask,
 					// sprite<0 fallback (0,0) avoids legacy's benign OOB read;
 					// unreachable: loadEntities always sets a sprite.
 				}
-				if (sprite >= 0 && (map.mapSpriteInfo[sprite] & 0xF000000) != 0) {   // :249
+				if (sprite >= 0 && (map.mapSpriteInfo[sprite] & SpriteInfo::ORIENTED) != 0) { // :249
 					// Oriented sprite -> wall segment +/-32 through the CURRENT
-					// (animated) sprite position. Axis: N/S bits (0x3000000)
+					// (animated) sprite position. Axis: N/S bits (HORIZONTAL)
 					// => horizontal; ANYTHING ELSE => vertical (legacy tests
-					// only 0x3000000 — do NOT add an 0xC000000 check).  (:250-263)
+					// only HORIZONTAL — do NOT add a VERTICAL check).  (:250-263)
 					int ex = cx, ey = cy;
-					if (map.mapSpriteInfo[sprite] & 0x3000000) { cx -= 32; ex += 32; }
-					else                                       { cy -= 32; ey += 32; }
+					if (map.mapSpriteInfo[sprite] & SpriteInfo::HORIZONTAL) { cx -= 32; ex += 32; }
+					else                                                    { cy -= 32; ey += 32; }
 					const int line[4] = { cx, cy, ex, ey };                     // :260-263
 					const int frac = capsuleToLineTrace(tracePoints_, radius * radius, line); // :264
 					if (frac < 16384) pushHit(frac, ent);                        // :265-268

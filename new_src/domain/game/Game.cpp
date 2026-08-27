@@ -6,6 +6,7 @@
 
 #include "domain/game/Enums.h"
 #include "domain/game/ScriptVM.h"
+#include "domain/world/MapBits.h"
 
 namespace newcore {
 
@@ -40,7 +41,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	// 136 -> 736..737 = 1; ANIM_FIRE 234 is forced to 4 (src/Game.cpp:380-382).
 	for (int i = 0; i < map.numSprites; ++i) {
 		const int info = map.mapSpriteInfo[i];
-		int tileNum = info & 0xFF;
+		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
 		int frameCount;
 		if (tileNum == 130 || tileNum == 234) frameCount = 4;
@@ -54,7 +55,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	// written to S_RENDERMODE; everything else stays RENDER_NORMAL.
 	for (int i = 0; i < map.numSprites; ++i) {
 		const int info = map.mapSpriteInfo[i];
-		int tileNum = info & 0xFF;
+		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
 		int mode = 0;
 		if (tileNum == 208 || tileNum == 234 || tileNum == 130 ||
@@ -78,7 +79,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		int info = map.mapSpriteInfo[i];
 		if (info & 0x10000) continue; // hidden
 		if (info & Enums::SPRITE_FLAG_NOENTITY) continue; // no-entity sprites never spawn entities (src/Game.cpp:398-400)
-		int tileNum = info & 0xFF;
+		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
 		const EntityDef* def = (tileNum >= 0 && tileNum < 512) ? defs.lookup(tileNum) : nullptr;
 		if (!def) continue;
@@ -178,7 +179,7 @@ void Game::setLineLocked(Entity* e, bool locked) {
 	int sprite = e->getSprite();
 	if (sprite < 0 || sprite >= map_->numSprites) return;
 	int info = map_->mapSpriteInfo[sprite];
-	int tn = info & 0xFF;
+	int tn = info & SpriteInfo::kTileNumMask;
 	tn = locked ? (tn & 0xFFFFFFFE) : (tn | 0x1);
 	map_->mapSpriteInfo[sprite] = (info & 0xFFFFFF00) | tn;
 	e->def = defs_->lookup(tn + 257);

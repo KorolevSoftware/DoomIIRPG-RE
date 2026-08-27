@@ -7,6 +7,7 @@
 #include "domain/game/Enums.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/game/TraceSystem.h"
+#include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 
 namespace newcore {
@@ -54,7 +55,7 @@ bool DoorSystem::performDoorEvent(int n, Entity* door, int n2, ScriptThread* own
 	if (sprite < 0 || !env_.map) return false;
 
 	int info = env_.map->mapSpriteInfo[sprite];
-	int tileNum = info & 0xFF;
+	int tileNum = info & SpriteInfo::kTileNumMask;
 	if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
 	bool family = doorFamilyTile(tileNum); // b3
 
@@ -106,14 +107,14 @@ bool DoorSystem::performDoorEvent(int n, Entity* door, int n2, ScriptThread* own
 	int sy = env_.map->mapSprites[sprite + 1 * env_.map->numSprites]; // S_Y
 	int curScale = env_.map->mapSprites[sprite + 8 * env_.map->numSprites]; // S_SCALEFACTOR
 
-	// Slide direction: N/S door (0x3000000) slides along X, E/W (0xC000000) along Y.
+	// Slide direction: N/S door (HORIZONTAL) slides along X, E/W (VERTICAL) along Y.
 	int slide = 32;
 	if (n == 1) slide = -slide;
 	int dstX = sx, dstY = sy;
 	bool noSlide = door->def->parm & 0x1; // center door: scale only
 	if (!noSlide) {
-		if (info & 0x3000000) dstX += slide;      // N/S
-		else if (info & 0xC000000) dstY += slide; // E/W
+		if (info & SpriteInfo::HORIZONTAL) dstX += slide;      // N/S
+		else if (info & SpriteInfo::VERTICAL) dstY += slide;   // E/W
 	}
 
 	slot->active = true;
@@ -202,10 +203,10 @@ bool DoorSystem::canCloseDoor(Entity* door) {
 
 	if (occupied(cx, cy)) return false;
 	int info = env_.map->mapSpriteInfo[door->getSprite()];
-	if (info & 0x3000000) {                       // horizontal-wall flags -> neighbors along Y
+	if (info & SpriteInfo::HORIZONTAL) {          // horizontal-wall flags -> neighbors along Y
 		if (occupied(cx, cy - 64)) return false;
 		if (occupied(cx, cy + 64)) return false;  // src/Game.cpp:1229-1235 (n3 = 0)
-	} else if (info & 0xC000000) {                // vertical-wall flags -> neighbors along X
+	} else if (info & SpriteInfo::VERTICAL) {      // vertical-wall flags -> neighbors along X
 		if (occupied(cx - 64, cy)) return false;
 		if (occupied(cx + 64, cy)) return false;  // (n4 = 0)
 	}

@@ -11,6 +11,7 @@
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
 #include "domain/game/SpriteLerps.h"
+#include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
@@ -144,7 +145,7 @@ int ScriptVM::executeTile(int x, int y, int mask, bool blockInput) {
 	} else {
 		env_.game->skipAdvanceTurn = false;                  // :64
 		int tileIdx = y * 32 + x;
-		if ((env_.map->mapFlags[tileIdx] & 0x40) != 0) {
+		if ((env_.map->mapFlags[tileIdx] & TileFlag::HAS_EVENT) != 0) {
 			std::fprintf(stderr, "[script] executeTile(tile=%d,%d mask=0x%X)\n", x, y, mask);
 			for (int i = findEventIndex(tileIdx); i != -1; i = getNextEventIndex()) {
 				int w1 = env_.map->tileEvents[i + 1];
@@ -469,7 +470,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				// close completion.
 				if (doorOk && act == 0) {
 					int info = env_.map->mapSpriteInfo[args & 0x3FF];
-					int tileNum = info & 0xFF;
+					int tileNum = info & SpriteInfo::kTileNumMask;
 					if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
 					if (tileNum >= 271 && tileNum < 281) {
 						env_.map->mapSpriteInfo[args & 0x3FF] =

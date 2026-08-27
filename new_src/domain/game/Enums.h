@@ -115,6 +115,10 @@ static constexpr int DOOR_UNLOCKED = 2;
 static constexpr int TILENUM_FIRST_DOOR = 271;
 static constexpr int TILENUM_LAST_DOOR = 281;
 
+// Shootable practice-target decor (src/Enums.h:763; tested as 0x95 against the
+// sprite tile number at src/PlayingInputHandler.cpp:348).
+static constexpr int TILENUM_PRACTICE_TARGET = 149;
+
 // Bosses.
 static constexpr int FIRSTBOSS = 12;
 static constexpr int LASTBOSS = 16;
@@ -149,6 +153,12 @@ static constexpr int SPRITE_FLAG_AUTOMAP_VISIBLE = 0x200000;
 static constexpr int SPRITE_FLAG_NOENTITY = 0x200000;
 static constexpr int SPRITE_FLAG_TILE = 0x400000;
 static constexpr int SPRITE_FLAG_SOLIDSIDE = 0x800000;
+static constexpr int SPRITE_FLAG_NORTH = 0x1000000;
+static constexpr int SPRITE_FLAG_SOUTH = 0x2000000;
+static constexpr int SPRITE_FLAG_EAST = 0x4000000;
+static constexpr int SPRITE_FLAG_WEST = 0x8000000;
+static constexpr int SPRITE_FLAG_DECAL = 0x10000000;
+static constexpr int SPRITE_FLAG_FLAT = 0x20000000;
 static constexpr int SPRITE_FLAG_DOORLERP = 0x80000000;
 
 // Monster animation modes/frames.

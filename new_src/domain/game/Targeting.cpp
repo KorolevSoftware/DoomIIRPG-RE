@@ -6,6 +6,7 @@
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
 #include "domain/game/TraceSystem.h"
+#include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Tables.h"
@@ -111,7 +112,8 @@ TraceHit Targeting::electFireTarget(int weapon) {
 		if (et == Enums::ET_DECOR) {                            // :339-343
 			const int si = ent->getSprite();
 			if (si >= 0 && si < env_.map->numSprites &&
-			    (env_.map->mapSpriteInfo[si] & 0xFF) == 0x95) { // TILENUM_PRACTICE_TARGET
+			    (env_.map->mapSpriteInfo[si] & SpriteInfo::kTileNumMask) ==
+			        Enums::TILENUM_PRACTICE_TARGET) {
 				elected = h;
 				break;
 			}
@@ -185,7 +187,8 @@ void Targeting::updateFacingProbe() {
 				if (et == Enums::ET_SPRITEWALL) {                       // :63-65
 					const int li = ent->linkIndex;
 					if (li >= 0 && li < (int)env_.map->mapFlags.size() &&
-					    (env_.map->mapFlags[li] & 0x2) != 0) break;  // opaque tile flag
+					    (env_.map->mapFlags[li] & TileFlag::BLOCKS_SIGHT) != 0)
+						break;  // opaque spritewall
 					continue;
 				}
 				if (et == Enums::ET_DECOR) {                            // :66-72

@@ -4,6 +4,8 @@
 #include <cstring>
 #include <map>
 
+#include "domain/game/Enums.h"
+#include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 
 namespace newcore {
@@ -299,7 +301,7 @@ void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	
 	spriteTexByMedia_.clear();
 	for (int i = 0; i < map.numSprites; ++i) {
 		int info = map.mapSpriteInfo[i];
-		int tileNum = info & 0xFF;
+		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (info & 0x400000) tileNum += 257;
 		const auto& m = media.mappings();
 		if (tileNum >= (int)m.mappings.size()) continue;
@@ -591,10 +593,11 @@ void World3D::drawSprites(const MapData& map, const MediaLoader& media, const Ca
 	for (int i = 0; i < map.numSprites; ++i) {
 		int info = map.mapSpriteInfo[i];
 		if (info & 0x10000) continue;                 // invisible
-		int tileNum = info & 0xFF;
+		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (tileNum == 240 /* WATER_STREAM */) continue;
 		// Only billboards here; wall decals are drawn interleaved in drawBSP.
-		bool isWall = (info & 0x2F000000) != 0 && (info & 0x400000) == 0;
+		bool isWall = (info & (SpriteInfo::ORIENTED | Enums::SPRITE_FLAG_FLAT)) != 0 &&
+		              (info & 0x400000) == 0;
 		if (isWall) continue;
 		order.push_back(i);
 		int x = map.mapSprites[i + 0 * n];
@@ -603,7 +606,7 @@ void World3D::drawSprites(const MapData& map, const MediaLoader& media, const Ca
 		int d = (x * mvp[2] + y * mvp[6] + z * mvp[10] >> 14) + mvp[14];
 		if (info & 0x400000) d += 6;
 		else if (tileNum == 240 || tileNum == 246 || tileNum == 245 || tileNum == 247) d = (int)0x80000000;
-		else if (info & 0xF000000) d += 5;
+		else if (info & SpriteInfo::ORIENTED) d += 5;
 		depth.push_back(d);
 	}
 	// Sort descending by depth (legacy list order: larger n3 drawn first).
@@ -630,7 +633,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	const int n = map.numSprites;
 	int info = map.mapSpriteInfo[i];
 
-	int tileNum = info & 0xFF;
+	int tileNum = info & SpriteInfo::kTileNumMask;
 	// SPRITE_FLAG_TILE (0x400000): the sprite is a wall/door decoration; legacy
 	// renderSpriteObject adds 257 to map tileNum into the wall range (271-278
 	// are doors). Monsters/pickups never carry this bit.
@@ -647,12 +650,12 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	for (int k = 0; k < 5 && i >= 149 && i <= 155; ++k) {
 		if (i != kDbgLiftSprites[k] || dbgLiftFired[k]) continue;
 		dbgLiftFired[k] = true;
-		int dFrame = (info >> 8) & 0xFF;
+		int dFrame = (info & SpriteInfo::kAnimByteMask) >> SpriteInfo::kAnimShift;
 		if ((info & 0x80000) && dFrame > 0) dFrame = (i + timeMs_ / 100) % dFrame;
 		const char* dBranch = "billboard";
 		if (tileNum == 240 /* WATER_STREAM */) dBranch = "none (water)";
-		else if ((info & 0x2F000000) != 0)
-			dBranch = (info & 0x20000000) ? "flat-plane" : "vertical-wall";
+		else if ((info & (SpriteInfo::ORIENTED | Enums::SPRITE_FLAG_FLAT)) != 0)
+			dBranch = (info & Enums::SPRITE_FLAG_FLAT) ? "flat-plane" : "vertical-wall";
 		int dMedia = -1;
 		const auto& dm = media.mappings();
 		if (tileNum < (int)dm.mappings.size() && dm.mappings[tileNum] >= 0) {
@@ -707,7 +710,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		}
 	}
 
-	int frame = (info >> 8) & 0xFF;
+	int frame = (info & SpriteInfo::kAnimByteMask) >> SpriteInfo::kAnimShift;
 	// AUTO_ANIMATE (0x80000): frame cycles over time; the stored value is the
 	// number of frames (legacy renderSpriteObject:1544-1546).
 	if ((info & 0x80000) && frame > 0) {
@@ -764,21 +767,21 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	}
 
 	const float k1 = 1.f / 16384.f;
-	// Billboards: sprites WITHOUT wall/plane flags (0x2F000000 == 0). Wall
+	// Billboards: sprites WITHOUT wall/plane flags (ORIENTED|FLAT == 0). Wall
 	// decals AND TILE sprites (doors 271-278, wall decorations) use the wall
 	// branch. Monsters/pickups have no such flags -> billboards.
-	const bool isWall = (info & 0x2F000000) != 0;
+	const bool isWall = (info & (SpriteInfo::ORIENTED | Enums::SPRITE_FLAG_FLAT)) != 0;
 	if (!isWall) {
 		drawBillboardPart(map, media, x, y, z, tileNum, mediaId, info, scaleFactor);
 	} else {
-		// ---- Wall decal / plane (flags & 0x2F000000) != 0 ----
+		// ---- Wall decal / plane (flags & (ORIENTED|FLAT)) != 0 ----
 		// Legacy renderSprite "Wall" branch: quad laid in the wall plane.
-		// n23 = wall direction from mapSpriteInfo bits.
+		// n23 = wall direction from mapSpriteInfo bits (src/Render.cpp:526-537).
 		int n23;
-		if (info & 0x4000000) n23 = 0;
-		else if (info & 0x1000000) n23 = 2;
-		else if (info & 0x8000000) n23 = 4;
-		else if (info & 0x2000000) n23 = 6;
+		if (info & Enums::SPRITE_FLAG_EAST) n23 = 0;
+		else if (info & Enums::SPRITE_FLAG_NORTH) n23 = 2;
+		else if (info & Enums::SPRITE_FLAG_WEST) n23 = 4;
+		else if (info & Enums::SPRITE_FLAG_SOUTH) n23 = 6;
 		else n23 = 0;
 
 		int wb = (media.mappings().dimensions[mediaId] >> 4) & 0xF;
@@ -805,7 +808,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		int n27 = n25 * scaleFactor / 65536;
 
 		// Z correction: walls rise from floor, planes lower.
-		if ((info & 0x20000000) == 0) {
+		if ((info & Enums::SPRITE_FLAG_FLAT) == 0) {
 			z += (tHeight - b[3]) << 4;
 			z -= 16 * (scaleFactor / 2048);
 		} else {
@@ -882,7 +885,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 				zLocal += n36;     // src/Render.cpp:618
 				t15Local += n35;   // src/Render.cpp:619
 			}
-		} else if (info & 0x20000000) {
+		} else if (info & Enums::SPRITE_FLAG_FLAT) {
 			// FLAT plane quad (src/Render.cpp:639-661): horizontal quad using
 			// BOTH viewStepValues axes; swapXY=false irrelevant here (C8).
 			// Lava scroll omitted (out of scope).
@@ -1068,8 +1071,8 @@ void World3D::drawBillboardPart(const MapData& map, const MediaLoader& media,
 void World3D::drawCharacter(const MapData& map, const MediaLoader& media, int i) {
 	const int n = map.numSprites;
 	const int info = map.mapSpriteInfo[i];
-	const int tileNum = info & 0xFF;              // characters never carry 0x400000
-	const int animByte = (info >> 8) & 0xFF;      // ONE packed state byte
+	const int tileNum = info & SpriteInfo::kTileNumMask; // characters never carry 0x400000
+	const int animByte = (info & SpriteInfo::kAnimByteMask) >> SpriteInfo::kAnimShift; // ONE packed state byte
 	const int anim = animByte & kManimMask;
 	const int frame = animByte & kMframeMask;
 	int x = map.mapSprites[i + 0 * n];
@@ -1228,15 +1231,16 @@ int World3D::nodeClassifyPoint(const MapData& map, int n, int x, int y, int z) {
 int World3D::getNodeForPoint(const MapData& map, int x, int y, int z, int info) {
 	int n = 0;
 	int i = map.nodeOffsets[n] & 0xFFFF;
-	bool onSplit = (info & 0xF000000) != 0;
-	int n6 = info & 0xFF;
+	bool onSplit = (info & SpriteInfo::ORIENTED) != 0;
+	int n6 = info & SpriteInfo::kTileNumMask;
 	if (info & 0x400000) n6 += 256 + 1;
 	bool isWater = n6 == 240;
 
 	while (i != 0xFFFF) {
 		int c = nodeClassifyPoint(map, n, x, y, z);
 		if (c == 0 && onSplit) {
-			n = (info & 0x9000000) != 0 ? map.nodeChildOffset1[n] : map.nodeChildOffset2[n];
+			n = (info & (Enums::SPRITE_FLAG_NORTH | Enums::SPRITE_FLAG_WEST)) != 0
+				? map.nodeChildOffset1[n] : map.nodeChildOffset2[n];
 		} else {
 			if (!isWater && c > -128 && c < 128) return n;
 			n = c > 0 ? map.nodeChildOffset1[n] : map.nodeChildOffset2[n];
@@ -1397,12 +1401,12 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 			if (i >= map.numNormalSprites) zsnapped -= 32;
 		}
 		int d = ((x * mvp[2] + y * mvp[6] + zsnapped * mvp[10]) >> 14) + mvp[14];
-		int tn = info & 0xFF;
-		if (info & 0x10000000) d = (int)0x7FFFFFFF;   // DECAL bias (src/Render.cpp:839-841)
+		int tn = info & SpriteInfo::kTileNumMask;
+		if (info & Enums::SPRITE_FLAG_DECAL) d = (int)0x7FFFFFFF; // DECAL bias (src/Render.cpp:839-841)
 		else if (info & 0x400000) d += 6;             // TILE (src/Render.cpp:847-849)
 		else if (tn == 240 || tn == 246 || tn == 245 || tn == 247)
 			d = (int)0x80000000;                      // water (src/Render.cpp:850-852)
-		else if (info & 0xF000000) d += 5;            // oriented (src/Render.cpp:853-855)
+		else if (info & SpriteInfo::ORIENTED) d += 5; // oriented (src/Render.cpp:853-855)
 		else {
 			// Entity bias hook (+1 corpse/linked, -1 monsters), supplied by
 			// the caller. A biased sprite skips the tileNum biases like the
