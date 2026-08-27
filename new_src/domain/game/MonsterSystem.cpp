@@ -7,6 +7,7 @@
 #include "domain/game/Enums.h"
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
+#include "domain/game/SpriteLerps.h"
 #include "domain/game/TraceSystem.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
@@ -201,12 +202,12 @@ bool MonsterSystem::painMonster(Entity* e, int dmg, int attackerWeaponId) {
 			e->def->eSubType, e->def->parm, n2);
 		env_.map->mapSpriteInfo[sprite] =
 			(env_.map->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x6000;    // :350-353 MANIM_PAIN
-		m->frameTime = *env_.clockMs + 250;    // nowMs() = Game's lerp clock (deviation D-6)
+		m->frameTime = env_.lerps->clockMs() + 250;    // nowMs() = the SpriteLerps clock (deviation D-6)
 		if (attackerWeaponId != 2 /*holy water*/) m->resetGoal();   // :354-356
 	} else {
 		env_.map->mapSpriteInfo[sprite] =
 			(env_.map->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x6000;    // :358-359 lethal hold pose
-		m->frameTime = *env_.clockMs + 450;    // :360-368 (250 + 200 lethal hold)
+		m->frameTime = env_.lerps->clockMs() + 450;    // :360-368 (250 + 200 lethal hold)
 	}
 	return false;                              // boss staticFunc return value; always false here
 }
@@ -224,10 +225,10 @@ void MonsterSystem::diedMonster(Entity* e, bool giveXP) {
 	m->resetGoal();                                            // :461
 	// Snap script lerps of this sprite (corpsifyMonster pattern,
 	// src/Game.cpp:620-631) so a running lerp can't fight the death pose.
-	if (env_.snapLerps) env_.snapLerps(sprite);
+	if (env_.lerps) env_.lerps->snap(sprite);
 	int info = env_.map->mapSpriteInfo[sprite];
 	info = (info & 0xFFFF00FF) | 0x7000;                       // :463 death-frame overlay
-	m->frameTime = *env_.clockMs;                              // :464
+	m->frameTime = env_.lerps->clockMs();                              // :464
 	if ((env_.map->mapSpriteInfo[sprite] & 0x10000) != 0) {    // :465-471 hidden branch
 		info |= 0x17000;
 	} else {
@@ -277,7 +278,7 @@ void MonsterSystem::corpsifyMonster(Entity* e, int x, int y) {
 	// longer fight the corpse placement below. Owner-thread resume omitted:
 	// MAKE_CORPSE runs mid-dispatch of some thread and re-entrant run() is
 	// unsafe in the rewrite VM.
-	if (env_.snapLerps) env_.snapLerps(s);
+	if (env_.lerps) env_.lerps->snap(s);
 
 	// Visual death state: anim/frame overlay bits 8-14 = 0x7000, low byte
 	// keeps the original art tileNum (src/ScriptThread.cpp:2253-2255).

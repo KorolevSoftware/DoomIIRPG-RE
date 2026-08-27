@@ -10,6 +10,7 @@
 #include "domain/game/Game.h"
 #include "domain/game/Targeting.h"
 #include "render/Camera3D.h"
+#include "ui/ViewWeapon.h"
 
 namespace newcore {
 
@@ -114,10 +115,6 @@ private:
 
 	bool inputBlocked() const;
 	void handlePlayingAction(Action a);
-	// First-person weapon quad, drawn after drawBSP (spec combat-stage1 §6.2;
-	// legacy Combat::drawWeapon GL-path anchors, docs/research/
-	// 2026-08-26-hero-choice-and-weapon.md Part B).
-	void drawViewWeapon(Graphics2D& g);
 
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)
@@ -145,6 +142,9 @@ private:
 
 	// View forward / facing probe / fire election (spec §P1-G4).
 	Targeting targeting_;
+
+	// First-person weapon quad, drawn after drawBSP (spec §P1-G5).
+	ViewWeapon viewWeapon_;
 };
 
 } // namespace newcore

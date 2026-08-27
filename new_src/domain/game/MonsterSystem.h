@@ -1,8 +1,6 @@
 #ifndef NEW_DOMAIN_GAME_MONSTERSYSTEM_H
 #define NEW_DOMAIN_GAME_MONSTERSYSTEM_H
 
-#include <functional>
-
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
 
@@ -14,6 +12,7 @@ class Localization;
 class MapData;
 class Player;
 class ScriptVM;
+class SpriteLerps;
 class TraceSystem;
 class EntityDefs;
 struct EntityDef;
@@ -26,7 +25,7 @@ public:
 	// Non-owning views on the world. entityDb holds the 1024 tile heads
 	// (P2-GF replaces it with one EntityDb*); monstersTurn / facingDirty
 	// point at the Game fields those flags still live on (P2-GF keeps them
-	// on Game); clockMs is Game's lerp clock, the pose-hold time base
+	// on Game); the pose-hold time base is the SpriteLerps clock
 	// (spec 2026-08-26-combat-stage1 deviation D-6).
 	struct Env {
 		Entity** entityDb = nullptr;
@@ -37,11 +36,10 @@ public:
 		const TraceSystem* trace = nullptr;  // player pos + distFrom
 		int* monstersTurn = nullptr;
 		bool* facingDirty = nullptr;
-		const int* clockMs = nullptr;
-		// Force-completes every active script lerp of one sprite (legacy
-		// snapLerpSprites, src/Game.cpp:1149-1166). Temporary bridge to
-		// Game's lerp pool; P2-GD replaces it with a SpriteLerps*.
-		std::function<void(int sprite)> snapLerps;
+		// Lerp pool owner: the pose-hold clock (clockMs) and the
+		// force-complete of a sprite's active lerps (legacy snapLerpSprites,
+		// src/Game.cpp:1149-1166).
+		SpriteLerps* lerps = nullptr;
 	};
 
 	// Wiring + per-level reset (called from Game::loadEntities).

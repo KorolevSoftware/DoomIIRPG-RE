@@ -12,6 +12,7 @@
 #include "domain/game/EntityMonster.h"
 #include "domain/game/MonsterSystem.h"
 #include "domain/game/Player.h"
+#include "domain/game/SpriteLerps.h"
 #include "domain/game/TraceSystem.h"
 #include "io/EntityDefs.h"
 #include "domain/world/MapData.h"
@@ -48,69 +49,22 @@ public:
 	// script sprite lerps (LERP* opcodes).
 	void update(int dtMs);
 
-	// ---- Script sprite lerps (docs/original-code/lerp-opcodes.md) ----
+	// ---- Script sprite lerps (spec 2026-08-26-decomposition §P2-GD) ----
 
-	static constexpr int kMaxLerpSprites = 16;   // pool size (src/Game.cpp:3028)
-
-	// One active script lerp; subset of legacy LerpSprite (save/load,
-	// TRUNC/chicken/door/secret tails are not ported).
-	struct SpriteLerp {
-		// Runtime flag bits (src/Enums.h:293-295 subset).
-		static constexpr int kFlagAsync = 0x1;
-		static constexpr int kFlagAnimatingEffect = 0x2;
-		static constexpr int kFlagParabola = 0x4;
-		static constexpr int kFlagAutoFace = 0x800;   // LS_FLAG_AUTO_FACE (src/Enums.h:295)
-
-		int hSprite = 0;          // sprite+1; 0 = free slot (src/Game.cpp:3030)
-		ScriptThread* ownerThread = nullptr;
-		int startTime = 0;        // ms on the Game::update clock (clockMs)
-		int travelTime = 0;       // ms
-		int srcX = 0, srcY = 0, srcZ = 0;
-		int dstX = 0, dstY = 0, dstZ = 0;
-		int srcScale = 64, dstScale = 64;
-		int height = 0;           // parabola arc peak (canvas z units)
-		int flags = 0;            // SpriteLerp::kFlag* bits
-		int dist = 0;             // Euclidean move length, canvas units
-
-		// dist = isqrt((dx²+dy²)<<8) >> 8 (src/LerpSprite.cpp:48); feeds the
-		// distance-driven walk phase ((1+(p*dist>>12))&3, one cycle per tile).
-		void calcDist();
-	};
-
-	// Pool lookup mirroring allocLerpSprite (src/Game.cpp:3028-3066): reuse
-	// the slot of a still-active lerp for the same sprite, else take a free
-	// one. Exhaustion logs instead of the legacy Error(36) fatal.
-	SpriteLerp* allocLerpSprite(ScriptThread* thread, int sprite, bool block);
-
-	// Single tick (src/Game.cpp:2855-2956): writes S_X/S_Y/S_Z/S_SCALEFACTOR
-	// with p=(elapsed<<16)/(travelTime<<8), snaps + frees on completion.
-	// Returns 3 when completed, 4 when not started yet, else 0.
-	int updateLerpSprite(SpriteLerp* ls);
-
-	// Stored-vs-baked S_Z bias: legacy postProcessSprites bakes terrain
-	// height (-32 for z-sprites) into stored S_Z at load and the legacy
-	// renderer consumes it directly (src/Render.cpp:2459-2467,1424); our
-	// renderer keeps stored Z raw-relative and re-adds terrain per frame
-	// (World3D.cpp:547-556). Lerps interpolate in legacy baked space:
-	// baked = stored + spriteZBias, stored = baked - spriteZBias.
-	int spriteZBias(int sprite, int x, int y) const;
-
-	// Internal ms clock for lerp start/elapsed math; advanced by update(dtMs).
-	int clockMs() const { return lerpClock_; }
-
-	// 1024-entry fixed-point sine table for the parabola arc (sin << 14);
-	// wired once after construction.
-	void setSinTable(const std::vector<int32_t>* sinTable) { sinTable_ = sinTable; }
-
-	// View angle used by the walk-state writer's front/back chooser. Fed by
-	// GameContext each tick (maya pose during cinematics, else player view) —
-	// reproduces legacy reading app->render->viewAngle, i.e. the previous
-	// frame's view (src/Game.cpp:2910).
-	void setLerpViewAngle(int a) { lerpViewAngle_ = a; }
-
-	// Move vector -> 8-direction angle * 128 with ±32 thresholds
-	// (src/Game.cpp:3596-3628, b=true).
-	static int vecToDir(int dx, int dy);
+	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F4.
+	// The lerp pool, its clock and the walk-state writer live in SpriteLerps
+	// now (see SpriteLerps.h for the contracts); these keep the pre-P2-GD
+	// call sites (ScriptVM LERP* opcodes, GameContext wiring) compiling.
+	using SpriteLerp = SpriteLerps::SpriteLerp;
+	SpriteLerp* allocLerpSprite(ScriptThread* thread, int sprite, bool block) {
+		return lerps.allocLerpSprite(thread, sprite, block);
+	}
+	int updateLerpSprite(SpriteLerp* ls) { return lerps.updateLerpSprite(ls); }
+	int spriteZBias(int sprite, int x, int y) const { return lerps.spriteZBias(sprite, x, y); }
+	int clockMs() const { return lerps.clockMs(); }
+	void setSinTable(const std::vector<int32_t>* sinTable) { lerps.setSinTable(sinTable); }
+	void setLerpViewAngle(int a) { lerps.setLerpViewAngle(a); }
+	static int vecToDir(int dx, int dy) { return SpriteLerps::vecToDir(dx, dy); }
 
 	// Returns the player entity (entities[1]).
 	Entity* playerEntity() { return entities_.empty() ? nullptr : &entities_[1]; }
@@ -257,6 +211,7 @@ public:
 	TraceSystem trace;              // peer subsystem (spec §P2-GA); wired in loadEntities
 	DoorSystem doors;               // peer subsystem (spec §P2-GB); wired in loadEntities
 	MonsterSystem monsters;         // peer subsystem (spec §P2-GC); wired in loadEntities
+	SpriteLerps lerps;              // peer subsystem (spec §P2-GD); wired in loadEntities
 
 	// FORWARDER (spec 2026-08-26-decomposition §3.1) — delete in P3-F3.
 	// Monster wake/turn/pain/death live in MonsterSystem now (see
@@ -282,22 +237,9 @@ public:
 	int entityDistFrom(const Entity* e, int x, int y) const { return trace.distFrom(e, x, y); }
 
 private:
-	void freeLerpSprite(SpriteLerp* ls);       // completion snap + slot free (src/Game.cpp:3078-3243, subset)
-
-	// snapLerpSprites(sprite) (src/Game.cpp:1149-1166): force-complete every
-	// active lerp of one sprite. Fed to MonsterSystem::Env until P2-GD makes
-	// SpriteLerps its owner.
-	void snapSpriteLerps(int sprite);
-
 	// removeEntity's facingEntity clear (src/Game.cpp:192); set by
 	// setXPSystems.
 	Player* player_ = nullptr;
-
-	// Script sprite lerp pool (legacy Game::lerpSprites[16]).
-	SpriteLerp spriteLerps_[kMaxLerpSprites];
-	int lerpClock_ = 0;
-	int lerpViewAngle_ = 0;                // last render view angle (setLerpViewAngle)
-	const std::vector<int32_t>* sinTable_ = nullptr;
 
 	std::vector<Entity> entities_;
 	Entity* entityDb_[1024] = { nullptr }; // 32x32 tile lists

@@ -695,3 +695,36 @@ Phase 1 extracts `CinematicCamera`, `LootSession`, `Targeting`, `ViewWeapon`, `S
 `Game` into `TraceSystem`/`DoorSystem`/`MonsterSystem`/`SpriteLerps`/`CorpseLoot`/`EntityDb`
 behind one-line forwarders, so the two chains never share a file and can run in parallel.
 Refactor constraint: zero behaviour change; acceptance = the user sees no difference.
+
+### 2026-08-27 — decomposition, groups 1-7 (no behaviour change)
+
+Landed and user-confirmed on screen after each batch:
+- b7e74e1: P1-G1 (`core/GameStates.h`: `StateId`/`Action`/`StateHost`, `MapData::heightAt`),
+  P1-G2 (`core/CinematicCamera`), P2-GA (`domain/game/TraceSystem` + typed `TraceHit`).
+- f18cb7b: P1-G3 (`core/LootSession`), P1-G4 (`domain/game/Targeting`),
+  P2-GB (`domain/game/DoorSystem`), P2-GC (`domain/game/MonsterSystem`),
+  plus the review blocker fix.
+
+Sizes: `GameContext.cpp` 1626 -> 1056, `Game.cpp` 1565 -> 858. Target for
+`GameContext` is <= 400 lines (state machine + a ~20-line render composer).
+
+Review of b7e74e1's refactor: FAIL on exactly one item, and a subtle one — the cinematic
+skip frame had gained an extra `hud->update(kTickMs)` because the pre-refactor early
+`return` on `skipCinematic_` preceded the HUD tick, while the extracted form ticked it
+unconditionally. The spec had prescribed that wrong shape, so both code and spec were
+corrected. Everything else verified equivalent by reconstructing the pre-commit bodies
+(`git show b7e74e1^:…`) and diffing after normalizing access paths only.
+
+Two process facts worth keeping:
+- Parallel coders leave the tree transiently unbuildable (`Game.h` referenced `kOpenDoors`
+  while `DoorSystem` was mid-move). "Verify the build after every delegation" means after the
+  agent REPORTS, not at an arbitrary moment, or foreign half-work reads as a regression.
+- Phase 1 is inherently serial: every group edits `GameContext.{h,cpp}`, so any unplanned fix
+  in that file queues behind the current group.
+
+Transitional duplications, all with named graves (tracked in `docs/status.md`):
+`DoorSystem`/`MonsterSystem` each hold verbatim copies of `Game::linkEntity`/`unlinkEntity`
+(P2-GF), `MonsterSystem::Env` holds a `std::function` lerp-snap shim (P2-GD),
+`Game::lastTraceHits()` rebuilds a legacy vector (P3-B2), `GameContext::getHeight` and the
+door forwarders are one-liners. Three shims outstanding; if they start accruing faster than
+they are paid, stop extracting and close Phase 3 first.

@@ -348,7 +348,12 @@ list, and `if (cameraActive()) return;`) move **up to the single call site** in
 ```cpp
 const bool gameplayView = state() == StateId::Playing || state() == StateId::Looting ||
                           state() == StateId::Dialog;
-if (cinePose == nullptr && gameplayView) viewWeapon_.draw(g, sceneRenderer_.camera());
+// CORRECTION 2026-08-27: `!cinematic_.active()` is REQUIRED and must not be
+// collapsed into the pose test. renderPose() returns nullptr in TWO cases —
+// !active(), and active() with cameraCamIdx_ >= mayaCameras.size()
+// (CinematicCamera.cpp:238). In that second case the pre-refactor inner gate
+// drew nothing; dropping the term would start drawing. Caught by the P1-G5 coder.
+if (cinePose == nullptr && !cinematic_.active() && gameplayView) viewWeapon_.draw(g, sceneRenderer_.camera());
 ```
 (pre-G6 the camera is still `camera_`). The weapon-select / `weapons == 0` /
 `w < 0` early-outs stay inside `draw` — they are weapon data, not view state.
@@ -570,7 +575,10 @@ void GameContext::render(AppContext& app) {
 
 	const bool gameplayView = state() == StateId::Playing ||
 	                          state() == StateId::Looting || underDialog;
-	if (cinePose == nullptr && gameplayView) viewWeapon_.draw(g, scene_.camera());
+	// CORRECTION 2026-08-27: see the note at the P1-G5 section — the
+	// `!cinematic_.active()` term is load-bearing, renderPose() nulls for two
+	// different reasons (CinematicCamera.cpp:238).
+	if (cinePose == nullptr && !cinematic_.active() && gameplayView) viewWeapon_.draw(g, scene_.camera());
 	if (cinePose != nullptr && sys_.hud->cockpitOverlay()) sys_.hud->drawOverlay(g, 0, 42, 480);
 
 	if (state() == StateId::Playing) { targeting_.updateFacingProbe(); sys_.game->facingDirty = false; }

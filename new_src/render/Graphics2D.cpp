@@ -14,6 +14,8 @@ void Graphics2D::setBlendMode(int mode) {
 	if (batch_) batch_->setBlendMode(mode);
 }
 
+// WARNING: no-op for the sprite batch (see the header): the rect is recorded
+// and nothing scissors. Do not rely on it to clip drawImage/fillRect.
 void Graphics2D::setClip(int x, int y, int w, int h) {
 	clipX_ = x;
 	clipY_ = y;

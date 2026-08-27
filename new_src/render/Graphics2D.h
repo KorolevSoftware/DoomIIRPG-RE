@@ -31,6 +31,10 @@ public:
 	void setBatch(SpriteBatch* batch) { batch_ = batch; }
 
 	// Clip region in canvas coordinates (inclusive bounds like the legacy API).
+	// WARNING: this is a NO-OP for the sprite batch — the rect is only
+	// recorded, nothing scissors (Graphics2D.cpp:17-29). Callers that need a
+	// real clip must trim their destination quad and source sub-rect by hand,
+	// as ViewWeapon::drawWeaponQuad does (new_src/ui/ViewWeapon.cpp).
 	void setClip(int x, int y, int w, int h);
 	void clearClip();
 

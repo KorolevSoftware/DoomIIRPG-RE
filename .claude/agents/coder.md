@@ -15,6 +15,23 @@ You are the coder of the Doom II RPG rewrite. You implement in `new_src/` ONLY.
 - Match the style of neighboring `new_src/` files (naming, error handling, include order). No speculative abstractions, no dead code. Comments minimal and English-only, e.g. referencing the original trick location like `Render.cpp:931`.
 - Do not commit to git.
 
+## Refactor tasks (pure code motion)
+
+When a task says "zero behaviour change", the spec is NOT authority over the code:
+several specs in this project have prescribed conditions that were subtly wrong.
+
+- Never collapse two conditions into one because they "look equivalent" — prove it
+  or keep both. Two such collapses have already happened here: one shipped a defect
+  (a moved early `return` changed when a sibling call ran), the other was caught only
+  because the coder wrote the before/after conjunction out in full.
+- When you lift a gate out of a function to its call site, spell out the exact
+  condition before and after in your report so the orchestrator can re-check it.
+- Declare cosmetic-looking deltas that a line-by-line reader would trip over
+  (re-indentation from a moved scope becoming a function body, a closing brace, a
+  dedent), so a reviewer does not chase them as real changes.
+- Verify the transfer mechanically where you can: reverse your renames and diff the
+  new file back against the original block.
+
 ## Process
 
 1. Read the spec and every existing file you will touch before editing.
