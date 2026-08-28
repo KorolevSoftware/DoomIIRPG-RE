@@ -250,8 +250,9 @@ bool Ui::buttonRect(UiId id, const UiRect& r) {
 }
 
 bool Ui::softKey(UiId id, const Text& text, int x, int y, int anchorFlags,
-	const UiRect& hit) {
+	const UiRect& hit, bool interactive) {
 	label(text, x, y, anchorFlags);
+	if (!interactive) return false;
 	return hitTest(id, hit);
 }
 

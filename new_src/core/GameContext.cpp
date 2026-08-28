@@ -461,19 +461,25 @@ namespace {
 constexpr int kSoftKeyMenuId = 52;
 constexpr int kSoftKeyMapId = 55;
 
-// Hit boxes for the two side soft keys, verbatim from the touch areas the
-// original registers in Hud::startup: id 0 = left (0,256,52,64) -> ACTION_MENU,
-// id 1 = right (428,256,52,64) -> ACTION_AUTOMAP (src/Hud.cpp:67-71 for the
-// rects, src/Hud.cpp:1300-1320 for the actions). They are wider than the 32x32
-// arrow art on purpose and they also cover the labels.
-constexpr UiRect kSoftLeftHit{ 0, 256, 52, 64 };
-constexpr UiRect kSoftRightHit{ 428, 256, 52, 64 };
-// The centre "Wait" literal has no touch area in the original (its ACTION_
-// PASSTURN lives on the portrait button), so this rect is ours: the text box of
-// the label as drawString lays it out — 4 glyphs * 9 px advance, HCENTER at
-// x=240 -> x 222, BOTTOM at y=320 -> rows 304..319 (Font::kGlyphH = 16,
-// new_src/render/Graphics2D.cpp:124-136).
-constexpr UiRect kSoftCenterHit{ 222, 304, 36, 16 };
+// Hit boxes for the two side soft keys. DELIBERATE DEVIATION from the original,
+// at the user's request: the legacy touch areas registered in Hud::startup are
+// id 0 = left (0,256,52,64) -> ACTION_MENU and id 1 = right (428,256,52,64) ->
+// ACTION_AUTOMAP (src/Hud.cpp:67-71 for the rects, src/Hud.cpp:1300-1320 for the
+// actions), and those 52x64 boxes also cover the "Menu" / "Map" labels drawn at
+// y=320 (src/TouchController.cpp:550-577) — in the original clicking the text IS
+// clicking the button. Here the rects are narrowed to the 32x32 arrow icons at
+// (9,268) / (438,268) so only the icon reacts and the text is a pure label, like
+// the centre "Wait" literal. Both new rects are strict subsets of the legacy
+// ones, so nothing became clickable that was not before. Do NOT "restore" the
+// 52x64 rects thinking this is a bug — see the CORRECTION section of
+// docs/architecture/specs/2026-08-27-ui-layer.md.
+constexpr UiRect kSoftLeftHit{ 9, 268, 32, 32 };
+constexpr UiRect kSoftRightHit{ 438, 268, 32, 32 };
+// ACTION_PASSTURN is the portrait: hud button 3, (219, 264, imgPlayerFaces->
+// width + 10 = 32 + 10, 36) (src/Hud.cpp:76 for the rect,
+// src/Hud.cpp:1343-1345 for the action). The centre "Wait" literal has no touch
+// area at all in the original (src/Hud.cpp:712-720 only draws it).
+constexpr UiRect kPortraitHit{ 219, 264, 42, 36 };
 
 void setSoftKeyText(Text& out, const std::string& s) {
 	// composeText + dehyphenate, as the original does for every soft-key label
@@ -485,9 +491,10 @@ void setSoftKeyText(Text& out, const std::string& s) {
 
 } // namespace
 
-void GameContext::buildHudModel(HudModel& m, bool showBottomBar) {
+void GameContext::buildHudModel(HudModel& m, bool showBottomBar, bool interactive) {
 	m = HudModel{};
 	m.showBottomBar = showBottomBar;
+	m.interactive = interactive;
 
 	// Producer half of the former Hud::feedPlayerStatus: the RAW live stats the
 	// legacy widgets read every draw pass (src/Hud.cpp:683-709).
@@ -510,6 +517,10 @@ void GameContext::buildHudModel(HudModel& m, bool showBottomBar) {
 	// slot 20 = blue keycard.
 	m.keysRow = (p.inventory[19] > 0 ? 1 : 0) | (p.inventory[20] > 0 ? 2 : 0);
 
+	// The portrait's touch area does not depend on the soft-key labels, unlike
+	// the two side rects below; the view gates it on m.interactive.
+	m.portraitHit = kPortraitHit;
+
 	// Soft keys: gameplay defaults only. The rewrite has no softKeyLeftID/
 	// RightID state machine, so the per-screen variants (Exit / Leave /
 	// Re-turn / Dis-card, docs/original-code/ui.md §6) are not modelled and the
@@ -524,7 +535,6 @@ void GameContext::buildHudModel(HudModel& m, bool showBottomBar) {
 		m.softCenter = &softCenterText_;
 		m.softLeftHit = kSoftLeftHit;
 		m.softRightHit = kSoftRightHit;
-		m.softCenterHit = kSoftCenterHit;
 	}
 }
 
@@ -635,9 +645,16 @@ void GameContext::render(AppContext& app) {
 	// Playing/Combat/Dialog/Dying and excludes ST_CAMERA (24) and
 	// ST_INTER_CAMERA (43), which is exactly `gameplayView` here — the gate
 	// stays here and travels into the model as showBottomBar.
+	// Drawn but not touchable while a modal overlay owns input: legacy
+	// touchStart dispatches ST_DIALOG to m_dialogButtons only
+	// (src/TouchController.cpp:96-98) and ST_LOOTING to a bare handleEvent(6)
+	// (src/TouchController.cpp:29-31), so Hud::handleUserTouch — the owner of
+	// the two 52x64 corner buttons — is never reached in either state.
+	const bool hudInteractive = gameplayView && state_ != StateId::Dialog &&
+	                            state_ != StateId::Looting;
 	if (ui != nullptr) {
 		HudModel hud;
-		buildHudModel(hud, gameplayView);
+		buildHudModel(hud, gameplayView, hudInteractive);
 		const UiResult r = drawHud(*ui, hud);
 		applyUiAction(r.action, r.index);
 	}

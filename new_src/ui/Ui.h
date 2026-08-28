@@ -91,8 +91,10 @@ public:
 	bool button(UiId id, const UiRect& r, const Texture& normal,
 		const Texture& active, int anchorFlags);
 	bool buttonRect(UiId id, const UiRect& r);   // invisible hit area
+	// interactive == false draws the label but registers no hit rect, for a bar
+	// that stays visible while a modal screen owns input.
 	bool softKey(UiId id, const Text& text, int x, int y, int anchorFlags,
-		const UiRect& hit);
+		const UiRect& hit, bool interactive = true);
 	// 0..visibleRows-1 on the release edge inside row i of r, else -1. Draws
 	// nothing: the rows are the caller's textRows call.
 	int listHit(UiId id, const UiRect& r, int rowH, int visibleRows);

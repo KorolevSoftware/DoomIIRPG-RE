@@ -62,10 +62,17 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 	// (src/Hud.cpp:1300-1320 handleUserTouch; art swap
 	// src/TouchController.cpp:550-570). The "switch" names in Hud::startup are
 	// a misnomer: id 0 sits on the left of the screen and drives the left
-	// sheet. So the label and the arrow share one UiId here.
+	// sheet. So the label and the arrow share one UiId here. The hit rect the
+	// model hands us is however only the arrow icon, not the legacy 52x64 box
+	// that also covered the label — a deliberate deviation documented at
+	// kSoftLeftHit (new_src/core/GameContext.cpp:464).
+	// m.interactive == false keeps the labels and the arrows on screen but takes
+	// the three hit rects out of the frame, which is what the legacy dispatcher
+	// does while a modal screen is up (see HudModel::interactive).
 	if (m.softLeft != nullptr) {
 		if (ui.softKey(UiId::HudSoftLeft, *m.softLeft, kSoftLeftX, kSoftLeftY,
-				Graphics2D::kAnchorLeft | Graphics2D::kAnchorBottom, m.softLeftHit)) {
+				Graphics2D::kAnchorLeft | Graphics2D::kAnchorBottom, m.softLeftHit,
+				m.interactive)) {
 			res.action = UiAction::Menu;
 		}
 	}
@@ -78,7 +85,8 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 
 	if (m.softRight != nullptr) {
 		if (ui.softKey(UiId::HudSoftRight, *m.softRight, kSoftRightX, kSoftRightY,
-				Graphics2D::kAnchorRight | Graphics2D::kAnchorBottom, m.softRightHit)) {
+				Graphics2D::kAnchorRight | Graphics2D::kAnchorBottom, m.softRightHit,
+				m.interactive)) {
 			res.action = UiAction::Automap;
 		}
 	}
@@ -87,11 +95,11 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 		kSwitchRightX, kSwitchRightY, kTopLeft);
 
 	// ---- weapon icon + ammo digits ----
-	// The *_Active sheets of the weapon/shield/health/portrait/keys widgets are
-	// the touch highlights of hud buttons 2..6, whose actions (NEXTWEAPON,
-	// ITEMS_DRINKS, ITEMS, PASSTURN, QUESTLOG — src/Hud.cpp:1322-1352) have no
-	// counterpart in the rewrite yet, so they are neither hit-tested nor
-	// highlighted (Deviation D3).
+	// The *_Active sheets of the weapon/shield/health/keys widgets are the touch
+	// highlights of hud buttons 2, 4, 5, 6, whose actions (NEXTWEAPON,
+	// ITEMS_DRINKS, ITEMS, QUESTLOG — src/Hud.cpp:1322-1352) have no counterpart
+	// in the rewrite yet, so they are neither hit-tested nor highlighted
+	// (Deviation D3). Button 3, the portrait, IS wired below.
 	ui.weaponIcon(art.weaponNormal, kWeaponX, kWeaponY, kWeaponRowH, m.weapon);
 	if (m.showAmmo) {
 		ui.number3(art.numbers, kAmmoX, kAmmoY, kDigitSpace, m.ammo, m.slashAmmo);
@@ -109,19 +117,29 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 	ui.number3(art.numbers, kHealthDigitsX, kHealthDigitsY, kDigitSpace, m.health, false);
 
 	// ---- portrait: face row from health, then the frame on top ----
-	ui.face(art.playerFaces, kFaceX, kFaceY, kFaceRowH, m.health, m.maxHealth);
-	ui.image(art.playerFrameNormal, kFrameX, kFrameY, kTopLeft);
+	// Hud button 3, rect (219,264, imgPlayerFaces->width + 10 = 42, 36)
+	// (src/Hud.cpp:76), fires ACTION_PASSTURN (src/Hud.cpp:1343-1345). While it
+	// is held the original swaps BOTH the face sheet and the frame to their
+	// *_Active variants, keeping the same face row (src/Hud.cpp:700-708).
+	// The hit test runs before the blits so the highlight shows on the press
+	// frame itself, as it does for the two soft keys above.
+	if (m.interactive && ui.buttonRect(UiId::HudPortrait, m.portraitHit)) {
+		res.action = UiAction::PassTurn;
+	}
+	const bool portraitHeld = ui.isActive(UiId::HudPortrait);
+	ui.face(portraitHeld ? art.playerActive : art.playerFaces, kFaceX, kFaceY,
+		kFaceRowH, m.health, m.maxHealth);
+	ui.image(portraitHeld ? art.playerFrameActive : art.playerFrameNormal,
+		kFrameX, kFrameY, kTopLeft);
 
 	// ---- centre "Wait" ----
 	// Hardcoded ASCII in the original, drawn only while BOTH soft keys are set
-	// (src/Hud.cpp:715-723); the model's two non-null slots are that condition.
-	// Its hit rect is ours: the original's PASSTURN touch area is the portrait
-	// button (219,264,42,36), which is not wired here (see above).
+	// (src/Hud.cpp:712-720); the model's two non-null slots are that condition.
+	// A pure label: the literal has no touch area in the original, its
+	// ACTION_PASSTURN lives on the portrait button above.
 	if (m.softCenter != nullptr && m.softLeft != nullptr && m.softRight != nullptr) {
-		if (ui.softKey(UiId::HudSoftCenter, *m.softCenter, kSoftCenterX, kSoftCenterY,
-				Graphics2D::kAnchorHCenter | Graphics2D::kAnchorBottom, m.softCenterHit)) {
-			res.action = UiAction::PassTurn;
-		}
+		ui.label(*m.softCenter, kSoftCenterX, kSoftCenterY,
+			Graphics2D::kAnchorHCenter | Graphics2D::kAnchorBottom);
 	}
 
 	return res;

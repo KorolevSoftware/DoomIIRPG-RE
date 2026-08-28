@@ -120,7 +120,7 @@ private:
 
 	// Rebuilds the HUD view model from scratch every frame (spec §4.1). Not
 	// const: it refills the soft-key Text buffers the model borrows.
-	void buildHudModel(HudModel& m, bool showBottomBar);
+	void buildHudModel(HudModel& m, bool showBottomBar, bool interactive);
 
 	bool inputBlocked() const;
 

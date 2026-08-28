@@ -37,20 +37,28 @@ struct HudModel {
 	// Legacy repaint bit 0x4 for the frame's state (ui.md §8): the caller's
 	// gameplay-view gate, carried here instead of wrapping the view call.
 	bool showBottomBar = false;
+	// False while a modal screen owns input: the bottom bar is still DRAWN
+	// (showBottomBar) but its buttons are not touch candidates, because the
+	// legacy touch dispatcher only scans the modal screen's own button group
+	// and never reaches Hud::handleUserTouch (src/TouchController.cpp:29-31
+	// ST_LOOTING, :96-98 ST_DIALOG).
+	bool interactive = false;
 
 	// Soft keys (docs/original-code/ui.md §6). Borrowed composed Text, valid
 	// for THIS frame only; null == the legacy softKeyLeftID/RightID == -1
 	// case, which suppresses the label (and the *_Active arrow art) but not
 	// the arrow itself (src/TouchController.cpp:550-570).
 	const Text* softLeft = nullptr;
+	// Drawn as a plain label: the "Wait" literal has no touch area in the
+	// original, ACTION_PASSTURN sits on the portrait button instead
+	// (src/Hud.cpp:76, src/Hud.cpp:1343-1345).
 	const Text* softCenter = nullptr;
 	const Text* softRight = nullptr;
-	// Hit boxes are caller constants: the two side rects are the ones the
-	// original registers in Hud::startup (src/Hud.cpp:67-71), the centre one
-	// is ours (the original gives the "Wait" literal no touch area at all).
+	// Hit boxes are caller constants, all three registered by the original in
+	// Hud::startup (src/Hud.cpp:67-76).
 	UiRect softLeftHit;
-	UiRect softCenterHit;
 	UiRect softRightHit;
+	UiRect portraitHit;
 };
 
 } // namespace newcore
