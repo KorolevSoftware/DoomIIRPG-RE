@@ -11,6 +11,9 @@
 #include "domain/game/Game.h"
 #include "domain/game/Targeting.h"
 #include "render/SceneRenderer.h"
+#include "text/Text.h"
+#include "ui/HudModel.h"
+#include "ui/UiTypes.h"
 #include "ui/ViewWeapon.h"
 
 namespace newcore {
@@ -28,6 +31,7 @@ class MediaLoader;
 class Player;
 class ScriptVM;
 class Tables;
+class Ui;
 class World3D;
 
 // The rewrite's Canvas analog: owns the game-state machine, clocks, pending
@@ -52,6 +56,9 @@ public:
 		Hud* hud = nullptr;
 		World3D* world = nullptr;
 		DialogSystem* dialogs = nullptr;
+		// Immediate-mode UI façade, built in Main.cpp next to UiAssets/UiState
+		// (spec 2026-08-27-ui-layer §8). Null = no UI pass this run.
+		Ui* ui = nullptr;
 	};
 
 	void init(const Init& sys);
@@ -66,6 +73,16 @@ public:
 
 	// Queued key actions (legacy canvas->events queue); consumed each tick.
 	void queueAction(Action a) { pendingActions_.push_back(a); }
+
+	// The frame's normalized input, handed over by GameLoop right before
+	// render() (spec §3). Copied because UiInputCollector::input() is only
+	// valid until the next beginFrame().
+	void setUiInput(const UiInput& in) { uiInput_ = in; }
+
+	// The ONE translation from UI intent to the existing action queue (ADR
+	// 0012 point 6): mouse and keys share pendingActions_, so they cannot
+	// diverge on turn semantics.
+	void applyUiAction(UiAction a, int index);
 
 	// PHASE5 DEBUG (removable): grants both keycards without the loot system.
 	void debugGiveKeycards();
@@ -101,6 +118,10 @@ private:
 	void exitState_();       // hook slot: legacy AUTOMAP/MENU/CAMERA exits (src/Canvas.cpp:1030-1049)
 	void enterState_(StateId s);
 
+	// Rebuilds the HUD view model from scratch every frame (spec §4.1). Not
+	// const: it refills the soft-key Text buffers the model borrows.
+	void buildHudModel(HudModel& m, bool showBottomBar);
+
 	bool inputBlocked() const;
 
 	void tickLoading();      // two-phase ordered tail (spec §5)
@@ -114,6 +135,14 @@ private:
 	int64_t lastTurnTime_ = 0;
 	int64_t deathTimeMs_ = 0;
 	std::vector<Action> pendingActions_;
+
+	// Frame input for the UI pass (levels survive across frames, edges do not).
+	UiInput uiInput_;
+	// Producer-side storage for the soft-key labels the HudModel borrows
+	// (spec §4.1 text-slot ownership): the model only holds pointers.
+	Text softLeftText_;
+	Text softCenterText_;
+	Text softRightText_;
 
 	// Cinematic camera runtime (cutscenes-camera.md §1-§3).
 	CinematicCamera cinematic_;

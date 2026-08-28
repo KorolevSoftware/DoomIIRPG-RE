@@ -19,6 +19,8 @@
 #include "render/RenderBackend.h"
 #include "text/Font.h"
 #include "ui/Hud.h"
+#include "ui/HudView.h"
+#include "ui/Ui.h"
 
 namespace newcore {
 
@@ -448,12 +450,119 @@ void GameContext::debugGiveKeycards() {
 		sys_.player->inventory[19], sys_.player->inventory[20]);
 }
 
+// ---- HUD view model (spec 2026-08-27-ui-layer §4.1) ----
+
+namespace {
+
+// Soft-key string ids: the gameplay default is setSoftKeys(0,52, 0,55)
+// (src/SoftKeyController.cpp:97-99) — text type 0, 52 = "Menu", 55 = "Map"
+// (docs/original-code/ui.md §6).
+constexpr int kSoftKeyMenuId = 52;
+constexpr int kSoftKeyMapId = 55;
+
+// Hit boxes for the two side soft keys, verbatim from the touch areas the
+// original registers in Hud::startup: id 0 = left (0,256,52,64) -> ACTION_MENU,
+// id 1 = right (428,256,52,64) -> ACTION_AUTOMAP (src/Hud.cpp:67-71 for the
+// rects, src/Hud.cpp:1300-1320 for the actions). They are wider than the 32x32
+// arrow art on purpose and they also cover the labels.
+constexpr UiRect kSoftLeftHit{ 0, 256, 52, 64 };
+constexpr UiRect kSoftRightHit{ 428, 256, 52, 64 };
+// The centre "Wait" literal has no touch area in the original (its ACTION_
+// PASSTURN lives on the portrait button), so this rect is ours: the text box of
+// the label as drawString lays it out — 4 glyphs * 9 px advance, HCENTER at
+// x=240 -> x 222, BOTTOM at y=320 -> rows 304..319 (Font::kGlyphH = 16,
+// new_src/render/Graphics2D.cpp:124-136).
+constexpr UiRect kSoftCenterHit{ 222, 304, 36, 16 };
+
+void setSoftKeyText(Text& out, const std::string& s) {
+	// composeText + dehyphenate, as the original does for every soft-key label
+	// (src/TouchController.cpp:556-561).
+	out.setLength(0);
+	out.append(s);
+	out.dehyphenate();
+}
+
+} // namespace
+
+void GameContext::buildHudModel(HudModel& m, bool showBottomBar) {
+	m = HudModel{};
+	m.showBottomBar = showBottomBar;
+
+	// Producer half of the former Hud::feedPlayerStatus: the RAW live stats the
+	// legacy widgets read every draw pass (src/Hud.cpp:683-709).
+	const Player& p = *sys_.player;
+	m.health = p.getHealth();
+	m.maxHealth = p.getMaxHealth();
+	m.shield = p.ce.getStat(Enums::STAT_ARMOR);
+	m.weapon = p.weapon;
+	if (sys_.tables != nullptr) {
+		const int ammoType = sys_.tables->weaponDef(p.weapon).ammoType;
+		if (ammoType >= 0 && ammoType < 9) m.ammo = p.ammo[ammoType];
+	}
+	// drawWeapon's drawNumbers flag (src/Hud.cpp:1053-1112). NOTE: the
+	// original's `default:` branch also covers weapon < 0, so a player with no
+	// weapon shows no digits there; the formula below is the spec's
+	// (weapon != 1 && weapon < 15) and keeps the current rewrite's "000".
+	m.showAmmo = m.weapon != 1 && m.weapon < 15;
+	m.slashAmmo = m.weapon == 13;
+	// Nested-if fold of src/Hud.cpp:1158-1172: slot 19 = red keycard,
+	// slot 20 = blue keycard.
+	m.keysRow = (p.inventory[19] > 0 ? 1 : 0) | (p.inventory[20] > 0 ? 2 : 0);
+
+	// Soft keys: gameplay defaults only. The rewrite has no softKeyLeftID/
+	// RightID state machine, so the per-screen variants (Exit / Leave /
+	// Re-turn / Dis-card, docs/original-code/ui.md §6) are not modelled and the
+	// slots stay null outside the bottom-bar states — which is exactly the
+	// legacy "== -1" case the view already handles.
+	if (showBottomBar && sys_.loc != nullptr) {
+		setSoftKeyText(softLeftText_, sys_.loc->get(kTextMain, kSoftKeyMenuId));
+		setSoftKeyText(softRightText_, sys_.loc->get(kTextMain, kSoftKeyMapId));
+		setSoftKeyText(softCenterText_, "Wait");   // hardcoded ASCII (src/Hud.cpp:715-721)
+		m.softLeft = &softLeftText_;
+		m.softRight = &softRightText_;
+		m.softCenter = &softCenterText_;
+		m.softLeftHit = kSoftLeftHit;
+		m.softRightHit = kSoftRightHit;
+		m.softCenterHit = kSoftCenterHit;
+	}
+}
+
+void GameContext::applyUiAction(UiAction a, int index) {
+	// One switch, feeding the queue the keyboard already feeds (spec §4.2).
+	Action queued = Action::None;
+	switch (a) {
+	case UiAction::None: return;
+	case UiAction::Menu:       queued = Action::Menu; break;
+	case UiAction::Automap:    queued = Action::Automap; break;
+	case UiAction::Back:       queued = Action::BackKey; break;
+	case UiAction::PassTurn:   queued = Action::Passturn; break;
+	case UiAction::Activate:   queued = Action::Use; break;
+	// The scroll mapping is chosen so a wheel behaves exactly like the arrow
+	// keys already do in the loot list (new_src/core/LootSession.cpp:104-120).
+	case UiAction::ScrollUp:   queued = Action::Forward; break;
+	case UiAction::ScrollDown: queued = Action::Back; break;
+	case UiAction::ScrollHome: queued = Action::TurnLeft; break;
+	case UiAction::ScrollEnd:  queued = Action::TurnRight; break;
+	case UiAction::ListRow:
+		std::fprintf(stderr, "[ui] list row %d (no mapping this phase)\n", index);
+		return;
+	}
+	std::fprintf(stderr, "[ui] intent %d -> queue Action %d\n", (int)a, (int)queued);
+	queueAction(queued);
+}
+
 // ---- render orchestration ----
 
 void GameContext::render(AppContext& app) {
 	RenderBackend& renderer = app.renderer();
 	renderer.beginFrame(app.window());
 	Graphics2D& g = renderer.g2d();
+
+	// UI pass frame window (spec §8): every view runs on the render thread
+	// between the backend's beginFrame and endFrame. beginFrame latches the
+	// frame's input, endFrame drops a press that ended off-canvas.
+	Ui* ui = sys_.ui;
+	if (ui != nullptr) ui->beginFrame(uiInput_);
 
 	// Single source of truth for "a cinematic owns the world this frame":
 	// one value, produced by one owner, feeding fov, cockpit overlay and
@@ -517,24 +626,19 @@ void GameContext::render(AppContext& app) {
 	targeting_.feedHealthBar();
 	if (gameplayView) {
 		sys_.hud->drawTopBar(g, *sys_.font, 480);
+	}
 
-		// Bottom bar: legacy repaint bit 0x4, drawn right after the 0x2 group
-		// (src/Hud.cpp:747-782) and on top of the panel background that
-		// drawTopBar paints. The per-state mask is 47 for
-		// Playing/Combat/Dialog/Dying and excludes ST_CAMERA (24) and
-		// ST_INTER_CAMERA (43), which is exactly `gameplayView` here.
-		const Player& p = *sys_.player;
-		int ammoCount = 0;
-		if (sys_.tables) {
-			const int ammoType = sys_.tables->weaponDef(p.weapon).ammoType;
-			if (ammoType >= 0 && ammoType < 9) ammoCount = p.ammo[ammoType];
-		}
-		// Nested-if fold of src/Hud.cpp:1158-1172: slot 19 = red keycard,
-		// slot 20 = blue keycard.
-		const int keysRow = (p.inventory[19] > 0 ? 1 : 0) | (p.inventory[20] > 0 ? 2 : 0);
-		sys_.hud->feedPlayerStatus(p.getHealth(), p.getMaxHealth(),
-		                           p.ce.getStat(Enums::STAT_ARMOR), p.weapon, ammoCount, keysRow);
-		sys_.hud->drawBottomBar(g, *sys_.font);
+	// Bottom bar through the UI layer (spec §4.2): legacy repaint bit 0x4,
+	// drawn right after the 0x2 group (src/Hud.cpp:747-782) and on top of the
+	// panel background that drawTopBar paints. The per-state mask is 47 for
+	// Playing/Combat/Dialog/Dying and excludes ST_CAMERA (24) and
+	// ST_INTER_CAMERA (43), which is exactly `gameplayView` here — the gate
+	// stays here and travels into the model as showBottomBar.
+	if (ui != nullptr) {
+		HudModel hud;
+		buildHudModel(hud, gameplayView);
+		const UiResult r = drawHud(*ui, hud);
+		applyUiAction(r.action, r.index);
 	}
 
 	// Messages overlay while cockpit/HUD stay hidden.
@@ -547,6 +651,8 @@ void GameContext::render(AppContext& app) {
 	// Loot list overlay during the dwell window — paints OVER world+HUD
 	// (src/Canvas.cpp:414-417,469-472).
 	if (state_ == StateId::Looting) loot_.draw(g);
+
+	if (ui != nullptr) ui->endFrame();
 
 	renderer.endFrame(app.window());
 }

@@ -200,7 +200,8 @@ int main(int argc, char* argv[]) {
 	// UI layer (spec 2026-08-27-ui-layer §2, §8): UiAssets owns every sheet
 	// and outlives every view; the reader functor keeps ui/ free of
 	// core/AppContext.h. UiState holds the only retained UI state, Ui is the
-	// per-frame façade. No screen draws through them yet (GROUP 4+).
+	// per-frame façade, handed to GameContext which drives the views (GROUP 4:
+	// the HUD bottom bar).
 	UiAssets uiAssets;
 	uiAssets.load([&app](const char* name, std::vector<uint8_t>& out) {
 		return app.readResource(name, out);
@@ -252,9 +253,9 @@ int main(int argc, char* argv[]) {
 	game.combat.init({         // Env: game, player, hud, loc, tables, map, gameTime (spec §2.2)
 		&game, &player, &hud, &loc, &tables, &g_map, &ctx.gameTime });
 	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges
-	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world, dialogs
+	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world, dialogs, ui
 		&g_map, &g_entityDefs, &tables, &loc, &font, &g_media,
-		&game, &player, &vm, &hud, &world, &dialogs });
+		&game, &player, &vm, &hud, &world, &dialogs, &ui });
 	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
 		&ctx, &vm, &game, &loc, &hud, &font, &tables });
 

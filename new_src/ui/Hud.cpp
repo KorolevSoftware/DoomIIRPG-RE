@@ -15,37 +15,6 @@ namespace {
 constexpr int kPanelTopW = 480;
 constexpr int kPanelTopH = 20;
 constexpr int kPanelBottomY = 256;
-constexpr int kWeaponH = 44;
-constexpr int kNumH = 20;
-constexpr int kKeyH = 44;
-constexpr int kFaceH = 32;
-
-// Legacy drawWeapon texY for each weapon id (see Hud::drawWeapon).
-int weaponTexY(int weapon) {
-	switch (weapon) {
-	case 0: return 0;
-	case 1: return 1;
-	case 2: return 2;
-	case 3: case 4: return 10;
-	case 5: case 6: return 11;
-	case 7: return 3;
-	case 8: return 4;
-	case 9: return 5;
-	case 10: return 6;
-	case 11: return 7;
-	case 12: return 8;
-	case 13: return 9;
-	case 14: return 12;
-	default: return 13;
-	}
-}
-
-bool weaponShowsAmmo(int weapon) {
-	switch (weapon) {
-	case 1: return false;
-	default: return true;
-	}
-}
 
 } // namespace
 
@@ -76,7 +45,9 @@ void Hud::draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeigh
 	drawHudOverdraw(g, 0, 0, canvasWidth, canvasHeight);
 	drawTopBar(g, font, canvasWidth); // also paints the bottom panel background
 	if (showArrows_) drawArrowControls(g);
-	drawBottomBar(g, font);
+	// The bottom bar is drawHud(ui, HudModel) now (spec §4.2). This whole
+	// method has no caller — GameContext::render drives drawTopBar /
+	// drawMessages / the HUD view directly.
 	drawBubbleText(g, font, 240, 42, 480);
 }
 
@@ -230,43 +201,6 @@ void Hud::feedMonsterHealth(int id, int hp, int maxHp, bool lowBar, bool boss) {
 	monsterMaxHp_ = maxHp;
 	monsterLowBar_ = lowBar;
 	monsterBoss_ = boss;
-}
-
-void Hud::feedPlayerStatus(int health, int maxHealth, int shield, int weapon, int ammo, int keysRow) {
-	// Pure value transfer: the legacy widgets read these straight off the
-	// player each draw pass (src/Hud.cpp:683-709), so there is no smoothing
-	// and no dirty flag here. maxHealth is only ever used as a divisor for
-	// the portrait row, which the original leaves unguarded (ui.md 4).
-	health_ = health;
-	maxHealth_ = maxHealth;
-	shield_ = shield;
-	weapon_ = weapon;
-	ammo_ = ammo;
-	keys_ = keysRow;
-}
-
-void Hud::drawWeaponSelection(Graphics2D& g, const Font& font) {
-	if (!weaponSelect_ || !art().weaponNormal.valid()) return;
-
-	// Legacy FMGL_fillRect: semi-transparent black over the whole screen.
-	g.fillRect(0, art().panelTop.valid() ? art().panelTop.height() : 20, 480, 320, 0, 0, 0, 128);
-
-	// Demo weapons: draw a handful in a 4-column grid like the legacy select.
-	int owned = 0b0000000000101111; // weapons 0..4 owned
-	int x0 = (480 - 16 - 4 * art().weaponNormal.width()) / 2;
-	int y0 = 320 - 108;
-	int posX = 0, posY = -4, v8 = 0;
-	for (int i = 0; i < 15; ++i) {
-		if (((owned >> i) & 1) == 0) continue;
-		if (v8 > 0 && (v8 & 3) == 0) {
-			posY -= 48;
-			posX = 0;
-		}
-		++v8;
-		// Legacy: highlighted only while the finger is on the button.
-		drawWeapon(g, x0 + posX, posY + y0, i, i == touchedWeapon_);
-		posX += art().weaponNormal.width() + 4;
-	}
 }
 
 void Hud::drawArrowControls(Graphics2D& g) {
@@ -518,77 +452,6 @@ void Hud::update(int timeMs) {
 			subText_.clear();
 		}
 	}
-}
-
-void Hud::drawBottomBar(Graphics2D& g, const Font& font) {
-	if (weaponSelect_) {
-		drawWeaponSelection(g, font);
-		return;
-	}
-
-	// Weapon.
-	drawWeapon(g, 268, 258, weapon_, false);
-
-	// Shield.
-	const Texture& shield = art().shieldNormal;
-	g.drawImage(shield, 49, 258, 0);
-	drawNumbers(g, 89, 268, 1, shield_, -1);
-
-	// Health.
-	const Texture& health = art().healthNormal;
-	g.drawImage(health, 133, 258, 0);
-	drawNumbers(g, 173, 268, 1, health_, -1);
-
-	// Player portrait.
-	playerRow_ = 4 - 5 * health_ / (maxHealth_ ? maxHealth_ : 1);
-	if (playerRow_ < 0) playerRow_ = 0;
-	if (art().playerFaces.valid()) {
-		g.drawRegion(art().playerFaces, 0, kFaceH * playerRow_, art().playerFaces.width(), kFaceH,
-			224, 263, Graphics2D::kAnchorTop);
-	}
-	if (art().playerFrameNormal.valid()) {
-		g.drawImage(art().playerFrameNormal, 216, 255, 0);
-	}
-
-	// Keys.
-	drawCurrentKeys(g, 375, 258);
-}
-
-void Hud::drawWeapon(Graphics2D& g, int x, int y, int weapon, bool highlighted) {
-	const Texture& tex = highlighted ? art().weaponActive : art().weaponNormal;
-	if (!tex.valid()) return;
-	int texY = weaponTexY(weapon);
-	g.drawRegion(tex, 0, texY * kWeaponH, tex.width(), kWeaponH, x, y, Graphics2D::kAnchorTop);
-	if (weaponShowsAmmo(weapon)) {
-		drawNumbers(g, x + (tex.width() >> 1) + 6, y + 8, 1, ammo_, weapon);
-	}
-}
-
-void Hud::drawNumbers(Graphics2D& g, int x, int y, int space, int num, int weapon) {
-	if (!art().numbers.valid() || num >= 1000) return;
-	int h1 = num / 100;
-	int h2 = num % 100 / 10;
-	int h3 = num % 100 % 10;
-	if (weapon == 13) {
-		h1 = num % 100 % 10;
-		h3 = 5;
-	}
-	if (weapon == 13) {
-		h2 = -1;
-	}
-	// All three glyphs are drawn unconditionally and at fixed offsets
-	// (src/Hud.cpp:1143-1150). h2 == -1 is meaningful: row 20*(9-(-1)) = 200
-	// is row 10 of the 11-row sheet, the '/' glyph, so weapon 13 reads "N/5".
-	// No leading-zero suppression either: 0 shows "000".
-	g.drawRegion(art().numbers, 0, kNumH * (9 - h1), 10, kNumH, x, y, Graphics2D::kAnchorTop);
-	g.drawRegion(art().numbers, 0, kNumH * (9 - h2), 10, kNumH, x + space + 10, y, Graphics2D::kAnchorTop);
-	g.drawRegion(art().numbers, 0, kNumH * (9 - h3), 10, kNumH, x + 2 * space + 20, y, Graphics2D::kAnchorTop);
-}
-
-void Hud::drawCurrentKeys(Graphics2D& g, int x, int y) {
-	const Texture& tex = art().keyNormal;
-	if (!tex.valid()) return;
-	g.drawRegion(tex, 0, kKeyH * keys_, tex.width(), kKeyH, x, y, Graphics2D::kAnchorTop);
 }
 
 } // namespace newcore

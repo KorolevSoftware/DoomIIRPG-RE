@@ -74,6 +74,9 @@ bool GameLoop::run(AppContext& context) {
 
 		Window& window = context.window();
 		window.applyVideoSettings();
+		// Hand this frame's normalized input to the UI pass inside render()
+		// (spec §3): input() is only valid until the next beginFrame().
+		ctx.setUiInput(collector.input());
 		ctx.render(context);
 		++fpsFrames;
 

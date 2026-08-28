@@ -36,6 +36,11 @@ bool UiAssets::load(const ResourceReader& read) {
 	bool ok = true;
 	ok &= loadTexture(read, "HUD_Panel_top.bmp", panelTop);
 	ok &= loadTexture(read, "gameMenu_Panel_bottom.bmp", panelBottom);
+	// Same file names and relative order as the original (src/Hud.cpp:51-54).
+	ok &= loadTexture(read, "Switch_Right_Normal.bmp", switchRightNormal);
+	ok &= loadTexture(read, "Switch_Right_Active.bmp", switchRightActive);
+	ok &= loadTexture(read, "Switch_Left_Normal.bmp", switchLeftNormal);
+	ok &= loadTexture(read, "Switch_Left_Active.bmp", switchLeftActive);
 	ok &= loadTexture(read, "Hud_Weapon_Normal.bmp", weaponNormal);
 	ok &= loadTexture(read, "HUD_Weapon_Active.bmp", weaponActive);
 	ok &= loadTexture(read, "arrow-up.bmp", arrowUp);

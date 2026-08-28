@@ -23,6 +23,10 @@ public:
 	bool load(const ResourceReader& read);
 
 	Texture panelTop, panelBottom;
+	// HUD bottom-bar switch arrows, 32x32 (docs/original-code/ui.md §1);
+	// loaded by GROUP 4, which is the first group that draws them.
+	Texture switchLeftNormal, switchLeftActive;
+	Texture switchRightNormal, switchRightActive;
 	Texture weaponNormal, weaponActive;
 	Texture shieldNormal, shieldActive;
 	Texture healthNormal, healthActive;

@@ -58,7 +58,6 @@ public:
 	void setCockpitOverlay(bool on) { cockpitOverlay_ = on; }
 	bool cockpitOverlay() const { return cockpitOverlay_; }
 	void drawMonsterHealth(Graphics2D& g, int scrCx, int viewTop);
-	void drawWeaponSelection(Graphics2D& g, const Font& font);
 	void drawBubbleText(Graphics2D& g, const Font& font, int scrCx, int viewTop, int viewRight);
 	// BUBBLE_TEXT_TIME = 1500 ms (src/Hud.h:38, ui.md 18).
 	static constexpr int kBubbleDurationMs = 1500;
@@ -73,9 +72,6 @@ public:
 	}
 	void drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int viewH);
 	void drawHudOverdraw(Graphics2D& g, int hudX, int hudY, int hudW, int hudH);
-	void setWeaponSelect(bool on) { weaponSelect_ = on; }
-	bool weaponSelect() const { return weaponSelect_; }
-	void setTouchedWeapon(int w) { touchedWeapon_ = w; }
 	void setArrowPressed(int a) { arrowPressed_ = a; }
 	void setShowArrows(bool on) { showArrows_ = on; }
 
@@ -131,21 +127,9 @@ public:
 	// (src/Hud.cpp:866-868); boss = Entity::isBoss() -> ++n4 (:874).
 	void feedMonsterHealth(int id, int hp, int maxHp, bool lowBar = false, bool boss = false);
 
-	// Bottom-bar feed. All values are the RAW stats the legacy widgets read
-	// live every frame (src/Hud.cpp:683-709; the invalidate-flag clears in
-	// Hud::draw are commented out, ui.md 8): health/maxHealth = stats 0/1,
-	// shield = stat 2, weapon = ce->weapon, ammo = ammo[weapons[9w+4]],
-	// keysRow = (inventory[19]>0 ? 1 : 0) | (inventory[20]>0 ? 2 : 0)
-	// (19 = red, 20 = blue; src/Hud.cpp:1154-1179).
-	void feedPlayerStatus(int health, int maxHealth, int shield, int weapon, int ammo, int keysRow);
-
-	// Bottom bar: the widget row on top of drawBottomPanel's background.
-	void drawBottomBar(Graphics2D& g, const Font& font);
-
-	// Bottom-bar sub-elements.
-	void drawWeapon(Graphics2D& g, int x, int y, int weapon, bool highlighted);
-	void drawNumbers(Graphics2D& g, int x, int y, int space, int num, int weapon);
-	void drawCurrentKeys(Graphics2D& g, int x, int y);
+	// The bottom bar itself is no longer here: its widgets are drawn by
+	// drawHud(Ui&, const HudModel&) (new_src/ui/HudView.cpp) from a model
+	// GameContext rebuilds every frame (spec 2026-08-27-ui-layer §4).
 
 private:
 	void drawArrowControls(Graphics2D& g);
@@ -159,15 +143,6 @@ private:
 	// empty UiAssets while it is null.
 	const UiAssets* assets_ = nullptr;
 	const UiAssets& art() const;
-
-	// Bottom-bar widget values, refreshed by feedPlayerStatus every frame.
-	int health_ = 0;
-	int maxHealth_ = 1;
-	int shield_ = 0;
-	int weapon_ = -1;
-	int ammo_ = 0;
-	int keys_ = 0; // 0=none, 1=red, 2=blue, 3=both
-	int playerRow_ = 0; // face row based on health
 
 	// Message queue: only messages_[0] is drawn, and it expires
 	// msgDuration_ + 100 ms after becoming the head (src/Hud.cpp:249-251).
@@ -194,10 +169,6 @@ private:
 	int monsterChangeTime_ = 0;
 	bool monsterLowBar_ = false;
 	bool monsterBoss_ = false;
-
-	// Demo weapon select screen.
-	bool weaponSelect_ = false;
-	int touchedWeapon_ = -1;
 
 	// Demo arrow controls: 0=none,1=up,2=down,3=left,4=right.
 	int arrowPressed_ = 0;
