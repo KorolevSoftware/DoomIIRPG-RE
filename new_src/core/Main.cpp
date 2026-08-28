@@ -13,9 +13,13 @@
 #include "io/Resources.h"
 #include "io/Tables.h"
 #include "io/ZipArchive.h"
+#include "render/RenderBackend.h"
 #include "render/World3D.h"
 #include "text/Font.h"
 #include "ui/Hud.h"
+#include "ui/Ui.h"
+#include "ui/UiAssets.h"
+#include "ui/UiState.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -193,8 +197,21 @@ int main(int argc, char* argv[]) {
 		fflush(stderr);
 	}
 
+	// UI layer (spec 2026-08-27-ui-layer §2, §8): UiAssets owns every sheet
+	// and outlives every view; the reader functor keeps ui/ free of
+	// core/AppContext.h. UiState holds the only retained UI state, Ui is the
+	// per-frame façade. No screen draws through them yet (GROUP 4+).
+	UiAssets uiAssets;
+	uiAssets.load([&app](const char* name, std::vector<uint8_t>& out) {
+		return app.readResource(name, out);
+	});
+
+	UiState uiState;
+	Ui ui;
+	ui.init({ &app.renderer().g2d(), &font, &uiAssets, &uiState });
+
 	Hud hud;
-	hud.startup();
+	hud.setAssets(&uiAssets);
 
 	// 3D world renderer: builds GPU textures for the map's media and draws
 	// the decoded polygons with a perspective camera (legacy GL-path port).

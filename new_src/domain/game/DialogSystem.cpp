@@ -12,6 +12,7 @@
 #include "render/Graphics2D.h"
 #include "text/Font.h"
 #include "ui/Hud.h"
+#include "ui/Ui.h"
 
 namespace newcore {
 
@@ -28,10 +29,6 @@ constexpr int kHudTopPinnedY = 20;          // hudRect[1]+20; hudRect[1]=screenR
 constexpr uint32_t kColorWhite = 0xFFFFFFFF;
 constexpr uint32_t kHeaderGray = 0xFF666666;      // default color2 (:139)
 constexpr uint32_t kPlayerDlgColor = 0xFF005617;  // Canvas::PLAYER_DLG_COLOR (src/Canvas.h:112)
-
-// Scrollbar colors (src/Canvas.cpp:1307-1311, negated legacy literals).
-constexpr uint32_t kScrollTrack = 0xFFB3AA93;     // -5002605
-constexpr uint32_t kScrollThumb = 0xFFE7CFAD;     // -1585235
 
 void fillArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
 	g.fillRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
@@ -576,22 +573,14 @@ void DialogSystem::drawTitle(Graphics2D& g, int cx, int y, bool greenText) {
 	}
 }
 
-// Canvas::drawScrollBar analog (src/Canvas.cpp:1284-1315).
+// The Canvas::drawScrollBar port itself now lives in the UI layer
+// (drawScrollBarCanvas, new_src/ui/Ui.cpp); this stays only as the call site
+// the existing dialog/loot code already uses. GROUP 5/7 replace both callers
+// with Ui::scrollBar and delete this forwarder.
 void DialogSystem::drawScrollBar(Graphics2D& g, int x, int y, int h,
 	int topLine, int pageEnd, int numLines, int viewLines) const {
-	const Texture& uiImages = env_.hud->imgUIImages();
-	if (viewLines >= numLines) return;
-	int scrollRange = std::max(numLines - viewLines, topLine);
-	int thumbH = 3 * h / (4 * ((viewLines + numLines - 1) / viewLines));
-	int thumbY = ((topLine << 16) / (scrollRange << 8) * ((h - thumbH - 14) << 8)) >> 16;
-	if (numLines == pageEnd) thumbY = h - 3 * h / (4 * ((viewLines + numLines - 1) / viewLines)) - 14;
-	if (!uiImages.valid()) return;
-	g.drawRegion(uiImages, 60, 0, 7, 7, x, y, Graphics2D::kAnchorTop | Graphics2D::kAnchorRight);
-	g.drawRegion(uiImages, 60, 7, 7, 7, x, y + h, Graphics2D::kAnchorBottom | Graphics2D::kAnchorRight);
-	fillArgb(g, x - 7, y + 7, 7, h - 14, kScrollTrack);
-	fillArgb(g, x - 7, thumbY + 7 + y, 7, thumbH, kScrollThumb);
-	rectArgb(g, x - 7, thumbY + 7 + y, 6, thumbH - 1, 0xFF000000);
-	rectArgb(g, x - 7, y, 6, h - 1, 0xFF000000);
+	drawScrollBarCanvas(g, env_.hud->imgUIImages(), x, y, h, topLine, pageEnd,
+		numLines, viewLines);
 }
 
 } // namespace newcore

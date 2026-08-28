@@ -12,6 +12,7 @@ namespace newcore {
 class Font;
 class Text;
 class Graphics2D;
+class UiAssets;
 
 // In-game heads-up display: top status bar, bottom control bar (weapon,
 // shield, health, keys, player portrait) and the cockpit overlay.
@@ -22,17 +23,20 @@ public:
 
 	Hud() = default;
 
-	// Loads all HUD textures. Returns false on failure.
-	bool startup();
+	// The sheets themselves now live in UiAssets, loaded by the composition
+	// root (spec 2026-08-27-ui-layer §2.1). Hud borrows them; a null pointer
+	// yields all-invalid textures, i.e. every blit is skipped, exactly as a
+	// failed load behaved before.
+	void setAssets(const UiAssets* assets) { assets_ = assets; }
 
-	const Texture& imgCockpitOverlay() const { return imgCockpitOverlay_; }
+	const Texture& imgCockpitOverlay() const;
 	// Shared UI sheet (tail arrows, scrollbar caps) and the dialog extras
 	// loaded for DialogSystem (hero portrait rows, page icons).
-	const Texture& imgUIImages() const { return imgUIImages_; }
-	const Texture& imgPortraitsSmall() const { return imgPortraitsSmall_; }
-	const Texture& imgPageUp() const { return imgPageUp_; }
-	const Texture& imgPageDown() const { return imgPageDown_; }
-	const Texture& imgPageOk() const { return imgPageOk_; }
+	const Texture& imgUIImages() const;
+	const Texture& imgPortraitsSmall() const;
+	const Texture& imgPageUp() const;
+	const Texture& imgPageDown() const;
+	const Texture& imgPageOk() const;
 
 	void draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeight);
 	void drawOverlay(Graphics2D& g, int cinX, int cinY, int cinW);
@@ -151,39 +155,10 @@ private:
 	void drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
 	void drawCenterMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color);
 
-	Texture imgPanelTop_;
-	Texture imgPanelBottom_;
-	Texture imgWeaponNormal_;
-	Texture imgWeaponActive_;
-	Texture imgShieldNormal_;
-	Texture imgShieldButtonActive_;
-	Texture imgKeyNormal_;
-	Texture imgKeyActive_;
-	Texture imgHealthNormal_;
-	Texture imgHealthButtonActive_;
-	Texture imgPlayerFaces_;
-	Texture imgPlayerActive_;
-	Texture imgPlayerFrameNormal_;
-	Texture imgPlayerFrameActive_;
-	Texture imgNumbers_;
-	Texture imgCockpitOverlay_;
-	Texture imgArrowUp_;
-	Texture imgArrowDown_;
-	Texture imgArrowLeft_;
-	Texture imgArrowRight_;
-	Texture imgArrowUpPressed_;
-	Texture imgArrowDownPressed_;
-	Texture imgArrowLeftPressed_;
-	Texture imgArrowRightPressed_;
-
-	Texture imgUIImages_;
-	Texture imgPortraitsSmall_;
-	Texture imgPageUp_;
-	Texture imgPageDown_;
-	Texture imgPageOk_;
-	Texture imgDamageVignette_;
-	Texture imgAttArrow_;
-	Texture imgHudTest_;
+	// Borrowed sheet owner (never owned here); art() below substitutes an
+	// empty UiAssets while it is null.
+	const UiAssets* assets_ = nullptr;
+	const UiAssets& art() const;
 
 	// Bottom-bar widget values, refreshed by feedPlayerStatus every frame.
 	int health_ = 0;

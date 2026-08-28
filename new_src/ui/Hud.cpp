@@ -3,11 +3,10 @@
 #include <algorithm>
 #include <cstdio>
 
-#include "core/AppContext.h"
-#include "io/BmpImageLoader.h"
 #include "render/Graphics2D.h"
 #include "text/Font.h"
 #include "text/Text.h"
+#include "ui/UiAssets.h"
 
 namespace newcore {
 
@@ -48,79 +47,30 @@ bool weaponShowsAmmo(int weapon) {
 	}
 }
 
-bool loadTexture(const AppContext& app, const char* name, Texture& out) {
-	std::vector<uint8_t> bmp;
-	if (!app.readResource(name, bmp)) {
-		std::fprintf(stderr, "Hud: missing resource %s\n", name);
-		return false;
-	}
-	BmpImageLoader loader;
-	ImagePtr img = loader.load(bmp, true);
-	if (!img) {
-		std::fprintf(stderr, "Hud: failed to decode %s\n", name);
-		return false;
-	}
-	out.uploadIndexed(img->indices(), img->width(), img->height(), img->palette(), true);
-	if (!out.valid()) {
-		std::fprintf(stderr, "Hud: texture upload failed for %s\n", name);
-		return false;
-	}
-	return true;
-}
-
 } // namespace
 
-bool Hud::startup() {
-	const AppContext& app = AppContext::instance();
-	bool ok = true;
-	ok &= loadTexture(app, "HUD_Panel_top.bmp", imgPanelTop_);
-	ok &= loadTexture(app, "gameMenu_Panel_bottom.bmp", imgPanelBottom_);
-	ok &= loadTexture(app, "Hud_Weapon_Normal.bmp", imgWeaponNormal_);
-	ok &= loadTexture(app, "HUD_Weapon_Active.bmp", imgWeaponActive_);
-	ok &= loadTexture(app, "arrow-up.bmp", imgArrowUp_);
-	ok &= loadTexture(app, "arrow-down.bmp", imgArrowDown_);
-	ok &= loadTexture(app, "arrow-left.bmp", imgArrowLeft_);
-	ok &= loadTexture(app, "arrow-right.bmp", imgArrowRight_);
-	ok &= loadTexture(app, "arrow-up_pressed.bmp", imgArrowUpPressed_);
-	ok &= loadTexture(app, "arrow-down_pressed.bmp", imgArrowDownPressed_);
-	ok &= loadTexture(app, "arrow-left_pressed.bmp", imgArrowLeftPressed_);
-	ok &= loadTexture(app, "arrow-right_pressed.bmp", imgArrowRightPressed_);
-	ok &= loadTexture(app, "ui_images.bmp", imgUIImages_);
-	ok &= loadTexture(app, "Hud_Portrait_Small.bmp", imgPortraitsSmall_);
-	ok &= loadTexture(app, "pageUP_Icon.bmp", imgPageUp_);
-	ok &= loadTexture(app, "pageDOWN_Icon.bmp", imgPageDown_);
-	ok &= loadTexture(app, "pageOK_Icon.bmp", imgPageOk_);
-	ok &= loadTexture(app, "damage.bmp", imgDamageVignette_);
-	ok &= loadTexture(app, "Hud_Attack_Arrows.bmp", imgAttArrow_);
-	ok &= loadTexture(app, "Hud_Test.bmp", imgHudTest_);
-	std::fprintf(stdout, "Hud: weaponNormal=%dx%d valid=%d, weaponActive valid=%d\n",
-		imgWeaponNormal_.width(), imgWeaponNormal_.height(), (int)imgWeaponNormal_.valid(),
-		(int)imgWeaponActive_.valid());
-	ok &= loadTexture(app, "HUD_Shield_Normal.bmp", imgShieldNormal_);
-	ok &= loadTexture(app, "Hud_Shield_Button_Active.bmp", imgShieldButtonActive_);
-	ok &= loadTexture(app, "Hud_Key_Normal.bmp", imgKeyNormal_);
-	ok &= loadTexture(app, "Hud_Key_Active.bmp", imgKeyActive_);
-	ok &= loadTexture(app, "HUD_Health_Normal.bmp", imgHealthNormal_);
-	ok &= loadTexture(app, "Hud_Health_Button_Active.bmp", imgHealthButtonActive_);
-	ok &= loadTexture(app, "Hud_Player.bmp", imgPlayerFaces_);
-	ok &= loadTexture(app, "HUD_Player_Active.bmp", imgPlayerActive_);
-	ok &= loadTexture(app, "HUD_Player_frame_Normal.bmp", imgPlayerFrameNormal_);
-	ok &= loadTexture(app, "HUD_Player_frame_Active.bmp", imgPlayerFrameActive_);
-	ok &= loadTexture(app, "Hud_Numbers.bmp", imgNumbers_);
-	ok &= loadTexture(app, "cockpit.bmp", imgCockpitOverlay_);
-	return ok;
+const UiAssets& Hud::art() const {
+	static const UiAssets kNoAssets;   // all-invalid sheets; every blit skips
+	return assets_ ? *assets_ : kNoAssets;
 }
+
+const Texture& Hud::imgCockpitOverlay() const { return art().cockpitOverlay; }
+const Texture& Hud::imgUIImages() const { return art().uiImages; }
+const Texture& Hud::imgPortraitsSmall() const { return art().portraitsSmall; }
+const Texture& Hud::imgPageUp() const { return art().pageUp; }
+const Texture& Hud::imgPageDown() const { return art().pageDown; }
+const Texture& Hud::imgPageOk() const { return art().pageOk; }
 
 void Hud::draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeight) {
 	// Demo: attack-direction arrow while the damage effect is active.
-	if (damageCount_ > 0 && damageTime_ > 0 && imgAttArrow_.valid() && (1 << damageDir_ & 0xC1)) {
+	if (damageCount_ > 0 && damageTime_ > 0 && art().attackArrows.valid() && (1 << damageDir_ & 0xC1)) {
 		int n4 = canvasHeight - 20 - 25;
 		int n5 = 0;
 		int n6;
 		if (damageDir_ == 0) { n6 = canvasWidth - 20; n5 = 24; }
 		else if (damageDir_ == 6) { n6 = 20; n5 = 12; }
 		else { n6 = canvasWidth >> 1; }
-		g.drawRegion(imgAttArrow_, 0, n5, 12, 12, n6, n4, Graphics2D::kAnchorHCenter);
+		g.drawRegion(art().attackArrows, 0, n5, 12, 12, n6, n4, Graphics2D::kAnchorHCenter);
 	}
 	drawDamageVignette(g, 0, 42, canvasWidth, canvasHeight - 42);
 	drawHudOverdraw(g, 0, 0, canvasWidth, canvasHeight);
@@ -131,11 +81,11 @@ void Hud::draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeigh
 }
 
 void Hud::drawOverlay(Graphics2D& g, int cinX, int cinY, int cinW) {
-	if (!imgCockpitOverlay_.valid()) return;
+	if (!art().cockpitOverlay.valid()) return;
 	// Legacy: left copy at (cinRect[0], cinRect[1]); right copy mirrored with
 	// flags=24 (TOP|RIGHT) so its right edge anchors at cinRect[2] (=x=cinW-240).
-	g.drawImage(imgCockpitOverlay_, 0, 0, 240, 234, cinX, cinY, 240, 234, 0);
-	g.drawImage(imgCockpitOverlay_, cinX + cinW, cinY,
+	g.drawImage(art().cockpitOverlay, 0, 0, 240, 234, cinX, cinY, 240, 234, 0);
+	g.drawImage(art().cockpitOverlay, cinX + cinW, cinY,
 		Graphics2D::kAnchorTop | Graphics2D::kAnchorRight, 4);
 }
 
@@ -176,7 +126,7 @@ void Hud::tickShake(int64_t nowMs) {
 }
 
 void Hud::drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int viewH) {
-	if (damageCount_ <= 0 || !imgDamageVignette_.valid()) return;
+	if (damageCount_ <= 0 || !art().damageVignette.valid()) return;
 	if (damageTime_ <= 0) { damageCount_ = 0; return; }
 
 	int n = 0;
@@ -189,7 +139,7 @@ void Hud::drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int
 		case 0: case 6: case 7: n = 8; break;
 		default: damageCount_ = 0; return;
 	}
-	int width = imgDamageVignette_.width(); // 16
+	int width = art().damageVignette.width(); // 16
 	auto tile = [&](int x, int y, int w, int h, int rot) {
 		// Legacy fillRegion: repeat the 16x16 texture (no scaling).
 		int yBeg = y, yEnd = y + h;
@@ -198,7 +148,7 @@ void Hud::drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int
 			int xBeg = x, xEnd = x + w;
 			while (xBeg < xEnd) {
 				int texw = std::min(xEnd - xBeg, width);
-				g.drawRegion(imgDamageVignette_, 0, 0, texw, texh, xBeg, yBeg, 0, rot);
+				g.drawRegion(art().damageVignette, 0, 0, texw, texh, xBeg, yBeg, 0, rot);
 				xBeg += texw;
 			}
 			yBeg += texh;
@@ -211,11 +161,11 @@ void Hud::drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int
 }
 
 void Hud::drawHudOverdraw(Graphics2D& g, int hudX, int hudY, int hudW, int hudH) {
-	if (!imgHudTest_.valid()) return;
+	if (!art().hudTest.valid()) return;
 	// Legacy: thin strip (13px) of Hud_Test across the bottom panel's top edge.
 	// drawRegion(... 0,0,hudW,13, hudX, hudY+hudH-49, flags=20, ...)
 	// flags=20 -> TOP|RIGHT? No: 20=16|4 = TOP|LEFT anchored. Using anchored blit:
-	g.drawRegion(imgHudTest_, 0, 0, hudW, 13, hudX, hudY + hudH - 49,
+	g.drawRegion(art().hudTest, 0, 0, hudW, 13, hudX, hudY + hudH - 49,
 		Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
 }
 
@@ -296,14 +246,14 @@ void Hud::feedPlayerStatus(int health, int maxHealth, int shield, int weapon, in
 }
 
 void Hud::drawWeaponSelection(Graphics2D& g, const Font& font) {
-	if (!weaponSelect_ || !imgWeaponNormal_.valid()) return;
+	if (!weaponSelect_ || !art().weaponNormal.valid()) return;
 
 	// Legacy FMGL_fillRect: semi-transparent black over the whole screen.
-	g.fillRect(0, imgPanelTop_.valid() ? imgPanelTop_.height() : 20, 480, 320, 0, 0, 0, 128);
+	g.fillRect(0, art().panelTop.valid() ? art().panelTop.height() : 20, 480, 320, 0, 0, 0, 128);
 
 	// Demo weapons: draw a handful in a 4-column grid like the legacy select.
 	int owned = 0b0000000000101111; // weapons 0..4 owned
-	int x0 = (480 - 16 - 4 * imgWeaponNormal_.width()) / 2;
+	int x0 = (480 - 16 - 4 * art().weaponNormal.width()) / 2;
 	int y0 = 320 - 108;
 	int posX = 0, posY = -4, v8 = 0;
 	for (int i = 0; i < 15; ++i) {
@@ -315,20 +265,21 @@ void Hud::drawWeaponSelection(Graphics2D& g, const Font& font) {
 		++v8;
 		// Legacy: highlighted only while the finger is on the button.
 		drawWeapon(g, x0 + posX, posY + y0, i, i == touchedWeapon_);
-		posX += imgWeaponNormal_.width() + 4;
+		posX += art().weaponNormal.width() + 4;
 	}
 }
 
 void Hud::drawArrowControls(Graphics2D& g) {
-	if (!imgArrowUp_.valid()) return;
+	const UiAssets& a = art();
+	if (!a.arrowUp.valid()) return;
 
 	// Legacy controlMode==0 button positions (fmButton touch areas):
 	// up(42,31) down(42,181) left(5,106) right(80,106), 70x70 buttons,
 	// the arrow images themselves are 80x76 drawn at those anchor points.
-	Texture* texUp = (arrowPressed_ == 1) ? &imgArrowUpPressed_ : &imgArrowUp_;
-	Texture* texDown = (arrowPressed_ == 2) ? &imgArrowDownPressed_ : &imgArrowDown_;
-	Texture* texLeft = (arrowPressed_ == 3) ? &imgArrowLeftPressed_ : &imgArrowLeft_;
-	Texture* texRight = (arrowPressed_ == 4) ? &imgArrowRightPressed_ : &imgArrowRight_;
+	const Texture* texUp = (arrowPressed_ == 1) ? &a.arrowUpPressed : &a.arrowUp;
+	const Texture* texDown = (arrowPressed_ == 2) ? &a.arrowDownPressed : &a.arrowDown;
+	const Texture* texLeft = (arrowPressed_ == 3) ? &a.arrowLeftPressed : &a.arrowLeft;
+	const Texture* texRight = (arrowPressed_ == 4) ? &a.arrowRightPressed : &a.arrowRight;
 	g.drawImage(*texUp, 42, 31, 0);
 	g.drawImage(*texDown, 42, 181, 0);
 	g.drawImage(*texLeft, 5, 106, 0);
@@ -336,8 +287,8 @@ void Hud::drawArrowControls(Graphics2D& g) {
 }
 
 void Hud::drawTopBar(Graphics2D& g, const Font& font, int canvasWidth) {
-	if (!imgPanelTop_.valid()) return;
-	g.drawImage(imgPanelTop_, canvasWidth / 2, 0, Graphics2D::kAnchorHCenter);
+	if (!art().panelTop.valid()) return;
+	g.drawImage(art().panelTop, canvasWidth / 2, 0, Graphics2D::kAnchorHCenter);
 
 	// Segmented health bar under the panel (spec combat-stage1 §0.F):
 	// viewRect[1]=20 here + the legacy n3=6 inset = absolute y=26
@@ -352,8 +303,8 @@ void Hud::drawTopBar(Graphics2D& g, const Font& font, int canvasWidth) {
 }
 
 void Hud::drawBottomPanel(Graphics2D& g) {
-	if (!imgPanelBottom_.valid()) return;
-	g.drawImage(imgPanelBottom_, 0, kPanelBottomY, 0);
+	if (!art().panelBottom.valid()) return;
+	g.drawImage(art().panelBottom, 0, kPanelBottomY, 0);
 }
 
 void Hud::drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color) {
@@ -494,8 +445,8 @@ void Hud::drawBubbleText(Graphics2D& g, const Font& font, int scrCx, int viewTop
 	t.append(bubbleText_);
 	// Legacy: drawString(bubbleText, n7+2, n+3, 4) -> flags=4 is LEFT anchor.
 	g.drawString(font, t, n7 + 2, n + 3, Graphics2D::kAnchorLeft);
-	if (imgUIImages_.valid()) {
-		g.drawRegion(imgUIImages_, n3, n4, 10, 6, n7 + 5, n + n6, 0);
+	if (art().uiImages.valid()) {
+		g.drawRegion(art().uiImages, n3, n4, 10, 6, n7 + 5, n + n6, 0);
 	}
 }
 
@@ -579,24 +530,24 @@ void Hud::drawBottomBar(Graphics2D& g, const Font& font) {
 	drawWeapon(g, 268, 258, weapon_, false);
 
 	// Shield.
-	Texture& shield = imgShieldNormal_;
+	const Texture& shield = art().shieldNormal;
 	g.drawImage(shield, 49, 258, 0);
 	drawNumbers(g, 89, 268, 1, shield_, -1);
 
 	// Health.
-	Texture& health = imgHealthNormal_;
+	const Texture& health = art().healthNormal;
 	g.drawImage(health, 133, 258, 0);
 	drawNumbers(g, 173, 268, 1, health_, -1);
 
 	// Player portrait.
 	playerRow_ = 4 - 5 * health_ / (maxHealth_ ? maxHealth_ : 1);
 	if (playerRow_ < 0) playerRow_ = 0;
-	if (imgPlayerFaces_.valid()) {
-		g.drawRegion(imgPlayerFaces_, 0, kFaceH * playerRow_, imgPlayerFaces_.width(), kFaceH,
+	if (art().playerFaces.valid()) {
+		g.drawRegion(art().playerFaces, 0, kFaceH * playerRow_, art().playerFaces.width(), kFaceH,
 			224, 263, Graphics2D::kAnchorTop);
 	}
-	if (imgPlayerFrameNormal_.valid()) {
-		g.drawImage(imgPlayerFrameNormal_, 216, 255, 0);
+	if (art().playerFrameNormal.valid()) {
+		g.drawImage(art().playerFrameNormal, 216, 255, 0);
 	}
 
 	// Keys.
@@ -604,7 +555,7 @@ void Hud::drawBottomBar(Graphics2D& g, const Font& font) {
 }
 
 void Hud::drawWeapon(Graphics2D& g, int x, int y, int weapon, bool highlighted) {
-	Texture& tex = highlighted ? imgWeaponActive_ : imgWeaponNormal_;
+	const Texture& tex = highlighted ? art().weaponActive : art().weaponNormal;
 	if (!tex.valid()) return;
 	int texY = weaponTexY(weapon);
 	g.drawRegion(tex, 0, texY * kWeaponH, tex.width(), kWeaponH, x, y, Graphics2D::kAnchorTop);
@@ -614,7 +565,7 @@ void Hud::drawWeapon(Graphics2D& g, int x, int y, int weapon, bool highlighted) 
 }
 
 void Hud::drawNumbers(Graphics2D& g, int x, int y, int space, int num, int weapon) {
-	if (!imgNumbers_.valid() || num >= 1000) return;
+	if (!art().numbers.valid() || num >= 1000) return;
 	int h1 = num / 100;
 	int h2 = num % 100 / 10;
 	int h3 = num % 100 % 10;
@@ -629,13 +580,13 @@ void Hud::drawNumbers(Graphics2D& g, int x, int y, int space, int num, int weapo
 	// (src/Hud.cpp:1143-1150). h2 == -1 is meaningful: row 20*(9-(-1)) = 200
 	// is row 10 of the 11-row sheet, the '/' glyph, so weapon 13 reads "N/5".
 	// No leading-zero suppression either: 0 shows "000".
-	g.drawRegion(imgNumbers_, 0, kNumH * (9 - h1), 10, kNumH, x, y, Graphics2D::kAnchorTop);
-	g.drawRegion(imgNumbers_, 0, kNumH * (9 - h2), 10, kNumH, x + space + 10, y, Graphics2D::kAnchorTop);
-	g.drawRegion(imgNumbers_, 0, kNumH * (9 - h3), 10, kNumH, x + 2 * space + 20, y, Graphics2D::kAnchorTop);
+	g.drawRegion(art().numbers, 0, kNumH * (9 - h1), 10, kNumH, x, y, Graphics2D::kAnchorTop);
+	g.drawRegion(art().numbers, 0, kNumH * (9 - h2), 10, kNumH, x + space + 10, y, Graphics2D::kAnchorTop);
+	g.drawRegion(art().numbers, 0, kNumH * (9 - h3), 10, kNumH, x + 2 * space + 20, y, Graphics2D::kAnchorTop);
 }
 
 void Hud::drawCurrentKeys(Graphics2D& g, int x, int y) {
-	Texture& tex = imgKeyNormal_;
+	const Texture& tex = art().keyNormal;
 	if (!tex.valid()) return;
 	g.drawRegion(tex, 0, kKeyH * keys_, tex.width(), kKeyH, x, y, Graphics2D::kAnchorTop);
 }
