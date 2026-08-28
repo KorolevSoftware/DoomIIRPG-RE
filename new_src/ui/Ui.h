@@ -58,13 +58,26 @@ public:
 	// ---- primitives ----
 	// borderArgb == 0 means no border; the alpha byte of fillArgb is honoured.
 	void panel(const UiRect& r, uint32_t fillColorArgb, uint32_t borderArgb = 0);
+	// 1px outline with no fill. Needed because the legacy dialog box fills w
+	// but outlines w-1 (src/DialogSystem.cpp:145-146), so the fill and the
+	// border cannot share one rect.
+	void frame(const UiRect& r, uint32_t borderArgb);
 	void image(const Texture& tex, int x, int y, int anchorFlags);
+	// Whole-texture blit at a top-left position with a constant alpha, for the
+	// dialog page icons: their legacy normalRenderMode is RENDER_BLEND75 and
+	// their highlightRenderMode is RENDER_NORMAL (src/Canvas.cpp:329-346).
+	void imageAlpha(const Texture& tex, int x, int y, uint8_t alpha);
 	void imageRegion(const Texture& tex, int srcX, int srcY, int srcW, int srcH,
 		int x, int y, int anchorFlags);
 	// Three 10x20 glyphs from the Hud_Numbers sheet (src/Hud.cpp:1127-1152).
 	void number3(const Texture& sheet, int x, int y, int space, int value,
 		bool slashMode);
 	void label(const Text& t, int x, int y, int anchorFlags, int lineH = 16);
+	// One explicit <start,len> run of a buffer. The dialog's typewriter needs
+	// it: the revealed length changes per frame, so there is no line table to
+	// index (src/DialogSystem.cpp:333-354).
+	void textRun(const Text& t, int start, int len, int x, int y,
+		int anchorFlags, int lineH = 16);
 	// Draws rows firstLine .. firstLine+rows-1 of a <start,len> line table.
 	// Lines outside [0, lineCount) are skipped, not clamped, so a skipped row
 	// leaves its slot blank (the loot loop's `continue`,

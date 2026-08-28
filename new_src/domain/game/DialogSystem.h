@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "text/Text.h"
+#include "ui/DialogModel.h"
 
 namespace newcore {
 
@@ -20,8 +21,9 @@ enum class Action : int;
 
 // Faithful port of Canvas::dialogSystem (src/DialogSystem.cpp): styled bottom
 // dialog boxes, %NN text-arg composition, word wrap + paging, typewriter
-// reveal and the style-2 help FIFO. Owns no GL state — draws through
-// Graphics2D and the Hud textures (spec 2026-08-24-intro-sequence GROUP 1).
+// reveal and the style-2 help FIFO. Owns no GL state and, since spec
+// 2026-08-27-ui-layer §7, no drawing either: the box is painted by
+// ui/DialogView.cpp from the model this class builds.
 class DialogSystem {
 public:
 	static constexpr int kMaxHelpMessages = 16;  // helpMessageTypes[16] (src/DialogSystem.cpp:850)
@@ -38,6 +40,9 @@ public:
 		ScriptVM* vm = nullptr;
 		Game* game = nullptr;
 		const Localization* loc = nullptr;
+		// Both are drawing leftovers: hud supplies the ui_images sheet to the
+		// drawScrollBar forwarder below, and the pair gates buildViewModel the
+		// way it gated the old draw call. Spec GROUP 5 removes the forwarder.
 		Hud* hud = nullptr;
 		const Font* font = nullptr;
 		const Tables* tables = nullptr;
@@ -58,8 +63,14 @@ public:
 	// ACTION_* dispatch while ST_DIALOG (src/DialogSystem.cpp:29-112).
 	void handleInput(Action action);
 
-	// dialogState analog (src/DialogSystem.cpp:114-518).
-	void draw(Graphics2D& g);
+	// State half of the legacy dialogState (src/DialogSystem.cpp:114-518): the
+	// drawing moved to ui/DialogView.cpp (spec 2026-08-27-ui-layer §7) and
+	// what stays here is the per-frame resolution of the paging/typewriter
+	// state into the view model. Not const and not idempotent: it advances the
+	// typewriter cursor exactly like the draw call it replaces, so it must be
+	// called once per rendered frame and only while ST_DIALOG.
+	// Returns false when there is nothing to draw.
+	bool buildViewModel(DialogViewModel& m);
 
 	// Shared Canvas::drawScrollBar port; also used by the loot overlay, like
 	// legacy src/LoothingSystem.cpp:146-150.
@@ -75,7 +86,6 @@ private:
 	void prepareDialog(Text& text, int style, int flags);
 	void closeDialog(bool skip);
 	void composeText(int type, int idx, Text& out) const;
-	void drawTitle(Graphics2D& g, int cx, int y, bool greenText);
 
 	Env env_;
 

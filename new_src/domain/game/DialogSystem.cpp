@@ -9,7 +9,6 @@
 #include "domain/game/ScriptVM.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
-#include "render/Graphics2D.h"
 #include "text/Font.h"
 #include "ui/Hud.h"
 #include "ui/Ui.h"
@@ -18,35 +17,10 @@ namespace newcore {
 
 namespace {
 
-constexpr int kCanvasW = 480;
-constexpr int kCanvasH = 320;
-constexpr int kScrCx = 240;                 // Canvas::SCR_CX
-constexpr int kLineH = 16;                  // drawString line height (src/Graphics.cpp:554)
 constexpr int kTypewriterMsPerChar = 25;    // (src/DialogSystem.cpp:339)
-constexpr int kHudTopPinnedY = 20;          // hudRect[1]+20; hudRect[1]=screenRect[1]=0 (src/Canvas.cpp:139-140)
 
-// Style fills (switch at src/DialogSystem.cpp:137-214).
-constexpr uint32_t kColorWhite = 0xFFFFFFFF;
-constexpr uint32_t kHeaderGray = 0xFF666666;      // default color2 (:139)
-constexpr uint32_t kPlayerDlgColor = 0xFF005617;  // Canvas::PLAYER_DLG_COLOR (src/Canvas.h:112)
-
-void fillArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
-	g.fillRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
-}
-
-void rectArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
-	g.drawRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
-}
-
-// Per-channel brightness scaling of an ARGB color, brightness 0..256
-// (gradient row math at src/DialogSystem.cpp:286-287; the legacy packed
-// expression is reproduced here per-channel — same visual ramp).
-uint32_t scaleColor(uint32_t argb, int brightness) {
-	uint32_t r = (((argb >> 16) & 0xFFu) * (uint32_t)brightness) >> 8;
-	uint32_t gr = (((argb >> 8) & 0xFFu) * (uint32_t)brightness) >> 8;
-	uint32_t b = ((argb & 0xFFu) * (uint32_t)brightness) >> 8;
-	return 0xFF000000u | (r << 16) | (gr << 8) | b;
-}
+// The box geometry, the style fills and the gradient/scale helpers moved with
+// the drawing into new_src/ui/DialogView.cpp.
 
 } // namespace
 
@@ -353,145 +327,39 @@ void DialogSystem::handleInput(Action action) {
 	}
 }
 
-// ---- rendering (src/DialogSystem.cpp:114-518) ----
+// ---- view model (state half of src/DialogSystem.cpp:114-518) ----
 
-void DialogSystem::draw(Graphics2D& g) {
+// The box, the title, the portrait inset, the rows and the page icons are
+// drawn by drawDialog (new_src/ui/DialogView.cpp). What stays here is the
+// state this frame resolves: the header clamp, the typewriter reveal counts,
+// the paging-derived scrollbar values and which page icon is up.
+bool DialogSystem::buildViewModel(DialogViewModel& m) {
 	if (env_.font == nullptr || !env_.font->valid() ||
-		env_.hud == nullptr || buffer_.length() == 0) return;
+		env_.hud == nullptr || buffer_.length() == 0) return false;
 
-	const Texture& uiImages = env_.hud->imgUIImages();
+	m.style = style_;
+	m.flags = flags_;
+	m.viewLines = viewLines_;
+	m.text = &buffer_;
+	m.scratch = &scratch_;
 
-	int rx = 0;                                  // -screenRect[0], screen origin 0
-	int rw = kCanvasW;                           // hudRect[2]
-	int rh = viewLines_ * kLineH + 8;            // (:133)
-	int ry = kCanvasH - rh - 1;                  // (:134)
-	int textX = rx + 1;                          // (:136)
-	uint32_t fill = 0xFF000000;
-	uint32_t border = kColorWhite;
-	uint32_t headerCol = kHeaderGray;
-	bool greenText = false;
-
-	switch (style_) {
-	case 3:                                      // scroll-log layout (141-148)
-		ry -= 10;
-		fillArgb(g, rx, ry - 10, rw, rh + 20, 0x003200);   // translucent fill 12800
-		rectArgb(g, rx, ry - 10, rw - 1, rh + 19, border);
-		break;
-	case 16: headerCol = 0xFF000066; break;      // (150-153): blue HEADER strip, body stays black
-	case 4:                                      // loot popup (154-161)
-		fill = (flags_ & 0x1) != 0 ? 0xFFB18A01u : 0xFF005A00u;
-		break;
-	case 11:                                     // VIOS terminal (162-169)
-		fill = 0xFF800000;
-		if ((flags_ & 0x2) != 0) ry = kHudTopPinnedY;
-		break;
-	case 5:                                      // NPC bubble (170-177)
-		fill = 0xFF800000;
-		if ((flags_ & 0x2) != 0) ry = kHudTopPinnedY;
-		break;
-	case 8:                                      // hero speech (178-182)
-		ry -= 64;
-		fill = kPlayerDlgColor;
-		break;
-	case 14:                                     // (183-191) falls into the navy label
-		ry -= 20;
-		[[fallthrough]];
-	case 1: case 6:                              // (187-190) comm-link navy
-		fill = 0xFF002864;
-		break;
-	case 9:                                      // terminal/log (192-196)
-		fill = 0xFF000000;
-		headerCol = 0xFF000000;
-		greenText = true;
-		break;
-	case 10:                                     // (197-201)
-		fill = 0xFF2E0854;
-		ry = kHudTopPinnedY;
-		break;
-	case 12: case 13:                            // choice boxes (202-209)
-		fill = 0xFFB18A01;
-		break;
-	case 15:
-		fill = 0xFFFF9600;
-		break;
-	default:
-		break;
-	}
-
+	// Header-strip styles reserve line 0 as the speaker/title (230-253); the
+	// title itself is drawn by the view from dialogIndexes[0..1].
 	int headerLines = 0;
 	if (style_ == 2 || style_ == 16 || style_ == 9) {
-		// Title-bar layout (230-253): 18px header strip above the box with the
-		// first '|'-line centered in it as the speaker/title.
 		headerLines = 1;
-		fillArgb(g, rx, ry, rw, rh, fill);
-		fillArgb(g, rx, ry - 18, rw, 18, headerCol);
-		rectArgb(g, rx, ry - 18, rw - 1, 18, border);
-		rectArgb(g, rx, ry, rw - 1, rh, border);
-		drawTitle(g, rx + kScrCx, ry - 16, greenText);
-	} else if (style_ == 4) {
-		// Item-pickup box (254-274). The dialogItem name bar (259-269) needs
-		// the loot composer — spec GROUP 3.
-		fillArgb(g, rx, ry, rw, rh, fill);
-		rectArgb(g, rx, ry, rw - 1, rh, border);
-	} else if (style_ != 3) {
-		fillArgb(g, rx, ry, rw, rh, fill);
-		rectArgb(g, rx, ry, rw - 1, rh, border);
-		if (style_ == 8) {
-			// Vertical gradient rows (281-289).
-			int y0 = ry + 1;
-			int y1 = y0 + (rh - 1);
-			for (int y = y0 + 1; y < y1; ++y) {
-				int b = 96 + ((((256 - (((y - y0) << 8) / (y1 - y0))) * 160)) >> 8);
-				uint32_t c = scaleColor(fill, b);
-				g.drawLine(rx + 1, y, rx + (rw - 2), y,
-					(uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c);
-			}
-			if (uiImages.valid()) {
-				g.drawRegion(uiImages, 30, 0, 15, 9, kScrCx + 10, ry + rh, 0);   // corner icon (290)
-			}
-			// Hero portrait from Hud_Portrait_Small.bmp (imgPortraitsSM, 20x60,
-			// height/3 rows; row = characterChoice-1, :291-308). The rewrite has
-			// no character selection, so choice is fixed to the first marine =
-			// row 0 (spec §9).
-			const Texture& portraits = env_.hud->imgPortraitsSmall();
-			if (portraits.valid() && portraits.height() / 3 > 0) {
-				g.drawRegion(portraits, 0, 0, portraits.width(), portraits.height() / 3,
-					rx + 2, ry + 3, 0);
-				textX += portraits.width() + 2;  // text starts after portrait (309-310)
-			} else {
-				// Documented fallback: colored header strip in lieu of a portrait.
-				fillArgb(g, rx, ry - 12, rw, 12, fill);
-				rectArgb(g, rx, ry - 12, rw - 1, 12, border);
-			}
-		} else if (style_ == 5) {
-			// Speech-bubble tails (312-319).
-			if (uiImages.valid()) {
-				if ((flags_ & 0x2) != 0) {
-					g.drawRegion(uiImages, 0, 12, 10, 6, kScrCx - 64, ry + rh + 6,
-						Graphics2D::kAnchorBottom | Graphics2D::kAnchorLeft);
-				} else {
-					g.drawRegion(uiImages, 0, 0, 10, 6, kScrCx - 64, ry + 1,
-						Graphics2D::kAnchorBottom | Graphics2D::kAnchorLeft);
-				}
-			}
-		} else if (style_ == 1) {
-			// Tail arrow above the box (320-322).
-			if (uiImages.valid()) {
-				g.drawRegion(uiImages, 10, 0, 10, 6, kScrCx - 64, ry + 1,
-					Graphics2D::kAnchorBottom | Graphics2D::kAnchorLeft);
-			}
-		} else if (style_ == 10) {
-			if (uiImages.valid()) g.drawRegion(uiImages, 20, 6, 10, 6, kScrCx + 10, ry + rh, 0);
-		} else if (style_ == 14) {
-			if (uiImages.valid()) g.drawRegion(uiImages, 45, 0, 15, 9, kScrCx + 10, ry + rh, 0);
-		}
+		m.titleStart = dialogIndexes_[0];
+		m.titleLen = dialogIndexes_[1];
 	}
 	if (currentDialogLine_ < headerLines) currentDialogLine_ = headerLines;  // (330-332)
 
-	// Text lines loop with typewriter reveal (333-354).
-	const Font& font = *env_.font;
-	int ty = ry + 2;
-	for (int i = 0; i < viewLines_ && currentDialogLine_ + i < numDialogLines_; ++i) {
+	// Text lines loop with typewriter reveal (333-354). Only the reveal count
+	// per row is computed; the row's screen slot is the view's business.
+	// The kMaxViewLines term is a pure bounds guard on m.rows: prepareDialog
+	// sets viewLines_ to 3 or 4 only (:128-131).
+	m.rowCount = 0;
+	for (int i = 0; i < viewLines_ && i < DialogViewModel::kMaxViewLines &&
+		currentDialogLine_ + i < numDialogLines_; ++i) {
 		int line = currentDialogLine_ + i;
 		int start = dialogIndexes_[line * 2];
 		int len = dialogIndexes_[line * 2 + 1];
@@ -506,77 +374,44 @@ void DialogSystem::draw(Graphics2D& g) {
 		} else if (i < typeLineIdx_) {
 			visible = len;
 		}
-		if (visible > 0) {
-			if (greenText) {
-				// Style 9 draws green via the '^2' color code
-				// (currentCharColor=2, src/DialogSystem.cpp:249-251,349-351).
-				scratch_.setLength(0);
-				scratch_.append('^');
-				scratch_.append('2');
-				scratch_.append(buffer_, start, visible);
-				g.drawString(font, scratch_, textX, ty, Graphics2D::kAnchorLeft, kLineH, 0, visible + 2);
-			} else {
-				g.drawString(font, buffer_, textX, ty, Graphics2D::kAnchorLeft, kLineH, start, visible);
-			}
-		}
-		ty += kLineH;
+		m.rows[i].start = start;
+		m.rows[i].visible = visible;
+		m.rowCount = i + 1;
 	}
-
-	// var4 Yes/No widgets (flags&2 vertical pair, flags&4/&1 bottom pair,
-	// src/DialogSystem.cpp:355-452): deferred per spec §8 — the map00 intro
-	// chain uses only flagless styles 1/8. var4 cursor logic is live in
-	// handleInput.
 
 	// Scrollbar + page icons (454-489).
 	if (numDialogLines_ <= viewLines_) {
-		if (!(flags_ & 0x7) && env_.hud->imgPageOk().valid()) {
-			g.drawRegion(env_.hud->imgPageOk(), 0, 0, 72, 72, 390 + 9, 110 + 9, 0);
-		}
+		m.showPageOk = !(flags_ & 0x7);
 	} else {
+		m.showScrollBar = true;
 		int pageEnd = std::min(currentDialogLine_ + viewLines_, numDialogLines_);
-		drawScrollBar(g, rx + rw - 1, ry + 2, rh - 4,
-			currentDialogLine_ - headerLines, pageEnd - headerLines,
-			numDialogLines_ - headerLines, viewLines_);
-		if (uiImages.valid()) {
-			if (numDialogLines_ - headerLines > viewLines_) {
-				if (currentDialogLine_ > 1 && env_.hud->imgPageUp().valid()) {
-					g.drawRegion(env_.hud->imgPageUp(), 0, 0, 72, 72, 390 + 9, 20 + 9, 0);
-				}
-				if (currentDialogLine_ < numDialogLines_ - viewLines_) {
-					if (env_.hud->imgPageDown().valid()) {
-						g.drawRegion(env_.hud->imgPageDown(), 0, 0, 72, 72, 390 + 9, 110 + 9, 0);
-					}
-				} else if (env_.hud->imgPageOk().valid()) {
-					g.drawRegion(env_.hud->imgPageOk(), 0, 0, 72, 72, 390 + 9, 110 + 9, 0);
-				}
-			} else if (env_.hud->imgPageOk().valid()) {
-				g.drawRegion(env_.hud->imgPageOk(), 0, 0, 72, 72, 390 + 9, 110 + 9, 0);
+		m.scrollTop = currentDialogLine_ - headerLines;
+		m.scrollPageEnd = pageEnd - headerLines;
+		m.scrollNumLines = numDialogLines_ - headerLines;
+		if (numDialogLines_ - headerLines > viewLines_) {
+			m.showPageUp = currentDialogLine_ > 1;
+			if (currentDialogLine_ < numDialogLines_ - viewLines_) {
+				m.showPageDown = true;
+			} else {
+				m.showPageOk = true;
 			}
+		} else {
+			m.showPageOk = true;
 		}
 	}
+
+	// Touch-only rule (src/TouchController.cpp:379-392): on the last page of a
+	// choice dialog the ok icon and the box body swallow the tap.
+	m.activateFires = !(currentDialogLine_ >= numDialogLines_ - viewLines_ &&
+		(flags_ & 0x7) != 0);
+	return true;
 }
 
-// Title line (dialogIndexes[0..1]) centered in the header strip
-// (src/DialogSystem.cpp:252).
-void DialogSystem::drawTitle(Graphics2D& g, int cx, int y, bool greenText) {
-	int start = dialogIndexes_[0];
-	int len = dialogIndexes_[1];
-	if (len <= 0) return;
-	if (greenText) {
-		scratch_.setLength(0);
-		scratch_.append('^');
-		scratch_.append('2');
-		scratch_.append(buffer_, start, len);
-		g.drawString(*env_.font, scratch_, cx, y, Graphics2D::kAnchorHCenter, kLineH, 0, len + 2);
-	} else {
-		g.drawString(*env_.font, buffer_, cx, y, Graphics2D::kAnchorHCenter, kLineH, start, len);
-	}
-}
-
-// The Canvas::drawScrollBar port itself now lives in the UI layer
-// (drawScrollBarCanvas, new_src/ui/Ui.cpp); this stays only as the call site
-// the existing dialog/loot code already uses. GROUP 5/7 replace both callers
-// with Ui::scrollBar and delete this forwarder.
+// The Canvas::drawScrollBar port itself lives in the UI layer
+// (drawScrollBarCanvas, new_src/ui/Ui.cpp). GROUP 7 repointed the dialog's own
+// call at Ui::scrollBar, so the only caller left is the loot overlay
+// (new_src/core/LootSession.cpp:163) — GROUP 5 moves that one and deletes this
+// forwarder together with the Hud pointer it needs.
 void DialogSystem::drawScrollBar(Graphics2D& g, int x, int y, int h,
 	int topLine, int pageEnd, int numLines, int viewLines) const {
 	drawScrollBarCanvas(g, env_.hud->imgUIImages(), x, y, h, topLine, pageEnd,

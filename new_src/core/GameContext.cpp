@@ -18,6 +18,7 @@
 #include "render/Graphics2D.h"
 #include "render/RenderBackend.h"
 #include "text/Font.h"
+#include "ui/DialogView.h"
 #include "ui/Hud.h"
 #include "ui/HudView.h"
 #include "ui/Ui.h"
@@ -645,8 +646,16 @@ void GameContext::render(AppContext& app) {
 	sys_.hud->drawMessages(g, *sys_.font);
 
 	// Dialog box overlay (legacy backPaint -> dialogState,
-	// src/Canvas.cpp:447-449).
-	if (state_ == StateId::Dialog) sys_.dialogs->draw(g);
+	// src/Canvas.cpp:447-449), now split into the producer's model and the
+	// view (spec §7). buildViewModel advances the typewriter exactly like the
+	// draw call it replaced, so it runs once per rendered frame, here.
+	if (state_ == StateId::Dialog && ui != nullptr) {
+		DialogViewModel dlg;
+		if (sys_.dialogs->buildViewModel(dlg)) {
+			const UiResult r = drawDialog(*ui, dlg);
+			applyUiAction(r.action, r.index);
+		}
+	}
 
 	// Loot list overlay during the dwell window — paints OVER world+HUD
 	// (src/Canvas.cpp:414-417,469-472).

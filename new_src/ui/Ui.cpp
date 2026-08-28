@@ -142,8 +142,17 @@ void Ui::panel(const UiRect& r, uint32_t fillColorArgb, uint32_t borderArgb) {
 	if (borderArgb != 0) rectArgb(g(), r.x, r.y, r.w, r.h, borderArgb);
 }
 
+void Ui::frame(const UiRect& r, uint32_t borderArgb) {
+	rectArgb(g(), r.x, r.y, r.w, r.h, borderArgb);
+}
+
 void Ui::image(const Texture& tex, int x, int y, int anchorFlags) {
 	g().drawImage(tex, x, y, anchorFlags);
+}
+
+void Ui::imageAlpha(const Texture& tex, int x, int y, uint8_t alpha) {
+	g().drawImage(tex, 0, 0, tex.width(), tex.height(), x, y, tex.width(),
+		tex.height(), 0, 255, 255, 255, alpha);
 }
 
 void Ui::imageRegion(const Texture& tex, int srcX, int srcY, int srcW, int srcH,
@@ -176,6 +185,11 @@ void Ui::number3(const Texture& sheet, int x, int y, int space, int value,
 
 void Ui::label(const Text& t, int x, int y, int anchorFlags, int lineH) {
 	g().drawString(font(), t, x, y, anchorFlags, lineH);
+}
+
+void Ui::textRun(const Text& t, int start, int len, int x, int y,
+	int anchorFlags, int lineH) {
+	g().drawString(font(), t, x, y, anchorFlags, lineH, start, len);
 }
 
 void Ui::textRows(const Text& t, const short* lineIndex, int lineCount,
