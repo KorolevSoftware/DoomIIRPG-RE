@@ -424,7 +424,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int ty = (packed >> 5) & 0x1F;
 			int dst = readUByte(t);                // uint8_t destination (src/ScriptThread.cpp:461); guard drops OOB like legacy UB
 			short empty = 1;
-			for (Entity* e = env_.game->db.findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
+			EntityDb::TileWalk walk("ScriptVM::EV_TILE_EMPTY");
+			for (Entity* e = env_.game->db.findMapEntity(tx, ty); e != nullptr && walk.ok(e); e = e->nextOnTile) {
 				// Empty iff every linked entity has eType==12 or 1<<eType & 0x6240
 				// (src/ScriptThread.cpp:456-475).
 				if (e->def && e->def->eType != 12 && (1 << e->def->eType & 0x6240) == 0) {

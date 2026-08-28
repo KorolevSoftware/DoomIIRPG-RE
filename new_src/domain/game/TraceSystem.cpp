@@ -120,7 +120,8 @@ void TraceSystem::pushHit(int frac, Entity* ent) {
 void TraceSystem::traceEntityHits(const MapData& map, Entity* skipEnt, int mask, int radius) {
 	for (int i = traceBBox_[0] >> 6; i < (traceBBox_[2] >> 6) + 1; ++i) {        // :216
 		for (int j = traceBBox_[1] >> 6; j < (traceBBox_[3] >> 6) + 1; ++j) {    // :217
-			for (Entity* ent = env_.db->tileHead(i + 32 * j); ent; ent = ent->nextOnTile) { // :218-220
+			EntityDb::TileWalk walk("TraceSystem::traceEntityHits");
+			for (Entity* ent = env_.db->tileHead(i + 32 * j); ent && walk.ok(ent); ent = ent->nextOnTile) { // :218-220
 				if (ent == skipEnt) continue;                                   // :221
 				if (ent->def == nullptr || (mask & (1 << ent->def->eType)) == 0) continue; // :221
 				if (ent->def->eType == Enums::ET_WORLD) continue;               // :222

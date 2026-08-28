@@ -1,5 +1,7 @@
 #include "domain/game/EntityDb.h"
 
+#include <cstdio>
+
 #include "domain/game/Player.h"
 #include "domain/world/MapData.h"
 
@@ -29,17 +31,57 @@ void EntityDb::linkEntity(Entity* e, int tx, int ty) {
 	e->info |= Entity::kInfoLinked;
 }
 
+// Port of Game::unlinkEntity (src/Game.cpp:70-93). The splice is
+// UNCONDITIONAL: legacy never consults an info bit here. A rewrite-era
+// `if (!(info & kInfoLinked)) return;` gate used to sit at the top and was a
+// hang bug — MonsterSystem::corpsifyMonster drops the bit while the entity is
+// still physically linked (mirroring src/ScriptThread.cpp:2258-2259) and then
+// relinks, so the gate skipped the splice and the old links plus the new head
+// link formed a cycle that froze every tile-list walk.
 void EntityDb::unlinkEntity(Entity* e) {
-	if (!(e->info & Entity::kInfoLinked)) return;
-	if (e->prevOnTile) e->prevOnTile->nextOnTile = e->nextOnTile;
-	else {
-		int idx = e->linkIndex;
-		if (idx >= 0 && idx < 1024 && entityDb_[idx] == e)
-			entityDb_[idx] = e->nextOnTile;
+	if (!e) return;
+	if (!entities_.empty() && e == &entities_[0]) {
+		// Legacy raises ERR_BADUNLINKWORLD (src/Game.cpp:74-77). We keep
+		// running but say so once: the world slot is never linked, so
+		// splicing it could only corrupt a tile head.
+		static bool reported = false;
+		if (!reported) {
+			reported = true;
+			std::fprintf(stderr, "[err] unlinkEntity on the world slot (entities[0]) - ignored\n");
+		}
+		return;
 	}
-	if (e->nextOnTile) e->nextOnTile->prevOnTile = e->prevOnTile;
-	e->nextOnTile = e->prevOnTile = nullptr;
-	e->info &= ~Entity::kInfoLinked;
+	// Legacy branch order: head test FIRST, prevOnTile only as the else
+	// (src/Game.cpp:79-84). Our linkIndex bounds check is a safe superset of
+	// legacy's unchecked entityDb[linkIndex] read: idx is in [0,1024) for every
+	// linked entity, and an unlinked one (idx == -1) has nothing to splice.
+	const int idx = e->linkIndex;
+	if (idx >= 0 && idx < 1024 && entityDb_[idx] == e) {
+		entityDb_[idx] = e->nextOnTile;
+	} else if (e->prevOnTile) {
+		e->prevOnTile->nextOnTile = e->nextOnTile;
+	}
+	if (e->nextOnTile) e->nextOnTile->prevOnTile = e->prevOnTile;   // :86-88
+	e->nextOnTile = e->prevOnTile = nullptr;                        // :90-91
+	e->info &= ~Entity::kInfoLinked;                                // :92
+}
+
+// See EntityDb::TileWalk in the header.
+bool EntityDb::TileWalk::ok(const Entity* e) {
+	if (++steps_ <= kEntities) return true;
+	static int reports = 0;
+	if (reports < 4) {
+		++reports;
+		std::fprintf(stderr, "[err] %s: tile list cycle after %d steps, chain from linkIndex=%d:",
+			where_, steps_ - 1, (int)e->linkIndex);
+		const Entity* p = e;
+		for (int n = 0; n < 8 && p != nullptr; ++n, p = p->nextOnTile) {
+			std::fprintf(stderr, " {spr=%d link=%d eType=%d}", p->getSprite(), (int)p->linkIndex,
+				p->def ? p->def->eType : -1);
+		}
+		std::fprintf(stderr, "\n");
+	}
+	return false;
 }
 
 Entity* EntityDb::findEntityBySprite(int sprite) {

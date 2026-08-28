@@ -19,6 +19,23 @@ class EntityDb {
 public:
 	static constexpr int kEntities = 275;
 
+	// Cycle guard for tile-list walks. A corrupted list cannot exist by
+	// construction, but one did (the unlinkEntity gate removed above) and it
+	// froze the game at 100% CPU for a kill -9. A walk longer than the whole
+	// entity array is impossible, so bail out there and print the visited
+	// chain instead of spinning. Usage:
+	//   EntityDb::TileWalk walk("Where::what");
+	//   for (Entity* e = head; e && walk.ok(e); e = e->nextOnTile) ...
+	class TileWalk {
+	public:
+		explicit TileWalk(const char* where) : where_(where) {}
+		bool ok(const Entity* e);
+
+	private:
+		const char* where_;
+		int steps_ = 0;
+	};
+
 	// Non-owning views on the world. map is read by removeEntity to hide the
 	// bound sprite.
 	struct Env {

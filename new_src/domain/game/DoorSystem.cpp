@@ -30,7 +30,8 @@ DoorSystem::DoorUseResult DoorSystem::useDoorFacing(const MapData& map, int px, 
 		{ (px + stepX) >> 6, (py + stepY) >> 6 },
 	};
 	for (auto& t : tiles) {
-		for (Entity* e = env_.db->findMapEntity(t[0], t[1]); e; e = e->nextOnTile) {
+		EntityDb::TileWalk walk("DoorSystem::useDoorFacing");
+		for (Entity* e = env_.db->findMapEntity(t[0], t[1]); e && walk.ok(e); e = e->nextOnTile) {
 			if (!e->isDoor()) continue;
 			if (!(e->info & Entity::kInfoLinked)) continue;
 			if (e->def->eSubType == Enums::DOOR_LOCKED) return DoorUseResult::Locked;
@@ -196,7 +197,8 @@ bool DoorSystem::canCloseDoor(Entity* door) {
 		// src/Game.cpp:741-743; identical to viewX/viewY at advanceTurn times).
 		if (env_.trace->playerX() >= 0 && (env_.trace->playerX() >> 6) == (x >> 6) &&
 		    (env_.trace->playerY() >> 6) == (y >> 6)) return true;
-		for (Entity* e = env_.db->findMapEntity(x >> 6, y >> 6); e; e = e->nextOnTile)
+		EntityDb::TileWalk walk("DoorSystem::canCloseDoor");
+		for (Entity* e = env_.db->findMapEntity(x >> 6, y >> 6); e && walk.ok(e); e = e->nextOnTile)
 			if (e->def && e->def->eType == Enums::ET_MONSTER) return true; // mask 6 = player|monster (src/Game.cpp:1224)
 		return false;
 	};

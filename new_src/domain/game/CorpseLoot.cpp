@@ -60,7 +60,8 @@ void CorpseLoot::populateDefaultLootSet(Entity& e) {
 Entity* CorpseLoot::findLootableCorpseFacing(int px, int py, int stepX, int stepY) {
 	int tx = (px + stepX) >> 6;
 	int ty = (py + stepY) >> 6;
-	for (Entity* e = env_.db->findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
+	EntityDb::TileWalk walk("CorpseLoot::findLootableCorpseFacing");
+	for (Entity* e = env_.db->findMapEntity(tx, ty); e != nullptr && walk.ok(e); e = e->nextOnTile) {
 		if (!e->isCorpse()) continue;
 		if (!(e->info & Entity::kInfoLinked)) continue;   // unlinked = not traceable
 		// Looted gate: prop corpses count prior loots in param
@@ -92,7 +93,8 @@ void CorpseLoot::poolLootCorpse(int tx, int ty, const Localization& loc, Pool& o
 	out.topLine = 0;
 	out.text.setLength(0);
 
-	for (Entity* e = env_.db->findMapEntity(tx, ty); e != nullptr; e = e->nextOnTile) {
+	EntityDb::TileWalk walk("CorpseLoot::poolLootCorpse");
+	for (Entity* e = env_.db->findMapEntity(tx, ty); e != nullptr && walk.ok(e); e = e->nextOnTile) {
 		if (!e->isCorpse()) continue;                    // eType == 9 only (:164)
 		if (e->param != 0) continue;                     // prop already looted (:166-169)
 		// Monster corpses carry a separate flag 0x800 in legacy (:172-177);
