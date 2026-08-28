@@ -10,12 +10,14 @@
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
 #include "io/Media.h"
+#include "io/MenuData.h"
 #include "io/Resources.h"
 #include "io/Tables.h"
 #include "io/ZipArchive.h"
 #include "render/RenderBackend.h"
 #include "render/World3D.h"
 #include "text/Font.h"
+#include "text/Text.h"
 #include "ui/Hud.h"
 #include "ui/Ui.h"
 #include "ui/UiAssets.h"
@@ -95,6 +97,11 @@ int main(int argc, char* argv[]) {
 			}
 			loc.loadTextType(0, kTextMain);
 			loc.loadTextType(0, kTextIngame);
+			// Menu labels/help fields live in FILE_MENUSTRINGS (kTextIngame2),
+			// HELP page bodies in FILE_FILESTRINGS (kTextHelp)
+			// (src/MenuStrings.h:20-23; spec 2026-08-28-menu §3).
+			loc.loadTextType(0, kTextIngame2);
+			loc.loadTextType(0, kTextHelp);
 			// Script EV_MESSAGE strings live in the per-map text type:
 			// loadMapStringID = kTextMap + (mapNameID - 1), loaded at map load
 			// (src/LoadingManager.cpp:310-311); boot is always map00 -> kTextMap.
@@ -108,6 +115,32 @@ int main(int argc, char* argv[]) {
 		}
 	} else {
 		std::fprintf(stderr, "strings.idx not found\n");
+	}
+
+	// In-game menu tree (ADR 0013): the row/item data is parsed, not
+	// hardcoded. Lives here next to Tables so it outlives the GameContext.
+	MenuData menus;
+	if (app.readResource(Resources::kMenus, raw)) {
+		if (menus.load(raw)) {
+			const bool golden = menus.goldenCheck();
+			int rootCount = 0;
+			const MenuItemDef* root = menus.items(kMenuInGame, rootCount);
+			std::fprintf(stdout, "menus.bin %s: rows=%d items=%d bytes=%d/%zu; MENU_INGAME type=%d items=%d\n",
+				golden ? "OK" : "GOLDEN MISMATCH", menus.rowCount(), menus.itemIntCount(),
+				menus.bytesConsumed(), raw.size(), menus.type(kMenuInGame), rootCount);
+			for (int i = 0; i < rootCount; ++i) {
+				Text label;
+				label.append(loc.get(loc.typeOf(root[i].labelId), loc.indexOf(root[i].labelId)));
+				label.dehyphenate();
+				std::fprintf(stdout, "  root[%2d] action=%2d target=%2d flags=0x%04X help=%d '%s'\n",
+					i, root[i].action, root[i].param, root[i].flags,
+					loc.indexOf(root[i].helpId), label.c_str());
+			}
+		} else {
+			std::fprintf(stderr, "menus.bin FAILED to parse\n");
+		}
+	} else {
+		std::fprintf(stderr, "menus.bin not found\n");
 	}
 
 	// --- Verify map00 media loading ---

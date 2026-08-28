@@ -77,6 +77,7 @@ void Ui::init(const Env& env) {
 	env_ = env;
 	in_ = UiInput{};
 	clipDepth_ = 0;
+	glyphBuf_.reserve(2);
 }
 
 void Ui::beginFrame(const UiInput& in) {
@@ -187,6 +188,12 @@ void Ui::label(const Text& t, int x, int y, int anchorFlags, int lineH) {
 	g().drawString(font(), t, x, y, anchorFlags, lineH);
 }
 
+void Ui::glyph(char c, int x, int y, int anchorFlags) {
+	glyphBuf_.setLength(0);
+	glyphBuf_.append(c);
+	g().drawString(font(), glyphBuf_, x, y, anchorFlags);
+}
+
 void Ui::textRun(const Text& t, int start, int len, int x, int y,
 	int anchorFlags, int lineH) {
 	g().drawString(font(), t, x, y, anchorFlags, lineH, start, len);
@@ -268,6 +275,30 @@ void Ui::scrollBar(int x, int y, int h, int topLine, int pageEnd,
 	int numLines, int viewLines) {
 	drawScrollBarCanvas(g(), art().uiImages, x, y, h, topLine, pageEnd,
 		numLines, viewLines);
+}
+
+// fmScrollButton::Render, image branch (src/Button.cpp:574-588). The track and
+// the sliders get two different x values because the source centres the track
+// by its own width and the sliders by imgBarTop's (20 vs 24).
+void Ui::scrollBarMenu(const UiRect& barRect, int thumbOffset, int thumbLen) {
+	const Texture& bar = art().menuScrollBar;
+	const Texture& top = art().menuSliderTop;
+	const Texture& mid = art().menuSliderMid;
+	const Texture& bottom = art().menuSliderBottom;
+	if (!bar.valid() || !top.valid() || !mid.valid() || !bottom.valid()) return;
+	if (mid.height() <= 0) return;
+
+	const int flags = Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft;
+	const int xBar = barRect.x + ((barRect.w - bar.width()) >> 1);
+	const int xSlider = barRect.x + ((barRect.w - top.width()) >> 1);
+	const int yThumb = barRect.y + thumbOffset;
+	image(bar, xBar, barRect.y, flags);
+	image(top, xSlider, yThumb, flags);
+	for (int y = yThumb + top.height(); y < yThumb + thumbLen - bottom.height();
+		y += mid.height()) {
+		image(mid, xSlider, y, flags);
+	}
+	image(bottom, xSlider, yThumb + thumbLen - bottom.height(), flags);
 }
 
 void Ui::face(const Texture& sheet, int x, int y, int rowH,

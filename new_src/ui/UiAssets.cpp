@@ -74,6 +74,23 @@ bool UiAssets::load(const ResourceReader& read) {
 	ok &= loadTexture(read, "HUD_Player_frame_Active.bmp", playerFrameActive);
 	ok &= loadTexture(read, "Hud_Numbers.bmp", numbers);
 	ok &= loadTexture(read, "cockpit.bmp", cockpitOverlay);
+	// In-game menu sheets, in the original's load order
+	// (src/MenuSystem.cpp:120-131 for the gameMenu_* block; the softkey comes
+	// from src/Hud.cpp:57). inGame_menu_option_button.bmp is declared but never
+	// loaded in the port (src/MenuSystem.h:171 has no assignment), so it goes
+	// last; the file ships in the archive.
+	ok &= loadTexture(read, "gameMenu_Health.bmp", menuHealth);
+	ok &= loadTexture(read, "gameMenu_Shield.bmp", menuShield);
+	ok &= loadTexture(read, "gameMenu_infoButton_Pressed.bmp", menuInfoPressed);
+	ok &= loadTexture(read, "gameMenu_infoButton_Normal.bmp", menuInfoNormal);
+	ok &= loadTexture(read, "gameMenu_TornPage.bmp", menuTornPage);
+	ok &= loadTexture(read, "gameMenu_Background.bmp", menuBackground);
+	ok &= loadTexture(read, "gameMenu_ScrollBar.bmp", menuScrollBar);
+	ok &= loadTexture(read, "gameMenu_topSlider.bmp", menuSliderTop);
+	ok &= loadTexture(read, "gameMenu_midSlider.bmp", menuSliderMid);
+	ok &= loadTexture(read, "gameMenu_bottomSlider.bmp", menuSliderBottom);
+	ok &= loadTexture(read, "inGame_menu_softkey.bmp", menuSoftKey);
+	ok &= loadTexture(read, "inGame_menu_option_button.bmp", menuOptionButton);
 	return ok;
 }
 

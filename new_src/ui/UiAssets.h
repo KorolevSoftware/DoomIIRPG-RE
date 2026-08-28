@@ -38,6 +38,13 @@ public:
 	Texture arrowUpPressed, arrowDownPressed, arrowLeftPressed, arrowRightPressed;
 	Texture uiImages, portraitsSmall, pageUp, pageDown, pageOk;
 	Texture damageVignette, attackArrows, hudTest;
+	// In-game menu sheets (spec 2026-08-28-menu §8.5). menuInfo*/menuTornPage
+	// are for GROUP 8 and have no caller yet.
+	Texture menuHealth, menuShield;
+	Texture menuInfoNormal, menuInfoPressed, menuTornPage;
+	Texture menuBackground;
+	Texture menuScrollBar, menuSliderTop, menuSliderMid, menuSliderBottom;
+	Texture menuSoftKey, menuOptionButton;
 };
 
 } // namespace newcore

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 
+#include "text/Text.h"
 #include "ui/UiState.h"
 #include "ui/UiTypes.h"
 
@@ -10,7 +11,6 @@ namespace newcore {
 
 class Font;
 class Graphics2D;
-class Text;
 class Texture;
 class UiAssets;
 
@@ -72,6 +72,12 @@ public:
 	void number3(const Texture& sheet, int x, int y, int space, int value,
 		bool slashMode);
 	void label(const Text& t, int x, int y, int anchorFlags, int lineH = 16);
+	// One font glyph by raw char code: the legacy Graphics::drawCursor is
+	// exactly drawString("\x8A", x, y, flags) (src/Graphics.cpp:670-686).
+	// Serves '\x8A' (menu cursor), '\x87' (check), '\x85' (ellipsis) and
+	// '\x89' (disabled fill). The caller does the positioning, including the
+	// cursor's OSC_CYCLE wobble — no clock is read here.
+	void glyph(char c, int x, int y, int anchorFlags);
 	// One explicit <start,len> run of a buffer. The dialog's typewriter needs
 	// it: the revealed length changes per frame, so there is no line table to
 	// index (src/DialogSystem.cpp:333-354).
@@ -99,6 +105,14 @@ public:
 	int listHit(UiId id, const UiRect& r, int rowH, int visibleRows);
 	void scrollBar(int x, int y, int h, int topLine, int pageEnd,
 		int numLines, int viewLines);
+	// The in-game menu's own scrollbar art: fmScrollButton::Render with images
+	// set (src/Button.cpp:574-588) — the 20x220 track centred in barRect, then
+	// the top slider, the tiled middle and the bottom slider at the thumb.
+	// This is NOT Canvas::drawScrollBar (that one stays `scrollBar` above and
+	// keeps serving the dialog box and the loot list). thumbOffset/thumbLen are
+	// the producer's (spec 2026-08-28-menu §6.4): this primitive computes
+	// nothing.
+	void scrollBarMenu(const UiRect& barRect, int thumbOffset, int thumbLen);
 	// row = 4 - 5*health/maxHealth, clamped at 0 (src/Hud.cpp:695-699).
 	void face(const Texture& sheet, int x, int y, int rowH,
 		int health, int maxHealth);
@@ -111,6 +125,8 @@ private:
 
 	Env env_;
 	UiInput in_;
+	Text glyphBuf_;                       // reserved in init(), never grows
+
 	UiRect clipStack_[kMaxClipDepth];
 	int clipDepth_ = 0;
 };

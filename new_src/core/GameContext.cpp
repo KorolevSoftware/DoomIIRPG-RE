@@ -613,6 +613,12 @@ void GameContext::applyUiAction(UiAction a, int index) {
 	case UiAction::ListRow:
 		std::fprintf(stderr, "[ui] list row %d (no mapping this phase)\n", index);
 		return;
+	// Action::MenuResume arrives with the menu state (spec 2026-08-28-menu §9);
+	// until then the intent has no queue slot. Listed so the switch stays
+	// exhaustive.
+	case UiAction::Resume:
+		std::fprintf(stderr, "[ui] resume (no mapping this phase)\n");
+		return;
 	}
 	std::fprintf(stderr, "[ui] intent %d -> queue Action %d\n", (int)a, (int)queued);
 	queueAction(queued);

@@ -16,6 +16,7 @@ Namespace for everything: `newcore`._
 | `GameStates.h` | **(planned, ADR 0010 / spec `specs/2026-08-26-decomposition.md` P1-G1)** `StateId` + `Action` enums moved out of `GameContext.h`, plus the `StateHost` interface (`state()` / `requestState()`) — the only thing a module may know about the state machine. |
 | `CinematicCamera.h/.cpp` | **(planned, P1-G2)** owns `MayaCamera` + the cinematic clock: `startCinematic`, `advanceCameraKey` parking, key boundaries/Snap, skip, `renderPose()` (nullptr = no cinematic owns the view — the single source of truth for fov / cockpit overlay / view-weapon suppression). |
 | `LootSession.h/.cpp` | **(planned, P1-G3)** ST_LOOTING slice: crouch/dwell/stand pose clock, loot-pool session state, `handleAction`, loot menu overlay. |
+| `MenuSession.h/.cpp` | **(planned, ADR 0013 / spec `specs/2026-08-28-menu.md` G3+)** the whole `ST_MENU` slice: retained menu state (current menu id/type, items copy, `selectedIndex`/`scrollIndex`, the 3-value nav stack of depth 10), `initMenu` per screen (file rows via `MenuData` + the code-built confirm/help/notebook bodies), `moveDir` wrap/clamp, page steps, `select`/`back`/`returnToGame`, and the per-frame `MenuViewModel` build (row composition, cursor oscillation, scroll pixels, scrollbar thumb). |
 | `UiInputCollector.h/.cpp` | **(planned, ADR 0012, G3)** the single SDL -> `UiInput` normalizer (cursor in canvas coords, press/release edges, `Nav`, wheel) plus the moved keyboard->`Action` switch; keys and mouse both end up in `GameContext::pendingActions_`. |
 | `PlayerActions.h/.cpp` | **(planned, P1-G7)** playing input (move/turn/use/fire commit), arrival hooks `finishMovement`/`finishRotationFired`, `flagForFacingDir`, `spawnPlayer`, the script GOTO handshake fields. |
 
@@ -61,6 +62,7 @@ Namespace for everything: `newcore`._
 | `EntityDefs/.cpp` | Parses entities.bin → `EntityDef` (tileIndex/name/eType/eSubType/parm/touchMe); find by type or tileIndex. |
 | `Localization` | strings.idx + stringsNN.bin chunks; `(type<<10)|index` ids; `titleOf()` splits on `\|`. |
 | `Media/.cpp` | `MediaMappings::load` newMappings.bin (:10-31); `MediaLoader::registerMedia/finalize` loads palettes + rolling texels files (:41-153). |
+| `MenuData/.cpp` | **(planned, ADR 0013, G1)** `menus.bin` parser: 72 rows (`id` / `type` / item span) + 426 item ints unpacked into `MenuItemDef{labelId,flags,action,param,helpId}`; lookup by legacy menu id, absent id = empty menu + one log line. |
 | `Resources.h` | File-name constants for all archive entries. |
 | `Tables/.cpp` | tables.bin offset table → 18 typed vectors (combat, keys, sin table, sky A/B...) (:25-68). |
 | `ZipArchive/.cpp` | Minimal zip reader: central dir, case-insensitive lookup, stored + raw-deflate. |
@@ -102,13 +104,14 @@ Namespace for everything: `newcore`._
 | `Hud` | Loads ~24 BMP textures (`startup()` :72-106); status bars, cockpit, weapon select (:211-233), bubbles, vignette (:136-169), arrows, monster bar (:180-209), messages, bottom bar (:533-565). Demo fields still exist (`Hud.h:166-172`). **(planned, ADR 0012, G4)** all `draw*` move to `HudView`; `Hud` keeps only the non-drawing producer runtime (shake, monster-bar drain, cockpit toggle). |
 | `UiTypes.h` | **(planned, ADR 0012, G2)** `UiId` / `UiAction` / `Nav` enums, `UiInput`, `UiRect`, `UiResult`. |
 | `UiState.h/.cpp` | **(planned, G2)** the ONLY retained UI state: `activeId`, per-region scroll offsets, text wrap cache (`<start,len>` tables). Nothing else may be added. |
-| `Ui.h/.cpp` | **(planned, G2)** immediate-mode primitives (`panel`, `image`, `number3`, `label`, `textRows`, `textBlock`, `button`, `softKey`, `listHit`, `scrollBar`, `face`, `weaponIcon`, `keys`, `pushClip`) + the press/release hit-test rule. All constants come from the caller. `scrollBar` is the moved `DialogSystem::drawScrollBar`. |
+| `Ui.h/.cpp` | **(planned, G2)** immediate-mode primitives (`panel`, `image`, `number3`, `label`, `textRows`, `textBlock`, `button`, `softKey`, `listHit`, `scrollBar`, `face`, `weaponIcon`, `keys`, `pushClip`) + the press/release hit-test rule. All constants come from the caller. `scrollBar` is the moved `DialogSystem::drawScrollBar`. **(planned, spec `specs/2026-08-28-menu.md` G2)** `+ glyph(char,...)` (the legacy `drawCursor`) and `+ scrollBarMenu(barRect, thumbOffset, thumbLen)` — the second scrollbar style (`gameMenu_ScrollBar` + three sliders), which is a different widget from `scrollBar`. |
 | `UiAssets.h/.cpp` | **(planned, G2)** owner of the UI BMP sheets (moved `Hud::startup`), loaded through an injected `ResourceReader` so `ui/` stops including `core/AppContext.h`. |
 | `HudModel.h` | **(planned, G4)** `HudModel` / `TextSlot` / `MonsterBarModel` — per-frame structs rebuilt by `GameContext`, never stored. |
 | `HudView.h/.cpp` | **(planned, G4)** `UiResult drawHud(Ui&, const HudModel&)`; bottom-bar geometry per `docs/original-code/ui.md` §1-§6. |
 | `LootView.h/.cpp` | **(planned, G5)** `drawLootList` — moved verbatim from `LootSession::draw`; 3×16 px rows, no scissor. |
 | `DialogView.h/.cpp` | **(planned, G7)** `drawDialog` — the drawing half of `DialogSystem` only. |
-| `MenuView.h/.cpp` | **(planned, G8, blocked on `docs/original-code/ui.md` menu research)** `drawMenu` + `MenuModel`. |
+| `MenuModel.h` | **(planned, spec `specs/2026-08-28-menu.md` G3)** `MenuRow` + `MenuViewModel`: menuRect/clip/itemWidth geometry, ALL rows with their resolved heights, `scrollPx`, `selectedRow`, cursor offset, scrollbar thumb, chrome flags and the two soft-key labels. No menu id, no `StateId`. |
+| `MenuView.h/.cpp` | **(planned, G3+)** `UiResult drawMenu(Ui&, const MenuViewModel&)`: opaque background + bottom panel + health/shield readout + soft keys, then the clipped row walk (296x32 plates at 25 %/100 % alpha, `'\x8A'` cursor glyph, right-aligned value column) and the menu's own 4-sheet scrollbar. |
 
 ## Wiring (startup → frame)
 
@@ -161,6 +164,7 @@ _See [adr/](adr/):_
 - [0010 — Decompose `GameContext` and `Game` into peer modules with narrow `Env` injection](adr/0010-module-decomposition-and-injection.md) (2026-08-26)
 - [0011 — Typed trace result (`TraceHit`) and named legacy encodings](adr/0011-typed-trace-result-and-named-encodings.md) (2026-08-26)
 - [0012 — Immediate-mode UI layer with per-frame models, and no game logic in `ui/`](adr/0012-immediate-mode-ui-layer.md) (2026-08-27)
+- [0013 — The in-game menu tree is parsed from `menus.bin`, not hardcoded](adr/0013-menu-tree-from-menus-bin.md) (2026-08-28)
 
 ## Specs
 
@@ -176,3 +180,4 @@ _See [adr/](adr/):_
 - [2026-08-26 — Combat Stage 1 fixes: facing probe, fire-target election, world viewport + view weapon (supersedes parts of the combat-stage1 spec)](specs/2026-08-26-combat-stage1-fixes.md)
 - [2026-08-26 — Decomposition: GameContext + Game split, typed TraceHit, named legacy encodings](specs/2026-08-26-decomposition.md)
 - [2026-08-27 — UI layer: immediate-mode framework (`Ui`/`UiState`/models) + migration of HUD, loot list, dialogs, view weapon](specs/2026-08-27-ui-layer.md)
+- [2026-08-28 — In-game menu (`ST_MENU`): `menus.bin` loader, `MenuSession`, `MenuView`, the menu scrollbar and the cursor glyph (GROUP 8 of the UI layer)](specs/2026-08-28-menu.md)

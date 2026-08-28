@@ -14,8 +14,14 @@ enum class UiId : int {
 	LootBody, LootScroll,
 	// dialog box
 	DialogBody, DialogPageUp, DialogPageDown, DialogOk,
-	// menu (geometry TBD, docs/original-code/ui.md — spec §7)
-	MenuList, MenuSoftLeft, MenuSoftRight,
+	// in-game menu: nine row slots matching the legacy 9-button pool
+	// (src/MenuSystem.cpp:4440), their info buttons (GROUP 8) and the two soft
+	// keys (spec 2026-08-28-menu §8.4). The list has no single widget.
+	MenuRow0, MenuRow1, MenuRow2, MenuRow3, MenuRow4, MenuRow5, MenuRow6,
+	MenuRow7, MenuRow8,
+	MenuInfo0, MenuInfo1, MenuInfo2, MenuInfo3, MenuInfo4, MenuInfo5,
+	MenuInfo6, MenuInfo7, MenuInfo8,
+	MenuSoftLeft, MenuSoftRight,
 	Count
 };
 
@@ -27,6 +33,8 @@ enum class UiId : int {
 enum class UiAction : int {
 	None = 0,
 	Menu, Automap, Back, PassTurn, Activate,
+	Resume,           // in-game menu right soft key (touch-only in the original,
+	                  // src/MenuSystem.cpp:4787-4789)
 	ScrollUp, ScrollDown, ScrollHome, ScrollEnd,
 	ListRow,          // index carries the row
 };
