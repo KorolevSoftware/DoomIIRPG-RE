@@ -131,7 +131,42 @@ impact point and flash correct.
 Also user-confirmed on 2026-08-26: cinematic fov/weapon-suppression fixes (weapon unchanged in
 gameplay, absent in cinematics) and the cinematic letterbox black bars.
 
-## Current focus — decomposition COMPLETE (2026-08-27, user-confirmed)
+## Current focus — UI layer COMPLETE (2026-08-28, every group user-confirmed)
+
+Custom immediate-mode UI, 8 groups of 8, spec
+`docs/architecture/specs/2026-08-27-ui-layer.md` + ADR 0012:
+G1 real canvas scissor + window->canvas cursor mapping; G2 primitives, `UiState`,
+`UiAssets`; G3 `core/UiInputCollector` (mouse did not exist before); G4 bottom HUD
+via `ui.*` with clickable soft keys; G7 dialog box with clickable page icons;
+G5 loot list; G6 view weapon.
+
+**The layer invariant is now checkable, not merely stated**:
+`grep -rn "#include \"domain/game\|#include \"core/" new_src/ui/` is empty.
+UI receives values (per-frame model structs, never setter-fed fields) and returns
+intents (`UiAction`), which `GameContext::applyUiAction` maps into the SAME
+`pendingActions_` queue the keyboard uses — so mouse and keys cannot diverge on
+turn semantics.
+
+Deliberate deviations, all documented at the code and in the spec:
+- soft-key hit rects narrowed to the arrow icons (9,268,32,32)/(438,268,32,32) at
+  the user's request, so the `Menu`/`Map`/`Wait` text is not clickable — strict
+  subsets of the legacy (0,256,52,64)/(428,256,52,64);
+- pass-turn moved to the portrait (219,264,42,36), which is where the original has
+  it (`src/Hud.cpp:76,1343`); the `Wait` literal has no button in the original and
+  ours was invented by G4;
+- D1: `ViewWeapon` keeps hand clipping (scissor cannot trim a source sub-rect);
+- D2: the `flashDone` latch left the draw path, so the flash shows one rendered
+  frame instead of two (~15 ms shorter, never later). User-confirmed acceptable.
+
+Facts gathered on the way (in `docs/original-code/ui.md`): the arrow art IS the
+soft key's pressed state, not a separate widget; the portrait is PASSTURN, the
+weapon icon NEXTWEAPON, shield/health/keys are drinks/items/questlog; the loot
+list's only touch target is the whole screen; dialog page icons are buttons 5/6/7/8
+(90x90 at (390,20)/(390,110)) drawing at 75% alpha until pressed; the menu uses a
+different scrollbar art from the dialog/loot one, selection is a wobbling cursor
+glyph rather than a highlight bar, and there is no key repeat.
+
+## Previous focus — decomposition COMPLETE (2026-08-27, user-confirmed)
 
 Phase 1: 7/7, Phase 2: 6/6. `GameContext.cpp` 1626 -> 535, `Game.cpp` 1565 -> 305.
 Thirteen modules, pointwise `Env` injection, no singleton or context back-references.
