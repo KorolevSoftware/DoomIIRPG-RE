@@ -4,6 +4,7 @@
 
 #include "core/AppContext.h"
 #include "core/GameContext.h"
+#include "core/UiInputCollector.h"
 #include "platform/InputSystem.h"
 #include "platform/Window.h"
 #include "render/RenderBackend.h"
@@ -23,31 +24,26 @@ constexpr uint32_t kMaxFrameMs = 125; // legacy clamp (src/Main.cpp:133-135)
 bool GameLoop::run(AppContext& context) {
 	GameContext& ctx = context.gameContext();
 	bool running = true;
+	// Spec §3: one normalizer turns SDL into the frame's UiInput. It only reads
+	// the events GameLoop already dispatches, so the Action path below is
+	// unchanged (no event is consumed by either reader).
+	UiInputCollector collector;
 
 	context.input().setEventCallback([&](const SDL_Event& ev) {
 		if (ev.type == SDL_QUIT) {
 			running = false;
 			return;
 		}
+		collector.onEvent(ev, context.window(), context.renderer());
 		if (ev.type != SDL_KEYDOWN) return;
 		if (ev.key.keysym.sym == SDLK_ESCAPE) { // clean exit through the machine
 			running = false;
 			return;
 		}
-		Action a = Action::None;
-		switch (ev.key.keysym.scancode) {
-		case SDL_SCANCODE_E: a = Action::Use; break;          // ACTION_FIRE
-		case SDL_SCANCODE_UP: case SDL_SCANCODE_W: a = Action::Forward; break;   // dialog: ACTION_UP
-		case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: a = Action::Back; break;    // dialog: ACTION_DOWN
-		case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: a = Action::TurnLeft; break; // dialog: ACTION_LEFT
-		case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: a = Action::TurnRight; break; // dialog: ACTION_RIGHT
-		case SDL_SCANCODE_TAB: a = Action::Passturn; break;   // ACTION_PASSTURN (skip-close)
-		case SDL_SCANCODE_M: a = Action::Automap; break;      // ACTION_AUTOMAP (skip-close)
-		case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: a = Action::Menu; break; // ACTION_MENU
-		case SDL_SCANCODE_BACKSPACE: a = Action::BackKey; break; // KEY_CLR/BACK — swallowed in dialogs
-		case SDL_SCANCODE_K: ctx.debugGiveKeycards(); break; // PHASE5 DEBUG (removable)
-		default: break;
+		if (ev.key.keysym.scancode == SDL_SCANCODE_K) {
+			ctx.debugGiveKeycards(); // PHASE5 DEBUG (removable)
 		}
+		const Action a = collector.keyAction(ev);
 		if (a != Action::None) {
 			ctx.queueAction(a);
 		}
@@ -60,6 +56,7 @@ bool GameLoop::run(AppContext& context) {
 
 	while (running) {
 		uint32_t frameStart = SDL_GetTicks();
+		collector.beginFrame(); // clear last frame's edges before this poll
 		context.input().poll(context.window());
 
 		acc += frameStart - last;
