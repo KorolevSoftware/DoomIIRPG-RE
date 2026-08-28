@@ -21,6 +21,7 @@
 #include "ui/DialogView.h"
 #include "ui/Hud.h"
 #include "ui/HudView.h"
+#include "ui/LootView.h"
 #include "ui/Ui.h"
 
 namespace newcore {
@@ -42,7 +43,6 @@ void GameContext::init(const Init& sys) {
 	lootEnv.player = sys_.player;
 	lootEnv.loc = sys_.loc;
 	lootEnv.font = sys_.font;
-	lootEnv.dialogs = sys_.dialogs;
 	lootEnv.tables = sys_.tables;
 	lootEnv.host = this;
 	lootEnv.upTimeMs = &upTimeMs;
@@ -55,13 +55,8 @@ void GameContext::init(const Init& sys) {
 	tgtEnv.hud = sys_.hud;
 	targeting_.init(tgtEnv);
 	ViewWeapon::Env wpEnv;
-	wpEnv.player = sys_.player;
-	wpEnv.game = sys_.game;
-	wpEnv.tables = sys_.tables;
 	wpEnv.world = sys_.world;
 	wpEnv.media = sys_.media;
-	wpEnv.hud = sys_.hud;
-	wpEnv.gameTime = &gameTime;
 	viewWeapon_.init(wpEnv);
 	SceneRenderer::Env sceneEnv;
 	sceneEnv.map = sys_.map;
@@ -538,6 +533,67 @@ void GameContext::buildHudModel(HudModel& m, bool showBottomBar, bool interactiv
 	}
 }
 
+// ---- view-weapon view model (spec 2026-08-27-ui-layer §6) ----
+
+void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
+	m = ViewWeaponModel{};
+	if (sys_.player == nullptr || sys_.game == nullptr || sys_.tables == nullptr) return;
+
+	const Player& p = *sys_.player;
+	const int w = p.ce.weapon;                                 // (src/Combat.cpp:677)
+	if (w < 0 || p.weapons == 0) return;                       // (:706-708)
+
+	// wpinfo table 1: idleX,idleY,atkX,atkY,flashX,flashY signed bytes per
+	// weapon (src/Combat.h:53-59). Row missing => draw nothing, same as the
+	// former ((size_t)(w * 6 + 5) >= weaponInfo.size()) early return.
+	const WeaponPose* pose = sys_.tables->weaponPose(w);
+	if (pose == nullptr) return;
+	const int idleX = pose->idleX;
+	const int idleY = pose->idleY;
+	const int atkX  = pose->atkX;
+	const int atkY  = pose->atkY;
+
+	// Attack pose: hold (atkX,atkY) until flashDone, then lerp back over
+	// animTime in 16.16 (src/Combat.cpp:735-767). b5 reduces to
+	// "seq running for this weapon" (curAttacker == nullptr always). The
+	// flashDone latch itself lives in Combat::tick now (deviation D2).
+	int wpX = idleX, wpY = idleY;
+	bool flash = false;
+	const Combat& c = sys_.game->combat;
+	if (c.active && c.attackerWeaponId == w) {
+		wpX = atkX;
+		wpY = atkY;
+		if (!c.flashDone) {
+			flash = ((1 << w) & 0x200) == 0;                   // :741 (weapon 9 excluded)
+		} else {
+			// SHOTHOLD return lerp; chainsaw jitter branch (:752-761) omitted.
+			const int elapsed = (int)(gameTime - c.animStartTime);
+			// Lerp starts at animStartTime; legacy does not subtract
+			// flashTime (src/Combat.cpp:747).
+			const int t = std::clamp(elapsed, 0, c.animTime) *
+				65536 / std::max(c.animTime, 1);
+			wpX = atkX + (((idleX - atkX) * t) >> 16);
+			wpY = atkY + (((idleY - atkY) * t) >> 16);
+		}
+	}
+
+	m.visible = true;
+	m.weapon = w;
+	m.weaponTile = Combat::getWeaponTileNum(w);
+	m.flashTile = Combat::getWeaponTileNum(0);                 // (:826-834)
+	m.poseX = wpX;
+	m.poseY = wpY;
+	// The second legacy flash gate sat at the blit (:826); both are ANDed here
+	// so the view only reads a bool. Neither condition is dropped or merged.
+	m.muzzleFlash = flash && ((1 << w) & 0x181) != 0;
+	m.flashX = pose->flashX;
+	m.flashY = pose->flashY;
+	// Canvas shake; legacy negates sy first (sy = -|sy|, src/Combat.cpp:709),
+	// so the model carries the already-negated value.
+	m.shakeX = sys_.hud->shakeX();
+	m.shakeY = -std::abs(sys_.hud->shakeY());
+}
+
 void GameContext::applyUiAction(UiAction a, int index) {
 	// One switch, feeding the queue the keyboard already feeds (spec §4.2).
 	Action queued = Action::None;
@@ -598,7 +654,9 @@ void GameContext::render(AppContext& app) {
 	const bool gameplayView = state_ == StateId::Playing ||
 	                          state_ == StateId::Looting || underDialog;
 	if (cinePose == nullptr && !cinematic_.active() && gameplayView) {
-		viewWeapon_.draw(g, scene_.camera());
+		ViewWeaponModel wp;
+		buildViewWeaponModel(wp);
+		viewWeapon_.draw(g, scene_.camera(), wp);
 	}
 
 	// Cockpit overlay while a cinematic renders with the raw toggle set
@@ -675,8 +733,16 @@ void GameContext::render(AppContext& app) {
 	}
 
 	// Loot list overlay during the dwell window — paints OVER world+HUD
-	// (src/Canvas.cpp:414-417,469-472).
-	if (state_ == StateId::Looting) loot_.draw(g);
+	// (src/Canvas.cpp:414-417,469-472), now split into the producer's model and
+	// the view (spec §5). buildViewModel carries the dwell gate the old draw
+	// call opened with, so it stays the thing that decides nothing is drawn.
+	if (state_ == StateId::Looting && ui != nullptr) {
+		LootListModel loot;
+		if (loot_.buildViewModel(loot)) {
+			const UiResult r = drawLootList(*ui, loot);
+			applyUiAction(r.action, r.index);
+		}
+	}
 
 	if (ui != nullptr) ui->endFrame();
 

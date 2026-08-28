@@ -3,13 +3,10 @@
 #include <algorithm>
 #include <cstdio>
 
-#include "domain/game/DialogSystem.h"
 #include "domain/game/Player.h"
 #include "domain/world/MapData.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
-#include "render/Graphics2D.h"
-#include "text/Font.h"
 
 namespace newcore {
 
@@ -125,43 +122,25 @@ void LootSession::close() {
 	lootTime_ = *env_.upTimeMs;            // stand-up starts now, zero extra delay
 }
 
-namespace {
-
-void fillArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
-	g.fillRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
-}
-
-void rectArgb(Graphics2D& g, int x, int y, int w, int h, uint32_t argb) {
-	g.drawRect(x, y, w, h, (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb);
-}
-
-} // namespace
-
-void LootSession::draw(Graphics2D& g) {
-	if (!(lootCrouch_ && *env_.upTimeMs > lootTime_ + kLootPhaseMs)) return; // (:121-122)
-	if (lootPool_.text.length() == 0 || env_.font == nullptr) return;
-	constexpr int kViewY = 20;            // viewRect[1] (src/Canvas.cpp:124-127)
-	constexpr int kScrCx = 240;           // Canvas::SCR_CX
-	const int dx = 0, dy = kViewY + 16, dw = 480 - 1, dh = 48;   // dialogRect (:123-127)
-	fillArgb(g, dx, dy, dw, dh, 0xFF660000u);                    // body (:128-129)
-	fillArgb(g, dx, dy - 18, dw, 18, 0xFF000000u);               // title bar (:130-131)
-	rectArgb(g, dx, dy - 18, dw, 18, 0xFFFFFFFFu);               // (:132-133)
-	rectArgb(g, dx, dy, dw, dh, 0xFFFFFFFFu);                    // (:134)
-	Text title;                                                  // (:135-139)
-	title.append(env_.loc->get(kTextMain, 227));
-	title.dehyphenate();
-	g.drawString(*env_.font, title, kScrCx, dy - 16, Graphics2D::kAnchorHCenter, 16);
-	for (int i = 0; i < 3; ++i) {                                // (:140-144)
-		int line = i + lootPool_.topLine;
-		if (line < 0 || line >= CorpseLoot::Pool::kMaxLines) continue;
-		g.drawString(*env_.font, lootPool_.text, dx + 5, dy + 1 + i * 16,
-		    Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft, 16,
-		    lootPool_.lineIndex[line * 2], lootPool_.lineIndex[line * 2 + 1]);
-	}
-	int total = CorpseLoot::Pool::lineCount(lootPool_);
-	if (total > 3)                                               // (:145-150)
-		env_.dialogs->drawScrollBar(g, dx + dw, dy + 1, dh - 1, lootPool_.topLine,
-		    std::min(lootPool_.topLine + 3, total), total, 3);
+// State half of the legacy drawLootingMenu (src/LootingSystem.cpp:118-150): the
+// dwell-window gate plus the title compose. The geometry, the colours and the
+// scrollbar live in ui/LootView.cpp now (spec 2026-08-27-ui-layer §5).
+bool LootSession::buildViewModel(LootListModel& m) {
+	if (!(lootCrouch_ && *env_.upTimeMs > lootTime_ + kLootPhaseMs)) return false; // (:121-122)
+	if (lootPool_.text.length() == 0 || env_.font == nullptr) return false;
+	// Recomposed every frame, exactly like the legacy getSmallBuffer +
+	// composeText + dehyphenate + dispose triple (:135-139).
+	titleText_.setLength(0);
+	titleText_.append(env_.loc->get(kTextMain, 227));
+	titleText_.dehyphenate();
+	m.title = &titleText_;
+	m.text = &lootPool_.text;
+	m.lineIndex = lootPool_.lineIndex;
+	m.indexCapacity = CorpseLoot::Pool::kMaxLines;
+	m.lineCount = CorpseLoot::Pool::lineCount(lootPool_);
+	m.topLine = lootPool_.topLine;
+	m.visibleRows = 3;                                           // (:140)
+	return true;
 }
 
 } // namespace newcore

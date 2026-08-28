@@ -160,6 +160,22 @@ void Combat::performAttack(Entity* target, int attackX, int attackY, bool script
 }
 
 bool Combat::tick() {
+	// Muzzle-flash latch (src/Combat.cpp:742-744). The original — and the
+	// rewrite until now (new_src/ui/ViewWeapon.cpp:135) — flips it from
+	// drawWeapon, i.e. the draw path mutates combat state. Moved here next to
+	// the state it belongs to (spec 2026-08-27-ui-layer §6 deviation D2, ADR
+	// 0012). Both conditions of the original are kept; only the two enclosing
+	// draw-side gates are not re-tested: `active` is guaranteed by the sole
+	// caller (GameContext::tickPlaying) and `attackerWeaponId == player weapon`
+	// is not needed here, since a weapon mismatch hides the whole pose block
+	// anyway and stage 0 re-arms flashDone for every shot.
+	// TIMING CONSEQUENCE (knowingly accepted): the flip now lands on the 15 ms
+	// tick that first satisfies the comparison instead of on the draw that
+	// follows it, so the flash and the held attack pose are one rendered frame
+	// shorter and the return lerp starts one frame earlier. The lerp itself is
+	// keyed off animStartTime, so its shape is unchanged.
+	if (!flashDone && *env_.gameTime >= flashDoneTime) flashDone = true;
+
 	// playerSeq (src/Combat.cpp:178-425) reduced to the hitscan path.
 	// Head stage advance (:182-187): the numActiveMissiles / animatingEffects
 	// terms have no rewrite counterparts yet.

@@ -15,9 +15,8 @@ class Texture;
 class UiAssets;
 
 // Canvas::drawScrollBar port (src/Canvas.cpp:1284-1315), moved out of
-// DialogSystem::drawScrollBar. Exposed as a free function as well as through
-// Ui::scrollBar because DialogSystem still draws without a Ui (spec §5 moves
-// its call site).
+// DialogSystem::drawScrollBar. A free function because it takes the sheet as
+// an argument and needs no Ui; since GROUP 5 the only caller is Ui::scrollBar.
 void drawScrollBarCanvas(Graphics2D& g, const Texture& uiImages,
 	int x, int y, int h, int topLine, int pageEnd, int numLines, int viewLines);
 

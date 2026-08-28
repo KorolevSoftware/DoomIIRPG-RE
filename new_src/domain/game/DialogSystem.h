@@ -40,9 +40,9 @@ public:
 		ScriptVM* vm = nullptr;
 		Game* game = nullptr;
 		const Localization* loc = nullptr;
-		// Both are drawing leftovers: hud supplies the ui_images sheet to the
-		// drawScrollBar forwarder below, and the pair gates buildViewModel the
-		// way it gated the old draw call. Spec GROUP 5 removes the forwarder.
+		// Both are drawing leftovers, kept as the pair that gates
+		// buildViewModel the way it gated the old draw call. GROUP 5 removed
+		// the drawScrollBar forwarder that was hud's other use.
 		Hud* hud = nullptr;
 		const Font* font = nullptr;
 		const Tables* tables = nullptr;
@@ -71,11 +71,6 @@ public:
 	// called once per rendered frame and only while ST_DIALOG.
 	// Returns false when there is nothing to draw.
 	bool buildViewModel(DialogViewModel& m);
-
-	// Shared Canvas::drawScrollBar port; also used by the loot overlay, like
-	// legacy src/LoothingSystem.cpp:146-150.
-	void drawScrollBar(Graphics2D& g, int x, int y, int h,
-		int topLine, int pageEnd, int numLines, int viewLines) const;
 
 	// Text-arg pool feeding %NN substitution (src/Text.cpp:222-275).
 	void resetTextArgs();

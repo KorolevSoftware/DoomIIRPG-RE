@@ -3,15 +3,10 @@
 #include <algorithm>
 #include <cmath>
 
-#include "domain/game/Game.h"
-#include "domain/game/Player.h"
-#include "domain/game/WeaponTable.h"
 #include "io/Media.h"
-#include "io/Tables.h"
 #include "render/Camera3D.h"
 #include "render/Graphics2D.h"
 #include "render/World3D.h"
-#include "ui/Hud.h"
 
 namespace newcore {
 
@@ -79,14 +74,18 @@ void ViewWeapon::init(const Env& env) {
 	env_ = env;
 }
 
-void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam) {
+void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel& m) {
 	// The gameplay-state gate (src/Combat.cpp:706-708 state check) and the
 	// "a cinematic owns the view" suppression live at the single call site
 	// now (spec §4). Zoom skip (src/Canvas.cpp:1348 isZoomedIn) is implicit
 	// — no zoom system yet.
-	Player& p = *env_.player;
-	const int w = p.ce.weapon;                                 // (:677)
-	if (w < 0 || p.weapons == 0) return;                       // (:706-708)
+	// The Player / Game::combat / Tables reads, the wpinfo lookup, the pose
+	// lerp and the two flash gates moved to
+	// GameContext::buildViewWeaponModel (spec 2026-08-27-ui-layer §6): the
+	// model's `visible` carries both former early returns (no weapon owned,
+	// missing wpinfo row).
+	if (!m.visible) return;
+	const int w = m.weapon;
 
 	// Legacy anchors (196,131) stay VIEWPORT-relative (draw2DSprite,
 	// rendering.md §6.2); the viewport origin (1,7) enters through the
@@ -99,50 +98,9 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam) {
 	// Per-weapon scrY bias (:679-693).
 	scrY += (w == 1) ? 3 : (w == 2) ? 10 : (w >= 3 && w <= 6) ? 12 : 0;
 
-	// wpinfo table 1: idleX,idleY,atkX,atkY,flashX,flashY signed bytes per
-	// weapon (src/Combat.h:53-59).
-	const Tables& tables = *env_.tables;
-	// Row missing => draw nothing, same as the former
-	// ((size_t)(w * 6 + 5) >= weaponInfo.size()) early return.
-	const WeaponPose* pose = tables.weaponPose(w);
-	if (pose == nullptr) return;
-	const int idleX = pose->idleX;
-	const int idleY = pose->idleY;
-	const int atkX  = pose->atkX;
-	const int atkY  = pose->atkY;
-	const int flashX = pose->flashX;
-	const int flashY = pose->flashY;
-
-	// Attack pose: hold (atkX,atkY) until flashDone, then lerp back over
-	// animTime in 16.16 (src/Combat.cpp:735-767). b5 reduces to
-	// "seq running for this weapon" (curAttacker == nullptr always).
-	int wpX = idleX, wpY = idleY;
-	bool flash = false;
-	Combat& c = env_.game->combat;
-	if (c.active && c.attackerWeaponId == w) {
-		wpX = atkX;
-		wpY = atkY;
-		if (!c.flashDone) {
-			flash = ((1 << w) & 0x200) == 0;                   // :741 (weapon 9 excluded)
-			// Render-side flip exactly like legacy drawWeapon (:742-744).
-			if (*env_.gameTime >= c.flashDoneTime) c.flashDone = true;
-		} else {
-			// SHOTHOLD return lerp; chainsaw jitter branch (:752-761) omitted.
-			const int elapsed = (int)(*env_.gameTime - c.animStartTime);
-			// Lerp starts at animStartTime; legacy does not subtract
-			// flashTime (src/Combat.cpp:747).
-			const int t = std::clamp(elapsed, 0, c.animTime) *
-				65536 / std::max(c.animTime, 1);
-			wpX = atkX + (((idleX - atkX) * t) >> 16);
-			wpY = atkY + (((idleY - atkY) * t) >> 16);
-		}
-	}
-
-	// Canvas shake; legacy negates sy first (sy = -|sy|, src/Combat.cpp:709).
-	const int sx = env_.hud->shakeX();
-	const int sy = -std::abs(env_.hud->shakeY());
-	const int x = scrX + wpX + sx;                             // (:786)
-	const int y = scrY - (wpY + sy);                           // (:787)
+	// Canvas shake; m.shakeY is already the legacy -|sy| (src/Combat.cpp:709).
+	const int x = scrX + m.poseX + m.shakeX;                   // (:786)
+	const int y = scrY - (m.poseY + m.shakeY);                 // (:787)
 
 	// Muzzle flash FIRST so the gun art draws on top (:826-834): tile 1
 	// frame 3 at (+flashX+40, +flashY+40), 88x88 (scaleFactor 0x8000).
@@ -154,12 +112,12 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam) {
 	const float magY = (float)std::abs(proj[5]) * (float)kWeaponVpCy /
 		((float)kWeaponVpCx * 12800.f);
 
-	if (flash && ((1 << w) & 0x181) != 0) {  // legacy flash gate (src/Combat.cpp:826)
-		const Texture* ftex = env_.world->spriteTexture(*env_.media,
-			Combat::getWeaponTileNum(0), 3);
+	if (m.muzzleFlash) {   // both legacy gates applied by the producer (:741,:826)
+		const Texture* ftex = env_.world->spriteTexture(*env_.media, m.flashTile, 3);
 		if (ftex != nullptr) {
 			g.setBlendMode(1);
-			drawWeaponQuad(g, *ftex, x + flashX + 40, y + flashY + 40, 88, 128, magX, magY);
+			drawWeaponQuad(g, *ftex, x + m.flashX + 40, y + m.flashY + 40, 88, 128,
+				magX, magY);
 			g.setBlendMode(0);
 		}
 	}
@@ -168,8 +126,7 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam) {
 	// (:822-825) is dead on the map00 rifle route. Sentry-bot stack
 	// (:797-813), weapon 14 (:814-820) and weapon 9 underlay (:835-837)
 	// deferred (hero-choice doc §B.3 exclusions).
-	const int tileNum = Combat::getWeaponTileNum(w);
-	const Texture* tex = env_.world->spriteTexture(*env_.media, tileNum, 0);
+	const Texture* tex = env_.world->spriteTexture(*env_.media, m.weaponTile, 0);
 	if (tex != nullptr) {
 		drawWeaponQuad(g, *tex, x, y, 176, 255, magX, magY);
 	}

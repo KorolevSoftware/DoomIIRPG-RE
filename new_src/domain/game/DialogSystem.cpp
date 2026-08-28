@@ -407,15 +407,4 @@ bool DialogSystem::buildViewModel(DialogViewModel& m) {
 	return true;
 }
 
-// The Canvas::drawScrollBar port itself lives in the UI layer
-// (drawScrollBarCanvas, new_src/ui/Ui.cpp). GROUP 7 repointed the dialog's own
-// call at Ui::scrollBar, so the only caller left is the loot overlay
-// (new_src/core/LootSession.cpp:163) — GROUP 5 moves that one and deletes this
-// forwarder together with the Hud pointer it needs.
-void DialogSystem::drawScrollBar(Graphics2D& g, int x, int y, int h,
-	int topLine, int pageEnd, int numLines, int viewLines) const {
-	drawScrollBarCanvas(g, env_.hud->imgUIImages(), x, y, h, topLine, pageEnd,
-		numLines, viewLines);
-}
-
 } // namespace newcore

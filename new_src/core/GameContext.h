@@ -122,6 +122,11 @@ private:
 	// const: it refills the soft-key Text buffers the model borrows.
 	void buildHudModel(HudModel& m, bool showBottomBar, bool interactive);
 
+	// Producer half of the view weapon (spec §6): the Player / Game::combat /
+	// Tables reads, the wpinfo row lookup, the attack-pose return lerp and the
+	// two flash gates that used to run inside ViewWeapon::draw.
+	void buildViewWeaponModel(ViewWeaponModel& m) const;
+
 	bool inputBlocked() const;
 
 	void tickLoading();      // two-phase ordered tail (spec §5)
