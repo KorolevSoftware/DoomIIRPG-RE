@@ -30,14 +30,21 @@ constexpr int kTruncateChars = (kItemWidthPx - 10) / 12;   // 23
 
 constexpr char kCheckGlyph = '\x87';       // (:934-938)
 constexpr char kEllipsisGlyph = '\x85';    // (:948-951)
+constexpr char kDividerGlyph = '\x80';     // buildDivider (:267-281)
+
+// CHAR_SPACING[0] = 11 (src/App.h:41). The divider cell count is
+// menuRect[2] / CHAR_SPACING[0] (:909), i.e. a CHARACTER budget computed with
+// the original's 11 px advance — never with the rewrite's 9 px one (NEW FACT 9).
+constexpr int kCharSpacing = 11;
 
 // items[i].flags & 0x8001 == ITEM_NOSELECT | ITEM_HIDDEN (:432, :446).
 constexpr int kUnselectableMask = kItemNoSelect | kItemHidden;
 
-// The list region as paint() narrows it (src/MenuSystem.cpp:848); it is also
-// the scroll widget's boxRect, i.e. the area a touch drag scrolls
+// The default list region as paint() narrows it (src/MenuSystem.cpp:848); it is
+// also the scroll widget's boxRect, i.e. the area a touch drag scrolls
 // (SetScrollBox from initMenu, :2793-2796). Owned here and written into the
-// model, like kBarRect below.
+// model; geometryFor() below gives the screens that move it (MENU_INGAME_OPTIONS
+// and the confirm screens) their own x/w.
 constexpr UiRect kListRect{ 70, 10, 340, 241 };
 
 // The scroll widget's view height. Two values are defensible: 256, because
@@ -52,7 +59,7 @@ constexpr UiRect kListRect{ 70, 10, 340, 241 };
 // the user reported. With 241 the clamp stops at 365 and the last plate lands
 // at 195..241, whole and ending on the region's edge. We use 241.
 //
-// This changes the SCROLL view height only: kBarRect below is a separate use of
+// This changes the SCROLL view height only: barRect() is a separate use of
 // menuRect[3] (:2757-2762) and keeps its initMenu-time derivation.
 constexpr int kViewPx = 241;
 static_assert(kViewPx == kListRect.h, "A3: the scroll view IS the drawn region");
@@ -66,13 +73,93 @@ constexpr int kDragDeadBoxPx = 3;
 
 // barRect for the in-game tree (:2757-2762, :2787): x 430, w 50, h =
 // imgGameMenuScrollBar->height = 220, y = menuRect[1] + ((menuRect[3]-220)>>1)
-// with the same initMenu-time rect as kViewPx -> 0 + ((256-220)>>1) = 18.
-constexpr UiRect kBarRect{ 430, 18, 50, 220 };
+// evaluated with the initMenu-time rect, whose y is always 0 here.
+constexpr int kBarX = 430;
+constexpr int kBarW = 50;
+constexpr int kBarH = 220;
+
+// setMenuSettings' per-screen rect, narrowed by paint() to y 10 / h 241 for
+// every id of the in-game tree (:847-849). `initRectH` is the height
+// setMenuSettings left behind — the one SetScrollBox saw when it placed the bar
+// (:2757-2762) — which is NOT the drawn height (A3, see kViewPx).
+struct ScreenGeom {
+	UiRect rect;
+	int initRectH;
+};
+
+// buildDivider (:267-281), verbatim: the cell count is computed BEFORE the
+// padding spaces go in, and an empty label becomes three divider glyphs.
+void buildDivider(Text& t, int cells) {
+	const int cnt = (cells - (t.length() + 2)) / 2;
+	if (t.length() > 0) {
+		t.insert(' ', 0);
+		t.append(' ');
+	} else {
+		t.append(kDividerGlyph);
+		t.append(kDividerGlyph);
+		t.append(kDividerGlyph);
+	}
+	for (int j = 0; j < cnt; ++j) {
+		t.insert(kDividerGlyph, 0);
+		t.append(kDividerGlyph);
+	}
+}
+
+// buildFraction (:3840-3851).
+void buildFraction(Text& t, int i, int i2) {
+	t.setLength(0);
+	if (i < 0) t.append('-');
+	t.append(i);
+	t.append("/");
+	if (i2 < 0) t.append('-');
+	t.append(i2);
+}
+
+// buildModStat (:3853-3862). Verbatim, including the sign quirk: a negative
+// modifier prints its own minus after the literal "(-", i.e. "12(--3)".
+void buildModStat(Text& t, int i, int i2) {
+	t.setLength(0);
+	t.append(i);
+	if (i2 == 0) return;
+	t.append((i2 > 0) ? "(+" : "(-");
+	t.append(i2);
+	t.append(')');
+}
+
+ScreenGeom geometryFor(int menuId) {
+	switch (menuId) {
+	// One case group in the original (:4330-4349): w = the 296 px option
+	// button, x = (480 - w) >> 1 = 92, y = 0, h = 320. Its remaining members
+	// (INGAME_CONTROLLER / OPTIONS_SOUND / OPTIONS_INPUT / INGAME_DEAD /
+	// ITEMS_CONFIRM / the three ITEMS_*MSG screens) have no MenuId in the
+	// rewrite. LOADNOSAVE 50 and SPECIAL_EXIT 58 are deliberately absent: they
+	// are NOT in that group and keep the default rect.
+	case kMenuOptions:
+	case kMenuExit:
+	case kMenuLoad:
+	case kMenuRestartLvl:
+	case kMenuSaveQuit:
+	case kMenuControls:
+		return { UiRect{ (480 - kItemWidthPx) / 2, kListRect.y, kItemWidthPx, kListRect.h }, 320 };
+	default:
+		// menu >= MENU_INGAME: setMenuDimentions(70, 0, 340, 320 - 64) (:4191-4194).
+		return { kListRect, 320 - 64 };
+	}
+}
 
 } // namespace
 
 void MenuSession::init(const Env& env) {
 	env_ = env;
+}
+
+UiRect MenuSession::listRect() const {
+	return geometryFor(menu_).rect;
+}
+
+UiRect MenuSession::barRect() const {
+	const int initRectH = geometryFor(menu_).initRectH;
+	return UiRect{ kBarX, (initRectH - kBarH) >> 1, kBarW, kBarH };
 }
 
 // ST_MENU entry hook: setMenu(MENU_INGAME), which clears the navigation stack
@@ -84,8 +171,9 @@ void MenuSession::begin() {
 }
 
 void MenuSession::setMenu(int menuId) {
-	// clearStack() for MENU_INGAME (:619-621). The stack itself (pushMenu /
-	// popMenu, spec §4.1) arrives with G5; until then there is nothing to clear.
+	// clearStack() for MENU_INGAME (:619-621). MENU_MAIN_BEGIN and
+	// MENU_INGAME_KICKING, the other two ids of that test, are unreachable here.
+	if (menuId == kMenuInGame) clearStack();
 	oldMenu_ = menu_;
 	menu_ = menuId;
 	initMenu(menu_);
@@ -100,8 +188,9 @@ void MenuSession::initMenu(int menuId) {
 	if (type_ < 0) {
 		// Absent from menus.bin: the code-built screens (QUESTLOG 46, LOAD 49,
 		// RESTARTLVL 52, SAVEQUIT 53, every HELP leaf; ADR 0013) arrive with
-		// G5-G7. Until then such a screen has no rows at all.
-		std::fprintf(stderr, "[menu] id %d has no menus.bin row (code-built screen, G5+)\n",
+		// G6-G7. Reaching one is a bug: select() refuses a GOTO to an id with no
+		// menus.bin row, so no such screen can be entered (see there).
+		std::fprintf(stderr, "[menu] id %d has no menus.bin row (code-built screen, G6/G7)\n",
 			menuId);
 		type_ = kMenuTypeList;
 	}
@@ -124,6 +213,7 @@ void MenuSession::initMenu(int menuId) {
 		items_[i].def = src[i];
 		items_[i].disabledByRewrite = false;
 		items_[i].disabledReason = nullptr;
+		items_[i].hasValue = false;
 	}
 	numItems_ = count;
 
@@ -141,7 +231,13 @@ void MenuSession::initMenu(int menuId) {
 			std::fprintf(stderr, "[menu] row 2 ITEM_DISABLED by data rule "
 				"(inventory[18] == 0) — unverified appearance\n");
 		}
+	} else if (menuId == kMenuPlayer) {
+		selectedIndex_ = 2;                            // (:1575)
 	}
+
+	// fillStatus' subset: the rows whose value the rewrite can actually source
+	// (:1575-1594 marks them with textField2 = ARGUMENT1..17).
+	fillValues();
 
 	// Rewrite-only refusals (spec §11.2): keyed on the row's ACTION, not on its
 	// index, so the same rule covers the sub-screens when they arrive. At the
@@ -153,6 +249,17 @@ void MenuSession::initMenu(int menuId) {
 	// only effect is that select() refuses it (see there).
 	for (int i = 0; i < numItems_; ++i) {
 		switch (items_[i].def.action) {
+		case kActionGoto:
+			// A GOTO whose target has no menus.bin row would open an empty
+			// screen (the code-built bodies are G6/G7), and MENU_INGAME_CONTROLS
+			// exists in the file but drives Hud::drawArrowControls, which the
+			// rewrite does not have (spec §11.2, §15).
+			if (items_[i].def.param == kMenuControls) {
+				disableRow(i, "no arrow-controls screen");
+			} else if (env_.menus->type(items_[i].def.param) < 0) {
+				disableRow(i, "screen is built in code, not ported yet (G6/G7)");
+			}
+			break;
 		case kActionSave:
 		case kActionSaveQuit:
 		case kActionSaveExit:
@@ -180,6 +287,47 @@ void MenuSession::initMenu(int menuId) {
 		moveDir(-1);
 	} else if (!selectable(selectedIndex_)) {
 		moveDir(1);
+	}
+}
+
+// fillStatus (:3928-3979) reduced to the values the rewrite can actually
+// source. The original stores them as text arguments and paint resolves each
+// row's textField2, which initMenu assigned as ARGUMENT1..17 (:1575-1594); the
+// per-row mapping is the same here, the composed string just goes straight into
+// valueBuf_.
+//
+// MENU_INGAME_PLAYER rows 2..11 (fillStatus' b2 block, :3931-3950) are all
+// sourceable. Rows 12..18 (the b3 block, :3968-3977) need player->totalTime,
+// totalMoves, totalDeaths and counters[1,2,6,7]; MENU_INGAME_LEVEL (:3951-3967)
+// needs the level timer, mapSecretsFound/totalSecrets, monsterStats, moves,
+// currentLevelDeaths and levelGrade. None of those exist in the rewrite, so
+// those rows keep no value at all rather than a made-up number (spec §15).
+void MenuSession::fillValues() {
+	if (menu_ != kMenuPlayer || env_.player == nullptr) return;
+	const Player& p = *env_.player;
+	if (numItems_ < 12) return;
+
+	buildFraction(valueBuf_[2], p.ce.getStat(Enums::STAT_HEALTH),
+		p.ce.getStat(Enums::STAT_MAX_HEALTH));
+	buildFraction(valueBuf_[3], p.ce.getStat(Enums::STAT_ARMOR), 200);
+	valueBuf_[4].setLength(0);
+	valueBuf_[4].append(p.level);
+	valueBuf_[5].setLength(0);
+	valueBuf_[5].append(p.currentXP);
+	valueBuf_[6].setLength(0);
+	valueBuf_[6].append(p.nextLevelXP);
+	for (int stat = Enums::STAT_DEFENSE; stat <= Enums::STAT_IQ; ++stat) {
+		buildModStat(valueBuf_[7 + stat - Enums::STAT_DEFENSE],
+			p.baseCe.getStat(stat), p.ce.getStat(stat) - p.baseCe.getStat(stat));
+	}
+	for (int i = 2; i <= 11; ++i) items_[i].hasValue = true;
+
+	static bool logged = false;
+	if (!logged) {
+		logged = true;
+		std::fprintf(stderr, "[menu] status values: rows 2-11 filled; rows 12-18 "
+			"(time/turns/deaths/shots/best shot/total damage) have no source in "
+			"the rewrite and stay blank\n");
 	}
 }
 
@@ -249,7 +397,7 @@ int MenuSession::scrollPixels() const {
 int MenuSession::barThumbLen() const {
 	const int contentPx = contentHeight();
 	if (contentPx <= 0) return 0;
-	return kViewPx * kBarRect.h / contentPx;
+	return kViewPx * kBarH / contentPx;
 }
 
 // fmScrollButton::Update for a vertical bar whose touch offset was zeroed
@@ -258,9 +406,9 @@ int MenuSession::barThumbLen() const {
 // the thumb centres on the touch, is clamped to the track, and the content
 // offset follows through field_0x50_ = (C - V) / (H - L).
 void MenuSession::barDragTo(int cursorY, int maxScroll) {
-	const int track = kBarRect.h - barThumbLen();
+	const int track = kBarH - barThumbLen();
 	if (track <= 0) return;
-	const int thumb = std::clamp(cursorY - kBarRect.y - (barThumbLen() >> 1), 0, track);
+	const int thumb = std::clamp(cursorY - barRect().y - (barThumbLen() >> 1), 0, track);
 	dragScrollPx_ = std::clamp(thumb * maxScroll / track, 0, maxScroll);
 	hasDragScroll_ = true;
 }
@@ -287,7 +435,7 @@ void MenuSession::updateDrag(const UiInput& in) {
 	if (in.pressed) {
 		pressX_ = in.cursorX;
 		pressY_ = in.cursorY;
-		if (kBarRect.contains(in.cursorX, in.cursorY)) {
+		if (barRect().contains(in.cursorX, in.cursorY)) {
 			// A press on the bar grabs it immediately, with no dead box.
 			drag_ = DragMode::Bar;
 			barDragTo(in.cursorY, maxScroll);
@@ -313,7 +461,7 @@ void MenuSession::updateDrag(const UiInput& in) {
 		    std::abs(in.cursorY - pressY_) <= kDragDeadBoxPx) {
 			break;
 		}
-		if (!kListRect.contains(in.cursorX, in.cursorY)) break;
+		if (!listRect().contains(in.cursorX, in.cursorY)) break;
 		// SetContentTouchOffset latches the CURRENT point (:4896,
 		// src/Button.cpp:443-452), so the content does not jump by the dead-box
 		// distance when the drag starts.
@@ -468,9 +616,7 @@ void MenuSession::select(int i) {
 	case kActionNone:
 		break;
 	case kActionGoto:
-		// gotoMenu + the 3-value navigation stack are G5 (spec §12).
-		std::fprintf(stderr, "[menu] goto %d not implemented yet (G5)\n",
-			items_[i].def.param);
+		gotoMenu(items_[i].def.param);
 		break;
 	case kActionBack:
 		back();
@@ -482,11 +628,54 @@ void MenuSession::select(int i) {
 	}
 }
 
-// back() (:591-607). The stack is always empty in G3, so only the root-like
-// branch can run; MENU_ITEMS_DRINKS and MENU_INGAME_SNIPER have no rewrite
-// counterpart (spec §4.1).
+// gotoMenu (:2818-2824): push the CURRENT screen, then switch. The original
+// pushes two extra scroll-pixel fields ([GEC] widget state); the rewrite derives
+// the pixels from scrollIndex, so the pair (selectedIndex, scrollIndex) is the
+// whole restored state.
+void MenuSession::gotoMenu(int menuId) {
+	if (menuId != menu_) {
+		pushMenu(menu_, selectedIndex_, scrollIndex_);
+	}
+	setMenu(menuId);
+}
+
+// pushMenu (:4059-4069). The original calls Error("Menu stack is full.") on
+// overflow; the rewrite logs and drops the push, which leaves the stack
+// consistent (one screen loses its way back instead of the process dying). The
+// in-game tree is two levels deep, so this cannot fire.
+void MenuSession::pushMenu(int menuId, int selectedIndex, int scrollIndex) {
+	if (stackCount_ + 1 >= kMaxStack) {
+		std::fprintf(stderr, "[menu] stack full at depth %d — push of menu %d dropped\n",
+			stackCount_, menuId);
+		return;
+	}
+	idxStack_[stackCount_] = selectedIndex;
+	scrollStack_[stackCount_] = scrollIndex;
+	menuStack_[stackCount_++] = menuId;
+}
+
+// popMenu (:4071-4081). Callers check stackCount_ first, exactly like back().
+int MenuSession::popMenu(int& selectedIndex, int& scrollIndex) {
+	selectedIndex = idxStack_[stackCount_ - 1];
+	scrollIndex = scrollStack_[stackCount_ - 1];
+	return menuStack_[--stackCount_];
+}
+
+// back() (:591-607). MENU_ITEMS_DRINKS and MENU_INGAME_SNIPER have no rewrite
+// counterpart (spec §4.1), and MENU_MAIN_MINIGAME / MENU_COMIC_BOOK are
+// main-menu ids that cannot be reached from ST_MENU.
 void MenuSession::back() {
-	if (menu_ == kMenuInGame || menu_ == kMenuItems || menu_ == kMenuQuestLog) {
+	if (stackCount_ != 0) {
+		int idx = 0;
+		int scroll = 0;
+		const int target = popMenu(idx, scroll);
+		// The restore lands AFTER setMenu, so it overwrites both the
+		// oldMenu_-guarded reset in initMenu (:1227-1230) and the per-screen
+		// selectedIndex patches — which is what keeps the cursor where it was.
+		setMenu(target);
+		selectedIndex_ = idx;
+		scrollIndex_ = scroll;
+	} else if (menu_ == kMenuInGame || menu_ == kMenuItems || menu_ == kMenuQuestLog) {
 		returnToGame();
 	}
 }
@@ -524,6 +713,11 @@ void MenuSession::composeLabel(int i) {
 	// EMPTY_TEXT without ITEM_DIVIDER draws nothing but keeps its height (:930).
 	if (d.labelId == kEmptyTextId && (d.flags & kItemDivider) == 0) return;
 
+	// The value column lives inside that same branch in the legacy paint
+	// (:930 opens it, :1010 draws textField2), so a row with neither label nor
+	// divider shows no value either.
+	if (items_[i].hasValue) row.value = &valueBuf_[i];
+
 	Text& t = labelBuf_[i];
 	t.setLength(0);
 	if ((d.flags & kItemChecked) != 0) {                             // (:934-938)
@@ -542,11 +736,9 @@ void MenuSession::composeLabel(int i) {
 		t.append(kEllipsisGlyph);
 	}
 	if ((d.flags & kItemDivider) != 0) {                             // (:954-957)
-		static bool logged = false;
-		if (!logged) {
-			logged = true;
-			std::fprintf(stderr, "[menu] ITEM_DIVIDER row: buildDivider not ported yet (G5)\n");
-		}
+		// v78 = menuRect[2] / CHAR_SPACING[app->fontType], computed once before
+		// the row loop from the PAINT-narrowed rect (:909).
+		buildDivider(t, listRect().w / kCharSpacing);
 	}
 	row.label = &t;
 }
@@ -560,7 +752,7 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 	m.rowCount = numItems_;
 	// Same numbers as the model's own defaults; assigned so that the region the
 	// drag hit test uses and the region the view draws are one constant.
-	m.rect = kListRect;
+	m.rect = listRect();
 	m.scrollPx = scrollPixels();
 	// A content or bar drag owns the gesture, and so does the release that ends
 	// one: the rows take no hits on those frames (:4676-4689, :4855-4870).
@@ -574,7 +766,7 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 	const int contentPx = contentHeight();
 	m.showBar = contentPx > kViewPx;
 	if (m.showBar) {
-		m.barRect = kBarRect;
+		m.barRect = barRect();
 		// thumbLen L = V*H/C, thumbOffset = scrollPx * (H-L) / (C-V)
 		// (SetScrollBox src/Button.cpp:397-405, UpdateContent :479-481).
 		m.barThumbLen = barThumbLen();

@@ -61,6 +61,7 @@ constexpr int kNoTouchBelowY = 210;
 constexpr uint32_t kDisabledOverlay = 0x3333994C;
 
 constexpr char kCursorGlyph = '\x8A';    // Graphics::drawCursor (src/Graphics.cpp:670-686)
+constexpr char kDisabledGlyph = '\x89';  // disabled LABEL row fill (src/MenuSystem.cpp:1104-1113)
 
 UiId rowSlotId(int slot) {
 	return (UiId)((int)UiId::MenuRow0 + slot);
@@ -176,6 +177,21 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 			const MenuRow& r = m.rows[i];
 			if (y + r.height > 0 && r.label != nullptr) {
 				const int y0 = y + m.rect.y;
+				// Value column first, exactly where the legacy paint puts it:
+				// inside the NON-centred branch, before the cursor and the
+				// label (:1010-1044 vs :1064). Action row: menuRect[0] +
+				// menuItem_width - 8 = 358, anchor 10 (RIGHT|VCENTER); label
+				// row: menuRect[0] + menuRect[2] = 410, anchor 24 (RIGHT|TOP).
+				if (r.value != nullptr && !r.centered) {
+					if (r.action) {
+						ui.label(*r.value, m.rect.x + m.itemWidth - 8,
+							y0 + (m.itemHeight >> 1),
+							Graphics2D::kAnchorRight | Graphics2D::kAnchorVCenter);
+					} else {
+						ui.label(*r.value, m.rect.x + m.rect.w, y0,
+							Graphics2D::kAnchorRight | Graphics2D::kAnchorTop);
+					}
+				}
 				int labelX;
 				if (r.centered) {                                     // (:959-970)
 					const int half = r.label->getStringWidth(false) >> 1;
@@ -197,13 +213,19 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 				} else {
 					ui.label(*r.label, labelX, y0, Graphics2D::kAnchorNone);
 				}
-				if (r.disabled && r.action) {                         // (:1086-1102)
-					ui.panel(UiRect{ m.rect.x, y0, m.itemWidth, m.itemHeight },
-						kDisabledOverlay);
+				if (r.disabled) {
+					if (r.action) {                               // (:1086-1102)
+						ui.panel(UiRect{ m.rect.x, y0, m.itemWidth, m.itemHeight },
+							kDisabledOverlay);
+					} else {                                      // (:1104-1113)
+						// The legacy refills its paint buffer with as many
+						// '\x89' glyphs as the label had characters and redraws
+						// it over the text at the SAME x — the cursor-shifted
+						// one — with anchor 0.
+						ui.glyphRun(kDisabledGlyph, r.label->length(), labelX, y0,
+							Graphics2D::kAnchorNone);
+					}
 				}
-				// A disabled LABEL row redraws its text as a run of '\x89'
-				// (:1104-1113). Not implemented here: 16 px label rows only
-				// exist on the sub-screens, which arrive with G5.
 			}
 			y += r.height;
 		}

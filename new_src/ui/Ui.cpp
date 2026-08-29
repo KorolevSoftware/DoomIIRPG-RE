@@ -77,7 +77,10 @@ void Ui::init(const Env& env) {
 	env_ = env;
 	in_ = UiInput{};
 	clipDepth_ = 0;
-	glyphBuf_.reserve(2);
+	// One glyph for glyph(), up to a whole label's worth for glyphRun(); the
+	// longest run the menu can ask for is a divider line (menuRect[2] / 11 = 30
+	// cells) or a truncated 23-char row label.
+	glyphBuf_.reserve(64);
 }
 
 void Ui::beginFrame(const UiInput& in) {
@@ -195,6 +198,13 @@ void Ui::label(const Text& t, int x, int y, int anchorFlags, int lineH) {
 void Ui::glyph(char c, int x, int y, int anchorFlags) {
 	glyphBuf_.setLength(0);
 	glyphBuf_.append(c);
+	g().drawString(font(), glyphBuf_, x, y, anchorFlags);
+}
+
+void Ui::glyphRun(char c, int count, int x, int y, int anchorFlags) {
+	if (count <= 0) return;
+	glyphBuf_.setLength(0);
+	for (int i = 0; i < count; ++i) glyphBuf_.append(c);
 	g().drawString(font(), glyphBuf_, x, y, anchorFlags);
 }
 

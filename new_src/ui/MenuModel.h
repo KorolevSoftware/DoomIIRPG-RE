@@ -18,6 +18,11 @@ class Text;
 // real height — drawn as blank, still occupying its row (:930).
 struct MenuRow {
 	const Text* label = nullptr;
+	// The legacy textField2 column, right-aligned at the far edge of the row
+	// (src/MenuSystem.cpp:1038-1044). null = the row has no value, which is what
+	// every menus.bin row is: only the status screens get one, from the
+	// producer's own fillStatus subset.
+	const Text* value = nullptr;
 	int  height = 16;      // ROW PITCH: 46+10 for action rows, 16 for label rows
 	                       // (src/MenuSystem.cpp:4967-4983); the last row loses
 	                       // its padding

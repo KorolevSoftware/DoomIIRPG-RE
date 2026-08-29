@@ -83,6 +83,11 @@ public:
 	// '\x89' (disabled fill). The caller does the positioning, including the
 	// cursor's OSC_CYCLE wobble — no clock is read here.
 	void glyph(char c, int x, int y, int anchorFlags);
+	// `count` copies of one glyph in a single drawString — the legacy way a
+	// disabled label row is blanked out: the paint buffer is refilled with
+	// length() copies of '\x89' and redrawn over the text
+	// (src/MenuSystem.cpp:1104-1113).
+	void glyphRun(char c, int count, int x, int y, int anchorFlags);
 	// One explicit <start,len> run of a buffer. The dialog's typewriter needs
 	// it: the revealed length changes per frame, so there is no line table to
 	// index (src/DialogSystem.cpp:333-354).
@@ -130,7 +135,7 @@ private:
 
 	Env env_;
 	UiInput in_;
-	Text glyphBuf_;                       // reserved in init(), never grows
+	Text glyphBuf_;                       // reserved in init() for the longest run
 
 	UiRect clipStack_[kMaxClipDepth];
 	int clipDepth_ = 0;

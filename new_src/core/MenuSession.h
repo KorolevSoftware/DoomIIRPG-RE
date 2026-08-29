@@ -20,9 +20,10 @@ class Tables;
 // the item copies, the selection and the Text buffers the view model borrows;
 // the view is stateless and UiState knows nothing about the menu.
 //
-// GROUP 3+4 scope: the root screen (MENU_INGAME, id 29), pixel scrolling and
-// the scrollbar. The navigation stack (gotoMenu/pushMenu/popMenu), the
-// code-built screens and the info buttons arrive with G5+.
+// GROUP 3+4+5 scope: the root screen (MENU_INGAME, id 29), pixel scrolling, the
+// scrollbar, the navigation stack and every sub-screen that has a menus.bin row.
+// The code-built screens (PDA 46, the confirm screens 49/52/53, the help leaves)
+// and the info buttons arrive with G6-G8.
 class MenuSession {
 public:
 	// maxItems: [GEC] hard-set to 4 at src/MenuSystem.cpp:1231; what the J2ME
@@ -31,6 +32,8 @@ public:
 	// items[50] in the original (src/MenuSystem.h:139); 64 leaves room for the
 	// code-built screens without a reallocation.
 	static constexpr int kMaxRows = 64;
+	// Stack depth; the original errors out on overflow (src/MenuSystem.cpp:4059-4081).
+	static constexpr int kMaxStack = 10;
 
 	struct Env {
 		const MenuData* menus = nullptr;
@@ -61,16 +64,26 @@ private:
 		MenuItemDef def;
 		bool disabledByRewrite = false;
 		const char* disabledReason = nullptr;
+		// The rewrite's textField2: true when fillValues() produced a value
+		// string for this row (:1575-1594 assigns ARGUMENT1..17 there).
+		bool hasValue = false;
 	};
 
 	void setMenu(int menuId);         // (:612-654)
 	void initMenu(int menuId);        // (:1227-1573 subset)
+	void gotoMenu(int menuId);        // (:2818-2824)
+	void pushMenu(int menuId, int selectedIndex, int scrollIndex);  // (:4059-4069)
+	int  popMenu(int& selectedIndex, int& scrollIndex);             // (:4071-4081)
+	void clearStack() { stackCount_ = 0; }                          // (:4055-4057)
+	void fillValues();                // fillStatus subset (:3928-3979)
 	void back();                      // (:591-607)
 	void returnToGame();              // (:1209-1220)
 	void select(int i);               // (:2971-3050 subset)
 	void moveDir(int n);              // (:401-455 verbatim, minus type 9)
 	void scrollPageUp();              // (:349-363)
 	void scrollPageDown();            // (:332-346)
+	UiRect listRect() const;          // setMenuSettings + paint's narrowing (:848)
+	UiRect barRect() const;           // (:2757-2762)
 	int  itemHeight(int i) const;     // getMenuItemHeight (:4947-4984)
 	int  contentHeight() const;       // sum over the non-hidden rows (:2742-2751)
 	int  scrollPixels() const;        // scrollIndex_ -> pixels (spec §6.3, A2)
@@ -90,6 +103,14 @@ private:
 	int selectedIndex_ = 0;
 	int scrollIndex_ = 0;
 
+	// The navigation stack (:4045-4081). The original keeps five parallel
+	// stacks; the two scroll-pixel ones (scrollY1Stack / scrollY2Stack) are
+	// [GEC] widget state the rewrite derives from scrollIndex, so three remain.
+	int menuStack_[kMaxStack] = { 0 };
+	int idxStack_[kMaxStack] = { 0 };
+	int scrollStack_[kMaxStack] = { 0 };
+	int stackCount_ = 0;
+
 	// Touch drag state, the rewrite's copy of the two fmScrollButton latches:
 	// field_0x38_ (content drag) and field_0x14_ (bar drag), plus the pending
 	// phase the [GEC] dead box creates (src/MenuSystem.cpp:4842-4847).
@@ -106,6 +127,7 @@ private:
 	// Producer-side storage the model points at (spec §1: core/ allocates once,
 	// ui/ allocates nothing).
 	Text labelBuf_[kMaxRows];
+	Text valueBuf_[kMaxRows];     // the textField2 column (:1038-1044)
 	MenuRow rowBuf_[kMaxRows];
 	Text statusText_;
 	Text statusTailText_;     // the shield half, built with leading spaces (:751-756)
