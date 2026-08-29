@@ -792,6 +792,10 @@ void GameContext::render(AppContext& app) {
 	// covered. The HUD bars and the view weapon are already excluded by
 	// `gameplayView`, which does not list Menu.
 	if (state_ == StateId::Menu && ui != nullptr) {
+		// Touch drag scrolling, before the model is built: it sets both the
+		// frame's scroll offset and whether the rows take hits at all
+		// (src/MenuSystem.cpp:4869-4913).
+		menu_.updateDrag(ui->in());
 		MenuViewModel mv;
 		if (menu_.buildViewModel(mv)) {
 			const UiResult r = drawMenu(*ui, mv);

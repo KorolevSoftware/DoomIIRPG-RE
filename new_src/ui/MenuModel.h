@@ -52,7 +52,26 @@ struct MenuViewModel {
 	int rowCount = 0;
 	int scrollPx = 0;
 	int selectedRow = -1;   // -1 = no cursor at all (types 5 and 7, :1064)
+	// false = a touch drag owns the current gesture, so the rows register no hit
+	// areas and the release that ends the drag activates nothing. The legacy
+	// release handler returns early while a drag latch is set
+	// (src/MenuSystem.cpp:4676-4689) and its move handler clears every button
+	// highlight on the frame the drag starts (:4855-4870). The drag itself lives
+	// entirely in the producer; the view only obeys this flag.
+	bool rowHits = true;
 	int cursorOffset = 0;   // OSC_CYCLE[time/100%4], resolved by the producer
+
+	// Scrollbar. The producer owns every number here: it already holds scrollPx,
+	// the content height and the view height, so the thumb is computed once in
+	// MenuSession and Ui::scrollBarMenu only blits the four sheets
+	// (fmScrollButton::SetScrollBox src/Button.cpp:380-406 + UpdateContent
+	// :456-482). showBar == false hides the bar entirely (:2753).
+	bool showBar = false;
+	UiRect barRect{ 430, 18, 50, 220 };  // (430, menuRect[1] + ((menuRect[3]-220)>>1),
+	                                     // 50, imgGameMenuScrollBar->height) with the
+	                                     // initMenu-time rect (:2757-2762, :2787)
+	int barThumbLen = 0;                 // px, viewPx * barRect.h / contentPx
+	int barThumbOffset = 0;              // px from barRect.y
 
 	// Chrome
 	bool drawBackground = true;        // gameMenu_Background, opaque 480x320 (:739)

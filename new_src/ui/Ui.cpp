@@ -120,6 +120,10 @@ bool Ui::isActive(UiId id) const {
 	return env_.state->activeId == id && in_.down;
 }
 
+void Ui::clearActive() {
+	state().activeId = UiId::None;
+}
+
 bool Ui::hover(const UiRect& r) const {
 	return in_.cursorValid && r.contains(in_.cursorX, in_.cursorY);
 }

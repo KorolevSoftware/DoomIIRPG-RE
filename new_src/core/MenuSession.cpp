@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 #include "domain/game/Enums.h"
 #include "domain/game/Player.h"
@@ -32,6 +33,41 @@ constexpr char kEllipsisGlyph = '\x85';    // (:948-951)
 
 // items[i].flags & 0x8001 == ITEM_NOSELECT | ITEM_HIDDEN (:432, :446).
 constexpr int kUnselectableMask = kItemNoSelect | kItemHidden;
+
+// The list region as paint() narrows it (src/MenuSystem.cpp:848); it is also
+// the scroll widget's boxRect, i.e. the area a touch drag scrolls
+// (SetScrollBox from initMenu, :2793-2796). Owned here and written into the
+// model, like kBarRect below.
+constexpr UiRect kListRect{ 70, 10, 340, 241 };
+
+// The scroll widget's view height. Two values are defensible: 256, because
+// SetScrollBox runs from initMenu while menuRect is still (70, 0, 340, 320-64)
+// (src/MenuSystem.cpp:4192, :2793-2796), and 241, the height paint() narrows
+// the region to right afterwards (:848).
+//
+// A3 (spec §14) is RESOLVED, and by the user's screen rather than by reasoning.
+// With the reference-derived 256 the clamp stops at contentPx - 256 = 350 and
+// the last plate lands at 210..256 of a 241 px region — its bottom 15 px cut
+// off by the clip, which is exactly the "last row against the bottom border"
+// the user reported. With 241 the clamp stops at 365 and the last plate lands
+// at 195..241, whole and ending on the region's edge. We use 241.
+//
+// This changes the SCROLL view height only: kBarRect below is a separate use of
+// menuRect[3] (:2757-2762) and keeps its initMenu-time derivation.
+constexpr int kViewPx = 241;
+static_assert(kViewPx == kListRect.h, "A3: the scroll view IS the drawn region");
+
+// Drag dead box: the port ignores pointer moves that stay inside a 6x6 box
+// around the press point ([GEC], src/MenuSystem.cpp:4842-4847 and
+// src/TouchController.cpp:127-131). Applied symmetrically here — a move of more
+// than 3 px on either axis turns the press into a drag; anything smaller is
+// still a click and still activates the row.
+constexpr int kDragDeadBoxPx = 3;
+
+// barRect for the in-game tree (:2757-2762, :2787): x 430, w 50, h =
+// imgGameMenuScrollBar->height = 220, y = menuRect[1] + ((menuRect[3]-220)>>1)
+// with the same initMenu-time rect as kViewPx -> 0 + ((256-220)>>1) = 18.
+constexpr UiRect kBarRect{ 430, 18, 50, 220 };
 
 } // namespace
 
@@ -73,6 +109,10 @@ void MenuSession::initMenu(int menuId) {
 	if (menuId != oldMenu_) {                          // (:1227-1230)
 		scrollIndex_ = 0;
 		selectedIndex_ = 0;
+		// The drag offset is part of the scroll position, so it is dropped
+		// exactly where the index is dropped and kept where the index is kept.
+		hasDragScroll_ = false;
+		dragScrollPx_ = 0;
 	}
 
 	// loadMenuItems(menu, 0, -1) (:2724-2727): the whole span, copied because
@@ -166,9 +206,136 @@ int MenuSession::itemHeight(int i) const {
 	return kFontHeight + kItemFontPaddingBottom;
 }
 
+// Total pixel height of the list: the legacy sum that decides whether a
+// scrollbar exists at all and feeds SetScrollBox as the content size
+// (:2742-2751). ITEM_HIDDEN rows contribute nothing.
+int MenuSession::contentHeight() const {
+	int total = 0;
+	for (int i = 0; i < numItems_; ++i) {
+		if ((items_[i].def.flags & kItemHidden) != 0) continue;
+		total += itemHeight(i);
+	}
+	return total;
+}
+
+// ASSUMPTION A2 (spec §6.3, §14): the original's authoritative scroll model is
+// the item-index pair scrollIndex/maxItems; the port's pixel sync block
+// (src/MenuSystem.cpp:463-546) is [GEC] and the original's exact pixel
+// behaviour is UNKNOWN. So the rewrite derives the pixel offset from the item
+// index — the top of the first windowed row — and then applies the widget's own
+// clamp to [0, contentPx - viewPx] (UpdateContent, src/Button.cpp:470-478).
+// Visible consequence of this choice: the first visible row is always flush
+// with the top of the region except at maximum scroll, where the clamp bites.
+int MenuSession::scrollPixels() const {
+	const int maxScroll = contentHeight() - kViewPx;
+	if (maxScroll <= 0) return 0;
+	// A touch drag writes the pixel offset directly and leaves scrollIndex
+	// alone, exactly as UpdateContent writes field_0x44_ (src/Button.cpp:456-478)
+	// while the item model stays where it was; the next key move recomputes the
+	// pixels from the index again ([GEC] sync block, src/MenuSystem.cpp:463-546,
+	// which runs at the end of every scroll move), which is why moveDir() drops
+	// this override.
+	if (hasDragScroll_) return std::clamp(dragScrollPx_, 0, maxScroll);
+	int px = 0;
+	for (int i = 0; i < scrollIndex_ && i < numItems_; ++i) {
+		if ((items_[i].def.flags & kItemHidden) != 0) continue;
+		px += itemHeight(i);
+	}
+	return std::clamp(px, 0, maxScroll);
+}
+
+// thumbLen L = V*H/C (SetScrollBox, src/Button.cpp:397-405). Shared by the bar
+// drag (which needs the free track length) and the view model.
+int MenuSession::barThumbLen() const {
+	const int contentPx = contentHeight();
+	if (contentPx <= 0) return 0;
+	return kViewPx * kBarRect.h / contentPx;
+}
+
+// fmScrollButton::Update for a vertical bar whose touch offset was zeroed
+// (src/Button.cpp:497-534, reached with field_0x54_ = 0 because the in-game
+// tree has isMainMenuScrollBar == false, src/MenuSystem.cpp:4175, :4691-4699):
+// the thumb centres on the touch, is clamped to the track, and the content
+// offset follows through field_0x50_ = (C - V) / (H - L).
+void MenuSession::barDragTo(int cursorY, int maxScroll) {
+	const int track = kBarRect.h - barThumbLen();
+	if (track <= 0) return;
+	const int thumb = std::clamp(cursorY - kBarRect.y - (barThumbLen() >> 1), 0, track);
+	dragScrollPx_ = std::clamp(thumb * maxScroll / track, 0, maxScroll);
+	hasDragScroll_ = true;
+}
+
+// handleUserMoved's two drag branches (src/MenuSystem.cpp:4869-4913) plus the
+// press-on-the-bar branch of handleUserTouch (:4691-4699). This is the
+// original's own touch behaviour, not a rewrite invention: a move whose current
+// point is inside the scroll box latches SetContentTouchOffset and sets
+// field_0x38_, and every later move runs UpdateContent.
+void MenuSession::updateDrag(const UiInput& in) {
+	gestureConsumed_ = false;
+	const int maxScroll = contentHeight() - kViewPx;
+
+	if (!in.down) {
+		// Release: handleUserTouch(b == false) clears whichever drag latch is
+		// set and RETURNS before it can reach the button hit test
+		// (:4676-4689) — the row the drag started on is never selected.
+		if (drag_ == DragMode::Content || drag_ == DragMode::Bar) gestureConsumed_ = true;
+		drag_ = DragMode::None;
+		return;
+	}
+	if (!in.cursorValid || numItems_ <= 0 || maxScroll <= 0) return;
+
+	if (in.pressed) {
+		pressX_ = in.cursorX;
+		pressY_ = in.cursorY;
+		if (kBarRect.contains(in.cursorX, in.cursorY)) {
+			// A press on the bar grabs it immediately, with no dead box.
+			drag_ = DragMode::Bar;
+			barDragTo(in.cursorY, maxScroll);
+		} else {
+			drag_ = DragMode::Pending;
+		}
+		return;
+	}
+
+	switch (drag_) {
+	case DragMode::Bar:
+		barDragTo(in.cursorY, maxScroll);
+		break;
+	case DragMode::Content:
+		// UpdateContent: field_0x44_ = field_0x5c_ + (field_0x58_ - y), then the
+		// widget's own clamp to [0, C - V] (src/Button.cpp:456-478). Pulling the
+		// pointer up scrolls the content up, 1:1 in pixels.
+		dragScrollPx_ = std::clamp(dragLatchScrollPx_ + (dragLatchY_ - in.cursorY),
+			0, maxScroll);
+		break;
+	case DragMode::Pending:
+		if (std::abs(in.cursorX - pressX_) <= kDragDeadBoxPx &&
+		    std::abs(in.cursorY - pressY_) <= kDragDeadBoxPx) {
+			break;
+		}
+		if (!kListRect.contains(in.cursorX, in.cursorY)) break;
+		// SetContentTouchOffset latches the CURRENT point (:4896,
+		// src/Button.cpp:443-452), so the content does not jump by the dead-box
+		// distance when the drag starts.
+		drag_ = DragMode::Content;
+		dragLatchY_ = in.cursorY;
+		dragLatchScrollPx_ = scrollPixels();
+		dragScrollPx_ = dragLatchScrollPx_;
+		hasDragScroll_ = true;
+		break;
+	case DragMode::None:
+		break;
+	}
+}
+
 // moveDir (:401-455), verbatim minus the type == 9 (vending) sub-cases.
 void MenuSession::moveDir(int n) {
 	if (numItems_ <= 0) return;
+
+	// Every key move ends with the [GEC] block that rewrites the widget's pixel
+	// offset from the item model (:463-546), so a drag offset does not survive
+	// one: the key model takes the scroll back.
+	hasDragScroll_ = false;
 
 	if (type_ == kMenuTypeHelp || type_ == kMenuTypeNotebook) {
 		if (n < 0 && scrollIndex_ > 0) {
@@ -391,9 +558,28 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 	for (int i = 0; i < numItems_; ++i) composeLabel(i);
 	m.rows = rowBuf_;
 	m.rowCount = numItems_;
-	// Pixel scrolling and the scrollbar are G4 (spec §12): the window pull in
-	// moveDir already maintains scrollIndex_, nothing reads it yet.
-	m.scrollPx = 0;
+	// Same numbers as the model's own defaults; assigned so that the region the
+	// drag hit test uses and the region the view draws are one constant.
+	m.rect = kListRect;
+	m.scrollPx = scrollPixels();
+	// A content or bar drag owns the gesture, and so does the release that ends
+	// one: the rows take no hits on those frames (:4676-4689, :4855-4870).
+	m.rowHits = !gestureConsumed_ &&
+		drag_ != DragMode::Content && drag_ != DragMode::Bar;
+
+	// The bar exists only when the list is taller than the view (:2753). The
+	// thumb is computed here, not in the primitive: the producer already owns
+	// scrollPx, contentPx and viewPx, so splitting the formula across the ui/
+	// boundary would duplicate all three (spec §6.4).
+	const int contentPx = contentHeight();
+	m.showBar = contentPx > kViewPx;
+	if (m.showBar) {
+		m.barRect = kBarRect;
+		// thumbLen L = V*H/C, thumbOffset = scrollPx * (H-L) / (C-V)
+		// (SetScrollBox src/Button.cpp:397-405, UpdateContent :479-481).
+		m.barThumbLen = barThumbLen();
+		m.barThumbOffset = m.scrollPx * (m.barRect.h - m.barThumbLen) / (contentPx - kViewPx);
+	}
 	// No cursor at all on the text-section types (:1064).
 	m.selectedRow = (type_ == kMenuTypeHelp || type_ == kMenuTypeNotebook)
 		? -1 : selectedIndex_;

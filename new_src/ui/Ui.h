@@ -53,6 +53,11 @@ public:
 	// ---- hit testing ----
 	bool isActive(UiId id) const;         // pressed and still held
 	bool hover(const UiRect& r) const;
+	// Drop the latch without a release edge, so the widget under the pointer
+	// neither stays highlighted nor fires. The in-game menu needs it: the legacy
+	// move handler clears every button highlight on the frame a touch drag takes
+	// over the gesture (src/MenuSystem.cpp:4855-4870).
+	void clearActive();
 
 	// ---- primitives ----
 	// borderArgb == 0 means no border; the alpha byte of fillArgb is honoured.

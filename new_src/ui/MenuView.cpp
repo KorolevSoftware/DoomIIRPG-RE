@@ -120,6 +120,13 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 	// pass so a pressed plate lands on top; here the 296 px rows share one x and
 	// never overlap, so one pass with the held alpha is pixel-identical.
 	int rowHit = -1;
+	if (!m.rowHits) {
+		// A touch drag has taken the gesture: the legacy move handler clears
+		// every button highlight before it starts scrolling the content
+		// (src/MenuSystem.cpp:4855-4870), so the plate the drag started on must
+		// not stay lit either.
+		ui.clearActive();
+	}
 	{
 		int y = -m.scrollPx;
 		int slot = 0;
@@ -140,7 +147,7 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 						ui.imageAlpha(art.menuOptionButton, m.rect.x, y0,
 							ui.isActive(id) ? kRowAlphaHeld : kRowAlphaIdle);
 					}
-					if (y <= kNoTouchBelowY) {
+					if (m.rowHits && y <= kNoTouchBelowY) {
 						const UiRect hit{ m.rect.x, y0, m.itemWidth, m.itemHeight };
 						if (ui.buttonRect(id, hit)) rowHit = i;
 					}
@@ -149,6 +156,16 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 			}
 			y += r.height;
 		}
+	}
+
+	// The scrollbar sits between the two passes, exactly where the legacy paint
+	// draws it (:869-879 vs the art at :856-867 and the text loop at :905). It
+	// gets no UiId of its own: dragging the bar and dragging the list are both
+	// the producer's business (MenuSession::updateDrag, a port of
+	// handleUserMoved :4869-4913), which reads the frame's pointer directly —
+	// exactly like the original, where the scroll widget is not a button.
+	if (m.showBar) {
+		ui.scrollBarMenu(m.barRect, m.barThumbOffset, m.barThumbLen);
 	}
 
 	// Pass 2: cursor + labels (:905-1130). The legacy loop draws every plate

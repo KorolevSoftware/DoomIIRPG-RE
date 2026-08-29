@@ -7,6 +7,7 @@
 #include "io/MenuData.h"
 #include "text/Text.h"
 #include "ui/MenuModel.h"
+#include "ui/UiTypes.h"
 
 namespace newcore {
 
@@ -19,9 +20,9 @@ class Tables;
 // the item copies, the selection and the Text buffers the view model borrows;
 // the view is stateless and UiState knows nothing about the menu.
 //
-// GROUP 3 scope: the root screen (MENU_INGAME, id 29). The navigation stack
-// (gotoMenu/pushMenu/popMenu), pixel scrolling, the scrollbar, the code-built
-// screens and the info buttons arrive with G4+.
+// GROUP 3+4 scope: the root screen (MENU_INGAME, id 29), pixel scrolling and
+// the scrollbar. The navigation stack (gotoMenu/pushMenu/popMenu), the
+// code-built screens and the info buttons arrive with G5+.
 class MenuSession {
 public:
 	// maxItems: [GEC] hard-set to 4 at src/MenuSystem.cpp:1231; what the J2ME
@@ -44,6 +45,10 @@ public:
 	void begin();                     // ST_MENU entry hook (setMenu(MENU_INGAME))
 	void handleAction(Action a);      // port of handleMenuEvents (src/MenuSystem.cpp:2826-2969)
 	void setSelectedIndex(int i);     // mouse latch (:4787-4792)
+	// Touch drag scrolling, from the pointer state of THIS frame. Must run
+	// before buildViewModel(): it decides both the frame's scroll offset and
+	// whether the rows take hits at all (handleUserMoved, :4869-4913).
+	void updateDrag(const UiInput& in);
 
 	// Rebuilds the whole screen model into the session's own buffers. False =
 	// nothing to draw (no items, i.e. the menu is not up).
@@ -67,6 +72,10 @@ private:
 	void scrollPageUp();              // (:349-363)
 	void scrollPageDown();            // (:332-346)
 	int  itemHeight(int i) const;     // getMenuItemHeight (:4947-4984)
+	int  contentHeight() const;       // sum over the non-hidden rows (:2742-2751)
+	int  scrollPixels() const;        // scrollIndex_ -> pixels (spec §6.3, A2)
+	int  barThumbLen() const;         // L = V*H/C (SetScrollBox, src/Button.cpp:397-405)
+	void barDragTo(int cursorY, int maxScroll);  // fmScrollButton::Update (:497-534)
 	bool selectable(int i) const;     // the EMPTY_TEXT / 0x8001 test (:432,446)
 	void disableRow(int i, const char* reason);
 	void composeLabel(int i);         // one row's label into labelBuf_[i]
@@ -80,6 +89,19 @@ private:
 	int numItems_ = 0;
 	int selectedIndex_ = 0;
 	int scrollIndex_ = 0;
+
+	// Touch drag state, the rewrite's copy of the two fmScrollButton latches:
+	// field_0x38_ (content drag) and field_0x14_ (bar drag), plus the pending
+	// phase the [GEC] dead box creates (src/MenuSystem.cpp:4842-4847).
+	enum class DragMode { None, Pending, Content, Bar };
+	DragMode drag_ = DragMode::None;
+	int  pressX_ = 0;               // press origin, for the dead box only
+	int  pressY_ = 0;
+	int  dragLatchY_ = 0;           // field_0x58_ (SetContentTouchOffset)
+	int  dragLatchScrollPx_ = 0;    // field_0x5c_
+	int  dragScrollPx_ = 0;         // field_0x44_ while a drag owns the scroll
+	bool hasDragScroll_ = false;    // dragScrollPx_ overrides the index model
+	bool gestureConsumed_ = false;  // this frame's release ended a drag
 
 	// Producer-side storage the model points at (spec §1: core/ allocates once,
 	// ui/ allocates nothing).
