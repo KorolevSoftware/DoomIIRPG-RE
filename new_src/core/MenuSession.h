@@ -25,9 +25,11 @@ class Tables;
 // scrollbar, the navigation stack and every sub-screen that has a menus.bin row.
 // GROUP 6 adds the two code-built item screens (MENU_ITEMS 72 and
 // MENU_ITEMS_WEAPONS 73), whose bodies the original appends in initMenu.
-// The remaining code-built screens (PDA 46, the confirm screens 49/52/53/77, the
-// drinks list 75, the details screen 71, the help leaves) and the ITEM_SHOWDETAILS
-// info buttons arrive with G7-G8.
+// GROUP 7 adds the three code-built confirm screens (LOAD 49, RESTARTLVL 52,
+// SAVEQUIT 53) through setYesNo, the port of SetYESNO.
+// The remaining code-built screens (PDA 46, the item-use confirm 77, the drinks
+// list 75, the details screen 71, the help leaves) and the ITEM_SHOWDETAILS info
+// buttons arrive with G6/G8.
 class MenuSession {
 public:
 	// maxItems: [GEC] hard-set to 4 at src/MenuSystem.cpp:1231; what the J2ME
@@ -72,6 +74,10 @@ private:
 		// The rewrite's textField2: true when fillValues() produced a value
 		// string for this row (:1575-1594 assigns ARGUMENT1..17 there).
 		bool hasValue = false;
+		// The rewrite's ARGUMENT1..N label: true when the row's text is a
+		// runtime string in literalBuf_ rather than a plain menus.bin id
+		// (getLastArgString, :4090-4098). Used by the confirm screens.
+		bool hasLiteralLabel = false;
 	};
 
 	void setMenu(int menuId);         // (:612-654)
@@ -86,6 +92,12 @@ private:
 	int  addEntityRow(int subType, int defParm, int flags, int action, int param);
 	void buildItemsScreen();          // MENU_ITEMS (:1930-1986)
 	void buildWeaponsScreen();        // MENU_ITEMS_WEAPONS (:1988-2021)
+	// SetYESNO(short, int, int, int[, int, int]) (:3611-3660): the message rows,
+	// the blank row, the Yes row and the No row of a type-6 confirm screen.
+	void setYesNo(int strId, int preselect, int yesAction, int yesParam,
+		int noAction = kActionBack, int noParam = 0);
+	// One message line of setYesNo, taken verbatim from [beg, end) of `src`.
+	int  addMessageRow(int srcStrId, const Text& src, int beg, int end);
 	void gotoMenu(int menuId);        // (:2818-2824)
 	void pushMenu(int menuId, int selectedIndex, int scrollIndex);  // (:4059-4069)
 	int  popMenu(int& selectedIndex, int& scrollIndex);             // (:4071-4081)
@@ -143,6 +155,8 @@ private:
 	// ui/ allocates nothing).
 	Text labelBuf_[kMaxRows];
 	Text valueBuf_[kMaxRows];     // the textField2 column (:1038-1044)
+	Text literalBuf_[kMaxRows];   // the rewrite's ARGUMENT1..N slots (:4090-4098)
+	Text yesNoText_;              // setYesNo's message before it is split on '\n'
 	MenuRow rowBuf_[kMaxRows];
 	Text statusText_;
 	Text statusTailText_;     // the shield half, built with leading spaces (:751-756)

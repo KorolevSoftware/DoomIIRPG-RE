@@ -45,6 +45,26 @@ constexpr int kStrItemsArmorTitle = 113;
 constexpr int kStrNanoDrinksItem = 178;
 constexpr int kStrNanoDrinksItemHelp = 179;
 
+// The three confirm-screen questions, exactly the ids the initMenu cases pass to
+// SetYESNO: MENU_INGAME_RESTARTLVL (:1731) "Re-start Lev-el?",
+// MENU_INGAME_SAVEQUIT (:1738) "Save & Quit?", MENU_INGAME_LOAD (:1717)
+// (the strings themselves are verified against the shipped strings01/02 chunk)
+// "Load Game?". None of the three carries a %NN argument, so the rewrite can use
+// the string as it ships instead of Localization::composeText.
+constexpr int kStrRestartLevelQuestion = 134;
+constexpr int kStrSaveQuitQuestion = 135;
+constexpr int kStrLoadGameQuestion = 136;
+// MenuStrings::YES_LABEL / NO_LABEL (src/MenuStrings.h:246-247), appended by
+// SetYESNO (:3651-3652).
+constexpr int kStrYesLabel = 197;
+constexpr int kStrNoLabel = 198;
+
+// SetYESNO's literal flag values (:3640-3652): 9 for the message and blank rows
+// (they are label rows, 16 px, centred and unselectable), 8 for Yes/No (action
+// rows, so 296x32 plates with a centred label).
+constexpr int kYesNoMessageFlags = kItemNoSelect | kItemAlignCenter;
+constexpr int kYesNoButtonFlags = kItemAlignCenter;
+
 // CHAR_SPACING[0] = 11 (src/App.h:41). The divider cell count is
 // menuRect[2] / CHAR_SPACING[0] (:909), i.e. a CHARACTER budget computed with
 // the original's 11 px advance — never with the rewrite's 9 px one (NEW FACT 9).
@@ -139,6 +159,13 @@ void buildModStat(Text& t, int i, int i2) {
 	t.append(')');
 }
 
+// Screens with no menus.bin row that the rewrite builds in code, mirroring their
+// initMenu cases (ADR 0013). G7 covers the three confirm screens; QUESTLOG 46 and
+// the type-5 HELP leaves are still missing and stay refused until G6.
+bool isCodeBuiltScreen(int menuId) {
+	return menuId == kMenuLoad || menuId == kMenuRestartLvl || menuId == kMenuSaveQuit;
+}
+
 ScreenGeom geometryFor(int menuId) {
 	switch (menuId) {
 	// One case group in the original (:4330-4349): w = the 296 px option
@@ -199,13 +226,19 @@ void MenuSession::initMenu(int menuId) {
 	}
 	type_ = env_.menus->type(menuId);
 	if (type_ < 0) {
-		// Absent from menus.bin: the code-built screens (QUESTLOG 46, LOAD 49,
-		// RESTARTLVL 52, SAVEQUIT 53, every HELP leaf; ADR 0013) arrive with
-		// G6-G7. Reaching one is a bug: select() refuses a GOTO to an id with no
-		// menus.bin row, so no such screen can be entered (see there).
-		std::fprintf(stderr, "[menu] id %d has no menus.bin row (code-built screen, G6/G7)\n",
-			menuId);
-		type_ = kMenuTypeList;
+		if (isCodeBuiltScreen(menuId)) {
+			// The three confirm cases set `this->type = 6` themselves before they
+			// call SetYESNO (:1715, :1729, :1736).
+			type_ = kMenuTypeVCenter;
+		} else {
+			// Absent from menus.bin and not built here either: QUESTLOG 46 and
+			// every HELP leaf (ADR 0013) arrive with G6. Reaching one is a bug:
+			// initMenu refuses a GOTO to such an id, so no such screen can be
+			// entered (see the disable loop below).
+			std::fprintf(stderr, "[menu] id %d has no menus.bin row (code-built screen, G6)\n",
+				menuId);
+			type_ = kMenuTypeList;
+		}
 	}
 
 	if (menuId != oldMenu_) {                          // (:1227-1230)
@@ -222,6 +255,22 @@ void MenuSession::initMenu(int menuId) {
 		buildItemsScreen();
 	} else if (menuId == kMenuItemsWeapons) {
 		buildWeaponsScreen();
+	} else if (menuId == kMenuLoad) {                  // (:1714-1719)
+		scrollIndex_ = 0;
+		// The original passes SetYESNO(136, 1, ACTION_LOAD = 3, 0), and its
+		// ACTION_LOAD calls canvas->loadState (:3035-3038). The rewrite has no
+		// save system, so YES is retargeted to a GOTO of the shipped
+		// MENU_INGAME_LOADNOSAVE (50), the "No Saved Game" + Back screen that
+		// ships in menus.bin — the designed refusal, not an invented one
+		// (spec §11.2 row 3). Nothing else about the screen changes.
+		setYesNo(kStrLoadGameQuestion, 1, kActionGoto, kMenuLoadNoSave);
+	} else if (menuId == kMenuRestartLvl) {            // (:1728-1733)
+		scrollIndex_ = 0;
+		setYesNo(kStrRestartLevelQuestion, 1, kActionRestartLevel, 0);
+	} else if (menuId == kMenuSaveQuit) {              // (:1735-1740)
+		scrollIndex_ = 0;
+		// The one caller that spells the NO branch out; 2/0 is also the default.
+		setYesNo(kStrSaveQuitQuestion, 1, kActionSaveQuit, 0, kActionBack, 0);
 	} else {
 		// loadMenuItems(menu, 0, -1) (:2724-2727): the whole span, copied because
 		// initMenu patches flags per screen (:1549-1573).
@@ -272,8 +321,12 @@ void MenuSession::initMenu(int menuId) {
 				// divider), so the type() test below would let it through; its
 				// list is appended in code like this screen's (:2024-2046).
 				disableRow(i, "drinks list is built in code, not ported yet (G8)");
-			} else if (env_.menus->type(items_[i].def.param) < 0) {
-				disableRow(i, "screen is built in code, not ported yet (G6/G7)");
+			} else if (env_.menus->type(items_[i].def.param) < 0 &&
+			           !isCodeBuiltScreen(items_[i].def.param)) {
+				// G7 widened this: an id absent from menus.bin is now refused
+				// only while the rewrite has no code-built body for it either.
+				// 49/52/53 have one from here on; 46 and the HELP leaves do not.
+				disableRow(i, "screen is built in code, not ported yet (G6)");
 			}
 			break;
 		case kActionSave:
@@ -332,6 +385,7 @@ int MenuSession::addItem(const MenuItemDef& def) {
 	items_[i].disabledByRewrite = false;
 	items_[i].disabledReason = nullptr;
 	items_[i].hasValue = false;
+	items_[i].hasLiteralLabel = false;
 	return i;
 }
 
@@ -514,6 +568,67 @@ void MenuSession::buildWeaponsScreen() {
 		std::fprintf(stderr, "[menu] weapons screen: mask 0x%x, %d rows (2 from menus.bin)\n",
 			p->weapons, numItems_);
 	}
+}
+
+// One message line of a confirm screen. The original splits the composed
+// question into localization text args and points each row at ARGUMENT1..N
+// (addTextArg + getLastArgString, src/Text.cpp:247-254,
+// src/MenuSystem.cpp:3638-3647, :4090-4098). The rewrite has no text-arg table,
+// so the piece is copied verbatim into literalBuf_ while the row keeps the
+// SOURCE string id: that id is never EMPTY_TEXT, exactly like ARGUMENT1..N, so
+// the EMPTY_TEXT tests in paint() and moveDir() behave as they did.
+int MenuSession::addMessageRow(int srcStrId, const Text& src, int beg, int end) {
+	const int labelId = (env_.loc != nullptr) ? env_.loc->makeId(kTextIngame2, srcStrId)
+	                                          : kEmptyTextId;
+	const int i = addItem(labelId, kYesNoMessageFlags, kActionNone, 0, kEmptyTextId);
+	if (i < 0) return -1;
+	literalBuf_[i].setLength(0);
+	literalBuf_[i].append(src, beg, end - beg);
+	items_[i].hasLiteralLabel = true;
+	return i;
+}
+
+// SetYESNO (:3611-3660). The two short overloads only compose the question and
+// default the NO branch to (ACTION_BACK, 0) (:3611-3618), so one function with a
+// defaulted no-action covers all three.
+//
+// composeText(3, strId, text) (:3616) is not ported: none of the three questions
+// this screen family uses in the in-game tree carries a %NN argument, so the
+// shipped string IS the composed text. A '%' in it would mean an unresolved
+// argument, which is worth a line in the log rather than a silent wrong string.
+void MenuSession::setYesNo(int strId, int preselect, int yesAction, int yesParam,
+	int noAction, int noParam) {
+	yesNoText_.setLength(0);
+	if (env_.loc != nullptr) yesNoText_.append(env_.loc->get(kTextIngame2, strId));
+	if (yesNoText_.findFirstOf('%') >= 0) {
+		std::fprintf(stderr, "[menu] confirm string %d has an unresolved argument: '%s'\n",
+			strId, yesNoText_.c_str());
+	}
+
+	// The split, verbatim (:3635-3648): every '\n' ends a line, and the tail
+	// after the last one is a line too; with no '\n' at all the whole string is
+	// one line.
+	if (yesNoText_.findFirstOf('\n', 0) >= 0) {
+		int n6 = 0;
+		int first;
+		for (n6 = 0; (first = yesNoText_.findFirstOf('\n', n6)) >= 0; n6 = first + 1) {
+			addMessageRow(strId, yesNoText_, n6, first);
+		}
+		addMessageRow(strId, yesNoText_, n6, yesNoText_.length());
+	} else {
+		addMessageRow(strId, yesNoText_, 0, yesNoText_.length());
+	}
+
+	addItem(kEmptyTextId, kYesNoMessageFlags, kActionNone, 0, kEmptyTextId);   // (:3650)
+	const int yesLabel = (env_.loc != nullptr) ? env_.loc->makeId(kTextIngame2, kStrYesLabel)
+	                                           : kEmptyTextId;
+	const int noLabel = (env_.loc != nullptr) ? env_.loc->makeId(kTextIngame2, kStrNoLabel)
+	                                          : kEmptyTextId;
+	addItem(yesLabel, kYesNoButtonFlags, yesAction, yesParam, kEmptyTextId);   // (:3651)
+	addItem(noLabel, kYesNoButtonFlags, noAction, noParam, kEmptyTextId);      // (:3652)
+
+	// (:3654-3659) — i == 1 puts the cursor on YES, anything else on NO.
+	selectedIndex_ = (preselect == 1) ? numItems_ - 2 : numItems_ - 1;
 }
 
 // fillStatus (:3928-3979) reduced to the values the rewrite can actually
@@ -871,10 +986,29 @@ void MenuSession::select(int i) {
 // the pixels from scrollIndex, so the pair (selectedIndex, scrollIndex) is the
 // whole restored state.
 void MenuSession::gotoMenu(int menuId) {
+	const int fromMenu = menu_;
+	const int fromIndex = selectedIndex_;
+	const int fromScroll = scrollIndex_;
+	const int fromDepth = stackCount_;
 	if (menuId != menu_) {
 		pushMenu(menu_, selectedIndex_, scrollIndex_);
 	}
 	setMenu(menuId);
+
+	// Safety net with no counterpart in the original: buildViewModel returns
+	// false for a screen with no rows, which would make the whole menu vanish
+	// for as long as it is up while ST_MENU still swallows the input. No id the
+	// in-game tree can reach produces one (every code-built body appends at
+	// least four rows, every menus.bin row of the tree is non-empty), so this
+	// only fires if the data or a future body changes.
+	if (numItems_ == 0) {
+		std::fprintf(stderr, "[menu] menu %d produced 0 rows — staying on menu %d\n",
+			menuId, fromMenu);
+		stackCount_ = fromDepth;
+		setMenu(fromMenu);
+		selectedIndex_ = fromIndex;
+		scrollIndex_ = fromScroll;
+	}
 }
 
 // pushMenu (:4059-4069). The original calls Error("Menu stack is full.") on
@@ -962,7 +1096,11 @@ void MenuSession::composeLabel(int i) {
 		t.append(kCheckGlyph);
 		t.append(" ");
 	}
-	if (env_.loc != nullptr) {
+	if (items_[i].hasLiteralLabel) {
+		// composeTextField resolves ARGUMENT1..N out of the text-arg table
+		// (:939); the rewrite's equivalent slot is literalBuf_[i].
+		t.append(literalBuf_[i]);
+	} else if (env_.loc != nullptr) {
 		t.append(env_.loc->get(env_.loc->typeOf(d.labelId), env_.loc->indexOf(d.labelId)));
 	}
 	if ((d.flags & kItemNoDehyphenate) == 0) t.dehyphenate();        // (:943-944)
