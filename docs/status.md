@@ -2,6 +2,24 @@
 
 _Last updated: 2026-08-25 (evening)_
 
+## Controls (2026-08-29, aligned with `src/Input.cpp:80-95`)
+
+| Key | Effect |
+|---|---|
+| UP / W, DOWN / S | move forward / backward (menu + dialog + loot: scroll) |
+| LEFT / RIGHT | turn (menu + dialog + loot: page) |
+| A / D | turn (deviation: the original strafes; no strafe in the rewrite) |
+| RETURN | attack / talk / use, menu select, dialog page advance, loot page |
+| C | pass turn (also closes the loot list) |
+| TAB | automap (logs only, no screen yet) |
+| ESCAPE | open menu / back — **does not quit** |
+| BACKSPACE | back (ours; also closes the loot list) |
+| K | debug: grant keycards (ours, removable) |
+
+There is no quit key: the window close button is the only exit, as in the
+reference. Z/X/I/O/P/B are reserved-unmapped (no rewrite counterpart). Full
+rationale: `docs/architecture/specs/2026-08-27-ui-layer.md` §"KEYMAP 2026-08-29".
+
 ## Working on
 
 - **User acceptance batch (map00 intro area)** — implemented + reviewed, AWAITING

@@ -54,10 +54,10 @@ void UiInputCollector::onEvent(const SDL_Event& ev, const Window& window,
 		case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: in_.nav = Nav::Down; break;
 		case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: in_.nav = Nav::Left; break;
 		case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: in_.nav = Nav::Right; break;
-		case SDL_SCANCODE_E:
 		case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
-			in_.nav = Nav::Activate;
+			in_.nav = Nav::Activate;                          // AVK_MENU_SELECT (src/Input.cpp:88)
 			break;
+		case SDL_SCANCODE_ESCAPE:                             // AVK_MENU_OPEN (src/Input.cpp:91)
 		case SDL_SCANCODE_BACKSPACE: in_.nav = Nav::Cancel; break;
 		default: break;
 		}
@@ -75,17 +75,35 @@ Action UiInputCollector::keyAction(const SDL_Event& ev) const {
 	// removes the key from the set as it queues (src/Input.cpp:1082-1088).
 	// The menu depends on this (spec 2026-08-28-menu §2.5).
 	if (ev.key.repeat != 0) return Action::None;
+	// The map follows the reference default table verbatim
+	// (src/Input.cpp:80-95); deviations are marked below.
 	Action a = Action::None;
 	switch (ev.key.keysym.scancode) {
-	case SDL_SCANCODE_E: a = Action::Use; break;          // ACTION_FIRE
-	case SDL_SCANCODE_UP: case SDL_SCANCODE_W: a = Action::Forward; break;   // dialog: ACTION_UP
-	case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: a = Action::Back; break;    // dialog: ACTION_DOWN
-	case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: a = Action::TurnLeft; break; // dialog: ACTION_LEFT
-	case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: a = Action::TurnRight; break; // dialog: ACTION_RIGHT
-	case SDL_SCANCODE_TAB: a = Action::Passturn; break;   // ACTION_PASSTURN (skip-close)
-	case SDL_SCANCODE_M: a = Action::Automap; break;      // ACTION_AUTOMAP (skip-close)
-	case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: a = Action::Menu; break; // ACTION_MENU
-	case SDL_SCANCODE_BACKSPACE: a = Action::BackKey; break; // KEY_CLR/BACK — swallowed in dialogs
+	case SDL_SCANCODE_UP: case SDL_SCANCODE_W: a = Action::Forward; break;   // :80, dialog: ACTION_UP
+	case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: a = Action::Back; break;    // :81, dialog: ACTION_DOWN
+	// DEVIATION: the original turns with the arrows only (:82-83) and gives
+	// A/D strafe (AVK_MOVELEFT/AVK_MOVERIGHT, :84-85). The rewrite has no
+	// strafe and none is wanted, so A/D duplicate the turn keys instead of
+	// becoming dead keys.
+	case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: a = Action::TurnLeft; break;   // :82, dialog: ACTION_LEFT
+	case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: a = Action::TurnRight; break; // :83, dialog: ACTION_RIGHT
+	// AVK_SELECT | AVK_MENU_SELECT (:88): attack/talk/use in play, select in
+	// the menu, page advance in a dialog — one action, state decides.
+	// DEVIATION: KP_ENTER is ours, the table lists RETURN alone.
+	case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: a = Action::Use; break; // ACTION_FIRE
+	case SDL_SCANCODE_C: a = Action::Passturn; break;     // :89, ACTION_PASSTURN (skip-close)
+	case SDL_SCANCODE_TAB: a = Action::Automap; break;    // :90, ACTION_AUTOMAP (skip-close)
+	// AVK_MENUOPEN | AVK_MENU_OPEN (:91): opens the menu from play and steps
+	// back inside it — exactly what Action::Menu already means everywhere
+	// (PlayerActions.cpp:279, MenuSession.cpp:581, DialogSystem.cpp:310).
+	case SDL_SCANCODE_ESCAPE: a = Action::Menu; break;    // ACTION_MENU
+	// DEVIATION: ours. BACKSPACE keeps feeding Action::BackKey (KEY_CLR/BACK)
+	// so the mouse Back path and the loot list keep a keyboard equivalent.
+	case SDL_SCANCODE_BACKSPACE: a = Action::BackKey; break; // swallowed in dialogs
+	// Reserved, deliberately unmapped: the rewrite has no counterpart for
+	// AVK_NEXTWEAPON Z (:86), AVK_PREVWEAPON X (:87), AVK_ITEMS_INFO I (:92),
+	// AVK_DRINKS O (:93), AVK_PDA P (:94), AVK_BOTDISCARD B (:95).
+	// SDL_SCANCODE_K is ours too — debug keycards, handled in GameLoop.cpp.
 	default: break;
 	}
 	return a;

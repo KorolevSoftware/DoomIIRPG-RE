@@ -36,10 +36,9 @@ bool GameLoop::run(AppContext& context) {
 		}
 		collector.onEvent(ev, context.window(), context.renderer());
 		if (ev.type != SDL_KEYDOWN) return;
-		if (ev.key.keysym.sym == SDLK_ESCAPE) { // clean exit through the machine
-			running = false;
-			return;
-		}
+		// No quit key: the reference default table has none (src/Input.cpp:80-95)
+		// and ESCAPE is the menu/back key, so SDL_QUIT (window close) is the
+		// only way out.
 		if (ev.key.keysym.scancode == SDL_SCANCODE_K) {
 			ctx.debugGiveKeycards(); // PHASE5 DEBUG (removable)
 		}
