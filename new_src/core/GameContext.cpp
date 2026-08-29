@@ -22,6 +22,7 @@
 #include "ui/Hud.h"
 #include "ui/HudView.h"
 #include "ui/LootView.h"
+#include "ui/MenuView.h"
 #include "ui/Ui.h"
 
 namespace newcore {
@@ -47,6 +48,14 @@ void GameContext::init(const Init& sys) {
 	lootEnv.host = this;
 	lootEnv.upTimeMs = &upTimeMs;
 	loot_.init(lootEnv);
+	MenuSession::Env menuEnv;
+	menuEnv.menus = sys_.menus;
+	menuEnv.loc = sys_.loc;
+	menuEnv.tables = sys_.tables;
+	menuEnv.player = sys_.player;
+	menuEnv.host = this;
+	menuEnv.upTimeMs = &upTimeMs;
+	menu_.init(menuEnv);
 	Targeting::Env tgtEnv;
 	tgtEnv.game = sys_.game;
 	tgtEnv.player = sys_.player;
@@ -143,6 +152,13 @@ void GameContext::enterState_(StateId s) {
 		pendingActions_.clear();
 		loot_.begin();
 		break;
+	case StateId::Menu:
+		// src/Canvas.cpp:1192-1206 analog: the queued events are cleared and the
+		// menu system is set to MENU_INGAME with a fresh stack. The legacy
+		// pausePlayer() has no rewrite counterpart (no pause flag).
+		pendingActions_.clear();
+		menu_.begin();
+		break;
 	case StateId::Loading:
 		loadingPhase_ = 0;     // arm the loading-phase counter
 		break;
@@ -202,6 +218,11 @@ void GameContext::tick() {
 			continue;
 		}
 		if (state_ == StateId::Looting) { loot_.handleAction(a); continue; }
+		// ST_MENU: every queued action goes to the menu and nowhere else
+		// (src/InputEventController.cpp:314-316). Deliberately BEFORE the
+		// blocked-drop check: the legacy ST_MENU dispatch happens before it, and
+		// a script lockout must not freeze an open menu (spec §2.4).
+		if (state_ == StateId::Menu) { menu_.handleAction(a); continue; }
 		if (blocked || state_ != StateId::Playing) break;
 		actions_.handleAction(a);
 	}
@@ -251,6 +272,12 @@ void GameContext::tick() {
 		// branch, src/Canvas.cpp:920-926); view/input updates do not.
 		break;
 	case StateId::Dying:   tickDying(); break;
+	case StateId::Menu:
+		// Nothing ticks while the menu is up: GameStateRunner::menuState only
+		// updates soft keys (src/GameStateRunner.cpp:203-253). No lerps, no
+		// doors, no scripts, no view update — and gameTime does not advance
+		// either (the clock gate above lists Playing/Camera/Looting only).
+		break;
 	}
 
 	// Screen shake randomize/expire, every state incl. Playing (legacy
@@ -611,14 +638,23 @@ void GameContext::applyUiAction(UiAction a, int index) {
 	case UiAction::ScrollHome: queued = Action::TurnLeft; break;
 	case UiAction::ScrollEnd:  queued = Action::TurnRight; break;
 	case UiAction::ListRow:
-		std::fprintf(stderr, "[ui] list row %d (no mapping this phase)\n", index);
-		return;
-	// Action::MenuResume arrives with the menu state (spec 2026-08-28-menu §9);
-	// until then the intent has no queue slot. Listed so the switch stays
-	// exhaustive.
+		// NEW FACT 6 (spec 2026-08-28-menu §9): the original's touch handler
+		// writes selectedIndex and then calls select(); the rewrite writes the
+		// index and queues the SAME action the FIRE key queues, so mouse and
+		// keyboard cannot diverge.
+		if (state_ == StateId::Menu) {
+			menu_.setSelectedIndex(index);
+			queued = Action::Use;
+		} else {
+			std::fprintf(stderr, "[ui] list row %d (no mapping this phase)\n", index);
+			return;
+		}
+		break;
 	case UiAction::Resume:
-		std::fprintf(stderr, "[ui] resume (no mapping this phase)\n");
-		return;
+		// Touch-only in the original (src/MenuSystem.cpp:4787-4789): no key
+		// produces this action.
+		queued = Action::MenuResume;
+		break;
 	}
 	std::fprintf(stderr, "[ui] intent %d -> queue Action %d\n", (int)a, (int)queued);
 	queueAction(queued);
@@ -746,6 +782,19 @@ void GameContext::render(AppContext& app) {
 		LootListModel loot;
 		if (loot_.buildViewModel(loot)) {
 			const UiResult r = drawLootList(*ui, loot);
+			applyUiAction(r.action, r.index);
+		}
+	}
+
+	// In-game menu (spec 2026-08-28-menu §7.1): drawn last because it OWNS the
+	// frame — its 480x320 background is opaque, so the world pass above (which
+	// keeps running, NEW FACT 1) and the empty message overlay are completely
+	// covered. The HUD bars and the view weapon are already excluded by
+	// `gameplayView`, which does not list Menu.
+	if (state_ == StateId::Menu && ui != nullptr) {
+		MenuViewModel mv;
+		if (menu_.buildViewModel(mv)) {
+			const UiResult r = drawMenu(*ui, mv);
 			applyUiAction(r.action, r.index);
 		}
 	}

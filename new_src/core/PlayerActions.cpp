@@ -276,6 +276,15 @@ void PlayerActions::handleAction(Action a) {
 		}
 		env_.game->advanceTurn();
 		break;
+	case Action::Menu:
+	case Action::BackKey:
+		// Both open the in-game menu, from the playing input handler and
+		// therefore behind the same animation gate as every other playing
+		// action (src/PlayingInputHandler.cpp:137-158). The message queue is
+		// emptied first (hud->msgCount = 0, :146 and :155).
+		env_.hud->clearMessages();
+		env_.host->requestState(StateId::Menu);
+		break;
 	default:
 		break;
 	}

@@ -69,6 +69,12 @@ void UiInputCollector::onEvent(const SDL_Event& ev, const Window& window,
 
 Action UiInputCollector::keyAction(const SDL_Event& ev) const {
 	if (ev.type != SDL_KEYDOWN) return Action::None;
+	// No auto-repeat, in every state: the original drops repeated KEYDOWNs
+	// before they ever reach the pressed-key set (src/Input.cpp:740), and the
+	// action queue is fed one entry per physical press — isKeyboardKeyPressed()
+	// removes the key from the set as it queues (src/Input.cpp:1082-1088).
+	// The menu depends on this (spec 2026-08-28-menu §2.5).
+	if (ev.key.repeat != 0) return Action::None;
 	Action a = Action::None;
 	switch (ev.key.keysym.scancode) {
 	case SDL_SCANCODE_E: a = Action::Use; break;          // ACTION_FIRE

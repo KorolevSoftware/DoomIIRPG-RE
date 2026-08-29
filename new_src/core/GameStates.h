@@ -8,6 +8,7 @@ namespace newcore {
 // 2026-08-23-phase5-skeleton §3): not enumerated, unreachable; script
 // requests for them are logged by the VM.
 enum class StateId : int {
+	Menu        = 1,  // legacy ST_MENU (src/Canvas.h:68; spec 2026-08-28-menu §2.1)
 	Playing     = 3,  // legacy ST_PLAYING
 	InterCamera = 4,  // legacy ST_INTER_CAMERA (script lerp show; world renders from player view)
 	Dialog      = 8,  // legacy ST_DIALOG (real dialogs, spec GROUP 1)
@@ -25,6 +26,11 @@ enum class StateId : int {
 enum class Action : int {
 	None, Forward, Back, TurnLeft, TurnRight, Use,
 	Passturn, Automap, Menu, BackKey,
+	// No key produces this one: the in-game menu's right soft key is touch-only
+	// in the original (src/MenuSystem.cpp:4787-4789 calls returnToGame directly),
+	// so it exists purely so the UI intent travels through the one action queue
+	// (spec 2026-08-28-menu §9).
+	MenuResume,
 };
 
 // The only thing a module may know about the state machine (spec

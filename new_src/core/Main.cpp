@@ -286,9 +286,9 @@ int main(int argc, char* argv[]) {
 	game.combat.init({         // Env: game, player, hud, loc, tables, map, gameTime (spec §2.2)
 		&game, &player, &hud, &loc, &tables, &g_map, &ctx.gameTime });
 	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges
-	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world, dialogs, ui
+	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world, dialogs, ui, menus
 		&g_map, &g_entityDefs, &tables, &loc, &font, &g_media,
-		&game, &player, &vm, &hud, &world, &dialogs, &ui });
+		&game, &player, &vm, &hud, &world, &dialogs, &ui, &menus });
 	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
 		&ctx, &vm, &game, &loc, &hud, &font, &tables });
 

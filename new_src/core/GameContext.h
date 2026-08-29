@@ -7,6 +7,7 @@
 #include "core/CinematicCamera.h"
 #include "core/GameStates.h"
 #include "core/LootSession.h"
+#include "core/MenuSession.h"
 #include "core/PlayerActions.h"
 #include "domain/game/Game.h"
 #include "domain/game/Targeting.h"
@@ -59,6 +60,8 @@ public:
 		// Immediate-mode UI façade, built in Main.cpp next to UiAssets/UiState
 		// (spec 2026-08-27-ui-layer §8). Null = no UI pass this run.
 		Ui* ui = nullptr;
+		// Parsed menus.bin (ADR 0013), built in Main.cpp next to Tables.
+		const MenuData* menus = nullptr;
 	};
 
 	void init(const Init& sys);
@@ -155,6 +158,9 @@ private:
 
 	// ST_LOOTING vertical slice (spec 2026-08-26-decomposition §P1-G3).
 	LootSession loot_;
+
+	// ST_MENU screen state (spec 2026-08-28-menu §4).
+	MenuSession menu_;
 
 	// View forward / facing probe / fire election (spec §P1-G4).
 	Targeting targeting_;
