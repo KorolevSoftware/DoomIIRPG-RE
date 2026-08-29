@@ -155,6 +155,16 @@ bool Player::give(int kind, int slot, int amount) {
 	}
 }
 
+void Player::selectWeapon(int i, const EntityDef* def) {
+	if (i != Enums::WP_ITEM) {                 // (src/Player.cpp:138-141)
+		weapons &= ~(1 << Enums::WP_ITEM);
+		ammo[Enums::AMMO_ITEM] = 0;
+	}
+	weapon = i;                                // (:153) ce->weapon = i; the
+	ce.weapon = i;                             // rewrite mirrors both fields
+	activeWeaponDef = def;                     // (:160)
+}
+
 bool Player::requireItem(int kind, int slot, int min, int max) const {
 	if (kind != 1) {
 		return kind == 0 && slot >= 0 && slot < 26 &&

@@ -6,6 +6,7 @@
 
 #include "domain/game/Enums.h"
 #include "domain/game/Player.h"
+#include "io/EntityDefs.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
 
@@ -31,6 +32,18 @@ constexpr int kTruncateChars = (kItemWidthPx - 10) / 12;   // 23
 constexpr char kCheckGlyph = '\x87';       // (:934-938)
 constexpr char kEllipsisGlyph = '\x85';    // (:948-951)
 constexpr char kDividerGlyph = '\x80';     // buildDivider (:267-281)
+// The same '\x80' is what a weapon with AMMO_NONE prints in its value column
+// (:2015-2016) — one glyph, not a divider run.
+constexpr char kNoAmmoGlyph = '\x80';
+
+// menus.bin string ids (type 3) the code-built item rows use verbatim:
+// ITEMS_HEALTH_TITLE / ITEMS_ARMOR_TITLE (src/MenuStrings.h:161-162, used at
+// src/MenuSystem.cpp:1937,:1959) and the NANO DRINKS row + its help
+// (src/MenuStrings.h:227-228, used at :1972).
+constexpr int kStrItemsHealthTitle = 112;
+constexpr int kStrItemsArmorTitle = 113;
+constexpr int kStrNanoDrinksItem = 178;
+constexpr int kStrNanoDrinksItemHelp = 179;
 
 // CHAR_SPACING[0] = 11 (src/App.h:41). The divider cell count is
 // menuRect[2] / CHAR_SPACING[0] (:909), i.e. a CHARACTER budget computed with
@@ -204,18 +217,16 @@ void MenuSession::initMenu(int menuId) {
 		dragScrollPx_ = 0;
 	}
 
-	// loadMenuItems(menu, 0, -1) (:2724-2727): the whole span, copied because
-	// initMenu patches flags per screen (:1549-1573).
-	int count = 0;
-	const MenuItemDef* src = env_.menus->items(menuId, count);
-	if (count > kMaxRows) count = kMaxRows;
-	for (int i = 0; i < count; ++i) {
-		items_[i].def = src[i];
-		items_[i].disabledByRewrite = false;
-		items_[i].disabledReason = nullptr;
-		items_[i].hasValue = false;
+	numItems_ = 0;
+	if (menuId == kMenuItems) {
+		buildItemsScreen();
+	} else if (menuId == kMenuItemsWeapons) {
+		buildWeaponsScreen();
+	} else {
+		// loadMenuItems(menu, 0, -1) (:2724-2727): the whole span, copied because
+		// initMenu patches flags per screen (:1549-1573).
+		addParsedRows(menuId, 0, -1);
 	}
-	numItems_ = count;
 
 	// Per-screen patches (:1549-1573). The isFamiliar rebuild and the
 	// camera-active variant are not ported: there is no isFamiliar, and the
@@ -256,6 +267,11 @@ void MenuSession::initMenu(int menuId) {
 			// rewrite does not have (spec §11.2, §15).
 			if (items_[i].def.param == kMenuControls) {
 				disableRow(i, "no arrow-controls screen");
+			} else if (items_[i].def.param == kMenuItemsDrinks) {
+				// 75 DOES have a menus.bin row (a blank line + the NANO DRINKS
+				// divider), so the type() test below would let it through; its
+				// list is appended in code like this screen's (:2024-2046).
+				disableRow(i, "drinks list is built in code, not ported yet (G8)");
 			} else if (env_.menus->type(items_[i].def.param) < 0) {
 				disableRow(i, "screen is built in code, not ported yet (G6/G7)");
 			}
@@ -277,6 +293,17 @@ void MenuSession::initMenu(int menuId) {
 		case kActionBackToMain:
 			disableRow(i, "no main menu");
 			break;
+		case kActionConfirmUse:
+			// ACTION_CONFIRMUSE hands the slot to MENU_ITEMS_CONFIRM (77), a
+			// SetYESNO screen built in code (:2047-2062), and the YES branch runs
+			// Player::useItem, which the rewrite does not have either.
+			disableRow(i, "use-item confirm screen is built in code, not ported yet (G7)");
+			break;
+		case kActionShowDetails:
+			// showDetailsMenu() -> MENU_SHOWDETAILS (71), built in code from the
+			// def's help text (:1907-1926).
+			disableRow(i, "details screen is built in code, not ported yet (G8)");
+			break;
 		default:
 			break;
 		}
@@ -287,6 +314,205 @@ void MenuSession::initMenu(int menuId) {
 		moveDir(-1);
 	} else if (!selectable(selectedIndex_)) {
 		moveDir(1);
+	}
+}
+
+// ---- row producers ----
+
+// addItem (:3997-4003). The original errors out at 50 rows; the rewrite drops
+// the row and logs, which keeps every already-built row consistent.
+int MenuSession::addItem(const MenuItemDef& def) {
+	if (numItems_ >= kMaxRows) {
+		std::fprintf(stderr, "[menu] menu %d exceeds %d rows — row dropped\n",
+			menu_, kMaxRows);
+		return -1;
+	}
+	const int i = numItems_++;
+	items_[i].def = def;
+	items_[i].disabledByRewrite = false;
+	items_[i].disabledReason = nullptr;
+	items_[i].hasValue = false;
+	return i;
+}
+
+int MenuSession::addItem(int labelId, int flags, int action, int param, int helpId) {
+	MenuItemDef def;
+	def.labelId = labelId;
+	def.flags = flags;
+	def.action = action;
+	def.param = param;
+	def.helpId = helpId;
+	return addItem(def);
+}
+
+// loadMenuItems(menu, begItem, numItems) (:4005-4035): skip `beg` items of the
+// menus.bin span, append `count` of them, count < 0 = all that remain.
+void MenuSession::addParsedRows(int menuId, int beg, int count) {
+	int total = 0;
+	const MenuItemDef* src = env_.menus->items(menuId, total);
+	if (beg < 0 || beg > total) return;
+	int n = (count < 0) ? total - beg : count;
+	if (n > total - beg) n = total - beg;
+	for (int k = 0; k < n; ++k) addItem(src[beg + k]);
+}
+
+// The four-times-repeated item row of MENU_ITEMS and the weapon row of
+// MENU_ITEMS_WEAPONS: label = def->name, help = def->description, both in
+// FILE_ENTITYSTRINGS = text type 1 (src/MenuStrings.h:21). The count/ammo string
+// is the caller's business — this only reserves the row.
+int MenuSession::addEntityRow(int subType, int defParm, int flags, int action, int param) {
+	if (env_.defs == nullptr || env_.loc == nullptr) return -1;
+	const EntityDef* d = env_.defs->find(Enums::ET_ITEM, subType, defParm);
+	if (d == nullptr) {
+		std::fprintf(stderr, "[menu] no entity def (6, %d, %d) — row skipped\n",
+			subType, defParm);
+		return -1;
+	}
+	return addItem(env_.loc->makeId(kTextIngame, d->name), flags, action, param,
+		env_.loc->makeId(kTextIngame, d->description));
+}
+
+// MENU_ITEMS (:1930-1986). Row order is the original's, which is NOT the
+// menus.bin order: the health/armor groups come first, then menus.bin row 1
+// (the INVENTORY divider), then the drinks entry, then menus.bin row 2 (the
+// Weapons plate), then the credits row. menus.bin row 0 — a blank spacer — is
+// never loaded here: the legacy calls are loadMenuItems(menu, 1, 1) and
+// loadMenuItems(menu, 2, -1) (:1970, :1974).
+void MenuSession::buildItemsScreen() {
+	Player* p = env_.player;
+	if (p == nullptr || env_.loc == nullptr) {
+		addParsedRows(kMenuItems, 1, -1);
+		return;
+	}
+
+	// Health group, inventory 16..17 (:1932-1946). The divider is emitted lazily,
+	// so an empty group contributes nothing at all.
+	bool needHeader = true;
+	for (int slot = Enums::INV_HEALTH_MIN; slot < Enums::INV_HEALTH_MAX; ++slot) {
+		const int n = p->inventory[slot];
+		if (n <= 0) continue;
+		if (needHeader) {
+			needHeader = false;
+			addItem(env_.loc->makeId(kTextIngame2, kStrItemsHealthTitle),
+				kItemDivider | kItemAlignCenter | kItemNoSelect, kActionNone, 0,
+				kEmptyTextId);                                     // flags 73 (:1937)
+		}
+		const int i = addEntityRow(Enums::ITEM_CLASS_INVENTORY, slot, kItemShowDetails,
+			kActionConfirmUse, slot);
+		if (i < 0) continue;
+		valueBuf_[i].setLength(0);
+		valueBuf_[i].append(n);
+		items_[i].hasValue = true;
+	}
+
+	// The holy-water charge, listed as a usable item once the pistol is owned and
+	// there are at least 25 units of it (:1947-1953). Its NAME comes from the
+	// AMMO def (6, 2, 3) while the row's param is the INVENTORY slot 22.
+	if (p->ammo[Enums::AMMO_HOLY_WATER] >= 25 &&
+	    (p->weapons & (1 << Enums::WP_HOLY_WATER_PISTOL)) != 0) {
+		const int i = addEntityRow(Enums::ITEM_CLASS_AMMO, Enums::AMMO_HOLY_WATER,
+			kItemShowDetails, kActionConfirmUse, Enums::INV_OTHER_HOLY_WATER);
+		if (i >= 0) {
+			valueBuf_[i].setLength(0);
+			valueBuf_[i].append(p->ammo[Enums::AMMO_HOLY_WATER]);
+			items_[i].hasValue = true;
+		}
+	}
+
+	// Armor group, inventory 11..12 (:1954-1968).
+	needHeader = true;
+	for (int slot = Enums::INV_ARMOR_MIN; slot < Enums::INV_ARMOR_MAX; ++slot) {
+		const int n = p->inventory[slot];
+		if (n <= 0) continue;
+		if (needHeader) {
+			needHeader = false;
+			addItem(env_.loc->makeId(kTextIngame2, kStrItemsArmorTitle),
+				kItemDivider | kItemAlignCenter | kItemNoSelect, kActionNone, 0,
+				kEmptyTextId);                                     // flags 73 (:1959)
+		}
+		const int i = addEntityRow(Enums::ITEM_CLASS_INVENTORY, slot, kItemShowDetails,
+			kActionConfirmUse, slot);
+		if (i < 0) continue;
+		valueBuf_[i].setLength(0);
+		valueBuf_[i].append(n);
+		items_[i].hasValue = true;
+	}
+
+	addParsedRows(kMenuItems, 1, 1);                               // (:1970)
+
+	// hasANanoDrink(): any of inventory 0..10 (src/Player.cpp:2655-2662).
+	bool hasNanoDrink = false;
+	for (int slot = Enums::INV_DRINK_MIN; slot < Enums::INV_DRINK_MAX; ++slot) {
+		if (p->inventory[slot] > 0) { hasNanoDrink = true; break; }
+	}
+	if (hasNanoDrink) {                                            // (:1971-1973)
+		addItem(env_.loc->makeId(kTextIngame2, kStrNanoDrinksItem), kItemNormal,
+			kActionGoto, kMenuItemsDrinks,
+			env_.loc->makeId(kTextIngame2, kStrNanoDrinksItemHelp));
+	}
+
+	addParsedRows(kMenuItems, 2, -1);                              // (:1974)
+
+	// UAC credits: always present, always last, and the one row of this screen
+	// whose action is ACTION_SHOWDETAILS rather than ACTION_CONFIRMUSE
+	// (:1976-1982).
+	const int credits = addEntityRow(Enums::ITEM_CLASS_INVENTORY,
+		Enums::INV_ONE_UAC_CREDIT, kItemShowDetails, kActionShowDetails,
+		Enums::INV_ONE_UAC_CREDIT);
+	if (credits >= 0) {
+		valueBuf_[credits].setLength(0);
+		valueBuf_[credits].append(p->inventory[Enums::INV_ONE_UAC_CREDIT]);
+		items_[credits].hasValue = true;
+	}
+}
+
+// MENU_ITEMS_WEAPONS (:1988-2021): both menus.bin rows (a blank spacer and the
+// WEAPONS divider) first, then one row per owned weapon bit.
+void MenuSession::buildWeaponsScreen() {
+	addParsedRows(kMenuItemsWeapons, 0, -1);                       // (:1989)
+	Player* p = env_.player;
+	if (p == nullptr || env_.tables == nullptr) return;
+
+	for (int w = 0; w < Enums::WP_PLAYERMAX; ++w) {
+		if ((p->weapons & (1 << w)) == 0) continue;
+		// Holding the item weapon greys out every OTHER weapon (:1996). This is a
+		// data-driven ITEM_DISABLED, so it gets the legacy look; nothing else on
+		// this screen does.
+		int flags = (p->ce.weapon == Enums::WP_ITEM && w != Enums::WP_ITEM)
+			? kItemDisabled : 0;
+		if (p->ce.weapon == w) flags |= kItemChecked;              // (:1999-2001)
+		const int i = addEntityRow(Enums::ITEM_CLASS_WEAPON, w, flags | kItemShowDetails,
+			kActionUseItemWeapon, w);
+		if (i < 0) continue;
+
+		// Value column = the weapon's ammo pool (:2003-2018). WEAPON_FIELD_AMMOTYPE
+		// is weapons[w * 9 + 4]; AMMO_NONE prints one '\x80' glyph and the soul
+		// cube prints "n/5" against AMMO_MAX_SOULS.
+		Text& v = valueBuf_[i];
+		v.setLength(0);
+		const int ammoType = env_.tables->weaponDef(w).ammoType;
+		if (ammoType != Enums::AMMO_NONE) {
+			if (ammoType == Enums::AMMO_SOUL_CUBE) {
+				v.append(p->ammo[Enums::AMMO_SOUL_CUBE]);
+				v.append("/");
+				v.append(Enums::AMMO_MAX_SOULS);
+			} else if (ammoType >= 0 && ammoType < 9) {
+				v.append(p->ammo[ammoType]);
+			} else {
+				std::fprintf(stderr, "[menu] weapon %d has ammoType %d out of range\n",
+					w, ammoType);
+			}
+		} else {
+			v.append(kNoAmmoGlyph);
+		}
+		items_[i].hasValue = true;
+	}
+
+	static bool logged = false;
+	if (!logged) {
+		logged = true;
+		std::fprintf(stderr, "[menu] weapons screen: mask 0x%x, %d rows (2 from menus.bin)\n",
+			p->weapons, numItems_);
 	}
 }
 
@@ -620,6 +846,18 @@ void MenuSession::select(int i) {
 		break;
 	case kActionBack:
 		back();
+		break;
+	case kActionUseItemWeapon:
+		// (:3136-3143). The legacy saveIndexes(1) caches this screen's cursor for
+		// the next visit; the rewrite's nav stack replaces that mechanism. `i > 0`
+		// is the original's own guard and never bites here — the weapon rows start
+		// at index 2, after the two menus.bin rows.
+		if (i > 0 && env_.player != nullptr && env_.defs != nullptr) {
+			env_.player->selectWeapon(items_[i].def.param,
+				env_.defs->find(Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON,
+					items_[i].def.param));
+			returnToGame();
+		}
 		break;
 	default:
 		std::fprintf(stderr, "[menu] action %d (param %d) has no rewrite path\n",

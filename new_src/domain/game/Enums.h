@@ -107,6 +107,36 @@ static constexpr int STAT_AGILITY = 6;
 static constexpr int STAT_IQ = 7;
 static constexpr int STAT_MAX = 8;
 
+// ET_ITEM sub-types: the eSubType the entity defs are looked up with
+// (src/LootingSystem.cpp:185-198, src/MenuSystem.cpp:1941,:1950,:1997).
+static constexpr int ITEM_CLASS_INVENTORY = 0;
+static constexpr int ITEM_CLASS_WEAPON = 1;
+static constexpr int ITEM_CLASS_AMMO = 2;
+
+// Player inventory slots (src/Enums.h:196-232), the subset the item screens
+// walk. The *_MAX names are exclusive bounds, exactly as the legacy loops use
+// them (`for (n = INV_HEALTH_MIN; n < INV_HEALTH_MAX; ++n)`).
+static constexpr int INV_DRINK_MIN = 0;
+static constexpr int INV_DRINK_MAX = 11;
+static constexpr int INV_ARMOR_MIN = 11;
+static constexpr int INV_ARMOR_MAX = 13;
+static constexpr int INV_HEALTH_MIN = 16;
+static constexpr int INV_HEALTH_MAX = 18;
+static constexpr int INV_OTHER_HOLY_WATER = 22;
+static constexpr int INV_ONE_UAC_CREDIT = 24;
+
+// Ammo types, the index into Player::ammo (src/Enums.h:103-116).
+static constexpr int AMMO_NONE = 0;
+static constexpr int AMMO_HOLY_WATER = 3;
+static constexpr int AMMO_SOUL_CUBE = 6;
+static constexpr int AMMO_ITEM = 8;
+static constexpr int AMMO_MAX_SOULS = 5;
+
+// Weapon ids / bit positions in Player::weapons (src/Enums.h:134-150).
+static constexpr int WP_HOLY_WATER_PISTOL = 2;
+static constexpr int WP_ITEM = 14;
+static constexpr int WP_PLAYERMAX = 15;
+
 // Door subtypes.
 static constexpr int DOOR_LOCKED = 1;
 static constexpr int DOOR_UNLOCKED = 2;

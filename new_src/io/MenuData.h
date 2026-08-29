@@ -22,7 +22,7 @@ enum MenuId : int {
 	kMenuRestartLvl    = 52, kMenuSaveQuit = 53,
 	kMenuSpecialExit   = 58,
 	kMenuControls      = 62,
-	kMenuItems         = 72, kMenuItemsWeapons = 73,
+	kMenuItems         = 72, kMenuItemsWeapons = 73, kMenuItemsDrinks = 75,
 };
 
 // Menus::MENUTYPE_* (src/Menus.h:7-15)
@@ -33,7 +33,7 @@ enum MenuType : int {
 
 // Menus::ITEM_* (src/Menus.h:16-34); only the bits the in-game tree uses.
 enum MenuItemFlag : int {
-	kItemNoSelect = 0x0001, kItemNoDehyphenate = 0x0002, kItemDisabled = 0x0004,
+	kItemNormal = 0x0000, kItemNoSelect = 0x0001, kItemNoDehyphenate = 0x0002, kItemDisabled = 0x0004,
 	kItemAlignCenter = 0x0008, kItemShowDetails = 0x0020, kItemDivider = 0x0040,
 	kItemChecked = 0x0400, kItemHidden = 0x8000,
 };
@@ -42,7 +42,8 @@ enum MenuItemFlag : int {
 enum MenuAction : int {
 	kActionNone = 0, kActionGoto = 1, kActionBack = 2, kActionLoad = 3,
 	kActionSave = 4, kActionBackToMain = 5, kActionChangeState = 9,
-	kActionRestartLevel = 12, kActionSaveQuit = 13, kActionSaveExit = 25,
+	kActionRestartLevel = 12, kActionSaveQuit = 13, kActionShowDetails = 16,
+	kActionUseItemWeapon = 18, kActionConfirmUse = 24, kActionSaveExit = 25,
 	kActionReturnToPlayer = 33,
 };
 

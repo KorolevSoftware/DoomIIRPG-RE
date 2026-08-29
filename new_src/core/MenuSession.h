@@ -11,6 +11,7 @@
 
 namespace newcore {
 
+class EntityDefs;
 class Localization;
 class Player;
 class Tables;
@@ -22,8 +23,11 @@ class Tables;
 //
 // GROUP 3+4+5 scope: the root screen (MENU_INGAME, id 29), pixel scrolling, the
 // scrollbar, the navigation stack and every sub-screen that has a menus.bin row.
-// The code-built screens (PDA 46, the confirm screens 49/52/53, the help leaves)
-// and the info buttons arrive with G6-G8.
+// GROUP 6 adds the two code-built item screens (MENU_ITEMS 72 and
+// MENU_ITEMS_WEAPONS 73), whose bodies the original appends in initMenu.
+// The remaining code-built screens (PDA 46, the confirm screens 49/52/53/77, the
+// drinks list 75, the details screen 71, the help leaves) and the ITEM_SHOWDETAILS
+// info buttons arrive with G7-G8.
 class MenuSession {
 public:
 	// maxItems: [GEC] hard-set to 4 at src/MenuSystem.cpp:1231; what the J2ME
@@ -38,7 +42,8 @@ public:
 	struct Env {
 		const MenuData* menus = nullptr;
 		const Localization* loc = nullptr;
-		const Tables* tables = nullptr;      // oscCycle (cursor wobble)
+		const Tables* tables = nullptr;      // oscCycle (cursor wobble), weaponDef
+		const EntityDefs* defs = nullptr;    // item/weapon names on the item screens
 		Player* player = nullptr;
 		StateHost* host = nullptr;
 		const int64_t* upTimeMs = nullptr;   // cursor oscillation clock
@@ -71,6 +76,16 @@ private:
 
 	void setMenu(int menuId);         // (:612-654)
 	void initMenu(int menuId);        // (:1227-1573 subset)
+	// Row producers. addItem is the legacy appender (:3997-4003); addParsedRows
+	// is loadMenuItems (:4005-4035) with the menus.bin span it copies from.
+	int  addItem(const MenuItemDef& def);
+	int  addItem(int labelId, int flags, int action, int param, int helpId);
+	void addParsedRows(int menuId, int beg, int count);
+	// The item-row idiom of MENU_ITEMS/MENU_ITEMS_WEAPONS: name + description
+	// from find(ET_ITEM, subType, defParm), the count in the value column.
+	int  addEntityRow(int subType, int defParm, int flags, int action, int param);
+	void buildItemsScreen();          // MENU_ITEMS (:1930-1986)
+	void buildWeaponsScreen();        // MENU_ITEMS_WEAPONS (:1988-2021)
 	void gotoMenu(int menuId);        // (:2818-2824)
 	void pushMenu(int menuId, int selectedIndex, int scrollIndex);  // (:4059-4069)
 	int  popMenu(int& selectedIndex, int& scrollIndex);             // (:4071-4081)

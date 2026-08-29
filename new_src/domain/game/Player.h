@@ -91,6 +91,15 @@ public:
 	// 3 = health. Mirrors legacy Player::give.
 	bool give(int kind, int slot, int amount);
 
+	// Equips weapon `i`; `def` is the caller's find(ET_ITEM, 1, i) result, which
+	// the legacy looks up itself (src/Player.cpp:160). Port of
+	// Player::selectWeapon (src/Player.cpp:132-163) minus what the rewrite has
+	// no counterpart for: isFamiliar, zoomOut, drawPlayingSoftKeys,
+	// readyWeapon/prevWeapon and the HUD repaint flag. The legacy
+	// selectNextWeapon() branch (:145-148) is a no-op here too: :153 assigns
+	// `i` unconditionally afterwards and only prevWeapon survives it.
+	void selectWeapon(int i, const EntityDef* def);
+
 	// requireItem(kind, slot, min, max): inventory count check or weapon bit.
 	bool requireItem(int kind, int slot, int min, int max) const;
 

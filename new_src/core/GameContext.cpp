@@ -52,6 +52,7 @@ void GameContext::init(const Init& sys) {
 	menuEnv.menus = sys_.menus;
 	menuEnv.loc = sys_.loc;
 	menuEnv.tables = sys_.tables;
+	menuEnv.defs = sys_.defs;
 	menuEnv.player = sys_.player;
 	menuEnv.host = this;
 	menuEnv.upTimeMs = &upTimeMs;
