@@ -65,6 +65,36 @@ constexpr int kStrNoLabel = 198;
 constexpr int kYesNoMessageFlags = kItemNoSelect | kItemAlignCenter;
 constexpr int kYesNoButtonFlags = kItemAlignCenter;
 
+// Canvas::ingameScrollWithBarMaxChars = (displayRect[2] - 34) / 9 = (480-34)/9
+// (src/Canvas.cpp:94), the wrap budget LoadHelpResource passes for every
+// menu >= MENU_INGAME (:3674). A literal CHARACTER count: the original measured
+// it against FONT_WIDTH 12 / CHAR_SPACING 11 while the rewrite's font advances
+// 9, so deriving it from a pixel width here would be wrong (NEW FACT 9).
+constexpr int kHelpMaxChars = (480 - 34) / 9;   // 49
+
+// The re-wrap budget: menuRect[2] is first reduced by 27 and then divided by
+// CHAR_SPACING[0] (:3697-3698) -> 407 / 11. Again a literal, for the same
+// reason: 37, not 434/9 and not 407/9.
+constexpr int kHelpRectNarrowPx = 27;
+
+// menuRect[3] as setMenuSettings leaves it for a help leaf — 320 minus the
+// bottom panel (:4362) — which is the height LoadHelpResource compares the
+// content against, BEFORE paint narrows the region to 241 (:848). 256/16 = 16
+// lines fit here; 241/16 = 15 are actually drawn.
+constexpr int kHelpInitRectH = 320 - 64;
+
+// Canvas::displayRect[3] = backBuffer->height (src/Canvas.cpp:52), i.e. the
+// 320 px canvas. LoadNotebook opens the page scrolled to the bottom by
+// (displayRect[3] - 26) / 16 lines (:3805).
+constexpr int kDisplayH = 320;
+
+// render->mapNameID for the rewrite. LoadNotebook titles the page with
+// render->mapNameField = 0xC00 | game->levelNames[mapNameID - 1]
+// (src/LoadingManager.cpp:331), i.e. STRINGID(FILE_MENUSTRINGS, levelName).
+// The rewrite loads map00 and nothing else (new_src/core/Main.cpp:108), so the
+// id is fixed at 1 here rather than invented as a new Env field.
+constexpr int kMapNameId = 1;
+
 // CHAR_SPACING[0] = 11 (src/App.h:41). The divider cell count is
 // menuRect[2] / CHAR_SPACING[0] (:909), i.e. a CHARACTER budget computed with
 // the original's 11 px advance — never with the rewrite's 9 px one (NEW FACT 9).
@@ -159,11 +189,33 @@ void buildModStat(Text& t, int i, int i2) {
 	t.append(')');
 }
 
+// The menu id -> help resource map of the ten type-5 leaves, read straight off
+// their initMenu cases (src/MenuSystem.cpp:1663-1764): each one sets
+// `this->type = 5` and calls LoadHelpResource with the number below. -1 = the id
+// is not a help leaf.
+int helpResourceFor(int menuId) {
+	switch (menuId) {
+	case kMenuHelpGeneral:    return 1;    // (:1663-1667)
+	case kMenuHelpMove:       return 2;    // (:1669-1673)
+	case kMenuHelpAttack:     return 3;    // (:1675-1679)
+	case kMenuHelpSniper:     return 7;    // (:1681-1685)
+	case kMenuHelpArmor:      return 4;    // (:1687-1691)
+	case kMenuHelpEffects:    return 5;    // (:1693-1697)
+	case kMenuHelpItems:      return 6;    // (:1699-1703)
+	case kMenuHelpHacker:     return 8;    // (:1749-1753)
+	case kMenuHelpMatrixSkip: return 9;    // (:1755-1759)
+	case kMenuHelpPowerUp:    return 10;   // (:1761-1765)
+	default:                  return -1;
+	}
+}
+
 // Screens with no menus.bin row that the rewrite builds in code, mirroring their
-// initMenu cases (ADR 0013). G7 covers the three confirm screens; QUESTLOG 46 and
-// the type-5 HELP leaves are still missing and stay refused until G6.
+// initMenu cases (ADR 0013). G7 added the three confirm screens; G6 adds
+// QUESTLOG 46 (LoadNotebook, :1707-1710) and the ten type-5 HELP leaves. Every
+// remaining absent id stays refused by the GOTO gate in initMenu.
 bool isCodeBuiltScreen(int menuId) {
-	return menuId == kMenuLoad || menuId == kMenuRestartLvl || menuId == kMenuSaveQuit;
+	return menuId == kMenuLoad || menuId == kMenuRestartLvl || menuId == kMenuSaveQuit ||
+		menuId == kMenuQuestLog || helpResourceFor(menuId) > 0;
 }
 
 ScreenGeom geometryFor(int menuId) {
@@ -181,6 +233,21 @@ ScreenGeom geometryFor(int menuId) {
 	case kMenuSaveQuit:
 	case kMenuControls:
 		return { UiRect{ (480 - kItemWidthPx) / 2, kListRect.y, kItemWidthPx, kListRect.h }, 320 };
+	// The text-section group (:4351-4367): x = 23, y = 0, w = 434,
+	// h = 320 - panelBottom->height. MENU_INGAME_SNIPER (41) is a member here
+	// too — in this build it is the sniper-rifle HELP leaf, not a list.
+	case kMenuHelpGeneral:
+	case kMenuHelpMove:
+	case kMenuHelpAttack:
+	case kMenuHelpSniper:
+	case kMenuHelpArmor:
+	case kMenuHelpEffects:
+	case kMenuHelpItems:
+	case kMenuQuestLog:
+	case kMenuHelpHacker:
+	case kMenuHelpMatrixSkip:
+	case kMenuHelpPowerUp:
+		return { UiRect{ 23, kListRect.y, 434, kListRect.h }, kHelpInitRectH };
 	default:
 		// menu >= MENU_INGAME: setMenuDimentions(70, 0, 340, 320 - 64) (:4191-4194).
 		return { kListRect, 320 - 64 };
@@ -194,7 +261,14 @@ void MenuSession::init(const Env& env) {
 }
 
 UiRect MenuSession::listRect() const {
-	return geometryFor(menu_).rect;
+	UiRect r = geometryFor(menu_).rect;
+	// LoadHelpResource re-wraps an over-long page against a 27 px narrower rect
+	// and leaves menuRect[2] narrowed (:3697), which is what moves the text off
+	// the scrollbar: 23 + 407 = 430 is exactly the bar's left edge. paint() then
+	// reads that same width for the divider cell count (:909) and for a centred
+	// label (:965), so the whole screen has to see it.
+	if (helpNarrowed_) r.w -= kHelpRectNarrowPx;
+	return r;
 }
 
 UiRect MenuSession::barRect() const {
@@ -224,21 +298,24 @@ void MenuSession::initMenu(int menuId) {
 		numItems_ = 0;
 		return;
 	}
+	// setMenuSettings runs at the top of every initMenu (:1242), so the rect a
+	// previous help page narrowed is restored here and nowhere else.
+	helpNarrowed_ = false;
+
 	type_ = env_.menus->type(menuId);
 	if (type_ < 0) {
-		if (isCodeBuiltScreen(menuId)) {
-			// The three confirm cases set `this->type = 6` themselves before they
-			// call SetYESNO (:1715, :1729, :1736).
-			type_ = kMenuTypeVCenter;
-		} else {
-			// Absent from menus.bin and not built here either: QUESTLOG 46 and
-			// every HELP leaf (ADR 0013) arrive with G6. Reaching one is a bug:
-			// initMenu refuses a GOTO to such an id, so no such screen can be
-			// entered (see the disable loop below).
-			std::fprintf(stderr, "[menu] id %d has no menus.bin row (code-built screen, G6)\n",
+		if (!isCodeBuiltScreen(menuId)) {
+			// Absent from menus.bin and not built here either. Reaching one is a
+			// bug: initMenu refuses a GOTO to such an id, so no such screen can
+			// be entered (see the disable loop below).
+			std::fprintf(stderr, "[menu] id %d has no menus.bin row and no code-built body\n",
 				menuId);
-			type_ = kMenuTypeList;
 		}
+		// A fallback only. Every code-built body below assigns the real type
+		// itself, exactly where its initMenu case does: 5 for the ten HELP
+		// leaves (:1664 and its nine siblings), 6 for the three confirms
+		// (:1715, :1729, :1736), 7 inside LoadNotebook (:3779).
+		type_ = kMenuTypeList;
 	}
 
 	if (menuId != oldMenu_) {                          // (:1227-1230)
@@ -255,7 +332,13 @@ void MenuSession::initMenu(int menuId) {
 		buildItemsScreen();
 	} else if (menuId == kMenuItemsWeapons) {
 		buildWeaponsScreen();
+	} else if (menuId == kMenuQuestLog) {              // (:1707-1710)
+		loadNotebook();
+	} else if (helpResourceFor(menuId) > 0) {          // (:1663-1705, :1749-1765)
+		type_ = kMenuTypeHelp;
+		loadHelpResource(helpResourceFor(menuId));
 	} else if (menuId == kMenuLoad) {                  // (:1714-1719)
+		type_ = kMenuTypeVCenter;
 		scrollIndex_ = 0;
 		// The original passes SetYESNO(136, 1, ACTION_LOAD = 3, 0), and its
 		// ACTION_LOAD calls canvas->loadState (:3035-3038). The rewrite has no
@@ -265,9 +348,11 @@ void MenuSession::initMenu(int menuId) {
 		// (spec §11.2 row 3). Nothing else about the screen changes.
 		setYesNo(kStrLoadGameQuestion, 1, kActionGoto, kMenuLoadNoSave);
 	} else if (menuId == kMenuRestartLvl) {            // (:1728-1733)
+		type_ = kMenuTypeVCenter;
 		scrollIndex_ = 0;
 		setYesNo(kStrRestartLevelQuestion, 1, kActionRestartLevel, 0);
 	} else if (menuId == kMenuSaveQuit) {              // (:1735-1740)
+		type_ = kMenuTypeVCenter;
 		scrollIndex_ = 0;
 		// The one caller that spells the NO branch out; 2/0 is also the default.
 		setYesNo(kStrSaveQuitQuestion, 1, kActionSaveQuit, 0, kActionBack, 0);
@@ -631,6 +716,164 @@ void MenuSession::setYesNo(int strId, int preselect, int yesAction, int yesParam
 	selectedIndex_ = (preselect == 1) ? numItems_ - 2 : numItems_ - 1;
 }
 
+// One line of a help page. LoadHelpItems hands each '|'-separated piece to
+// addTextArg and points the row at getLastArgString() (:3811-3838, :4090-4098);
+// the rewrite has no text-arg table, so the piece is copied verbatim into
+// literalBuf_ while the row keeps the SOURCE string id — never EMPTY_TEXT, just
+// like ARGUMENT1..N, so the EMPTY_TEXT tests in paint() and moveDir() behave as
+// they did. An empty piece (from a `||` in the shipped string) therefore stays a
+// selectable, zero-glyph 16 px row: it is the paragraph spacing.
+int MenuSession::addHelpRow(int srcLabelId, const Text& src, int beg, int end, int flags) {
+	const int i = addItem(srcLabelId, flags, kActionNone, 0, kEmptyTextId);
+	if (i < 0) return -1;
+	literalBuf_[i].setLength(0);
+	literalBuf_[i].append(src, beg, end - beg);
+	items_[i].hasLiteralLabel = true;
+	return i;
+}
+
+// LoadHelpItems(text, i) (:3811-3838), verbatim. n2 = 2 = ITEM_NODEHYPHENATE:
+// the text has already been wrapped (and dehyphenated by wrapText), so paint
+// must not dehyphenate it a second time.
+void MenuSession::loadHelpItems(const Text& text, int extraFlags) {
+	const int srcLabelId = (env_.loc != nullptr)
+		? env_.loc->makeId(kTextHelp, helpTextIndex_) : kEmptyTextId;
+	const int base = kItemNoDehyphenate | extraFlags;
+
+	int n3 = 0;
+	int first = 0;
+	for (n3 = 0; (first = text.findFirstOf('|', n3)) >= 0; n3 = first + 1) {
+		if (first > n3 && text.charAt(n3) == '#') {
+			// A '#' line is a centred divider and LOSES the '#': the arg starts
+			// at n3 + 1 (:3816-3818).
+			addHelpRow(srcLabelId, text, n3 + 1, first,
+				base | kItemAlignCenter | kItemDivider);
+		} else {
+			addHelpRow(srcLabelId, text, n3, first, base);
+		}
+	}
+	const int length = text.length();
+	if (n3 < length) {
+		if (text.charAt(n3) == '#') {
+			// VERBATIM quirk of the tail branch (:3830-3833): unlike the loop
+			// above it starts the arg at n3, so the '#' is KEPT in the drawn
+			// text, and it ORs 0x40 twice (0x8 | 0x40 | 0x40), which is the same
+			// single ITEM_DIVIDER bit. Neither is a typo we may fix: the shipped
+			// strings all put their '#' heading first, so this branch only fires
+			// for a page whose LAST line starts with '#'.
+			addHelpRow(srcLabelId, text, n3, length,
+				base | kItemAlignCenter | kItemDivider | kItemDivider);
+		} else {
+			addHelpRow(srcLabelId, text, n3, length, base);
+		}
+	}
+}
+
+// LoadHelpResource(short i) (:3662-3702). The original pulls the body out of
+// text type 2 through composeText, wraps it to the in-game budget, and — if the
+// result is taller than the rect setMenuSettings left behind — throws the rows
+// away and re-wraps against a 27 px narrower rect.
+//
+// composeText(2, i, text) (:3671) is not ported: none of the ten shipped help
+// bodies carries a %NN argument (verified against the archive's strings chunk),
+// so the shipped string IS the composed text. A '%' would mean an unresolved
+// argument, which is worth a log line rather than a silently wrong page.
+void MenuSession::loadHelpResource(int resource) {
+	scrollIndex_ = 0;                                  // (:3666-3667)
+	selectedIndex_ = 0;
+	helpTextIndex_ = resource;
+
+	helpText_.setLength(0);
+	if (env_.loc != nullptr) helpText_.append(env_.loc->get(kTextHelp, resource));
+	if (helpText_.length() == 0) {
+		// No text substituted, no placeholder prose: the page is drawn empty and
+		// the gap is stated here (the caller still gets rows only if the string
+		// had any).
+		std::fprintf(stderr, "[menu] help resource %d (text type 2) is empty — page left blank\n",
+			resource);
+	}
+	if (helpText_.findFirstOf('%') >= 0) {
+		std::fprintf(stderr, "[menu] help resource %d has an unresolved argument\n", resource);
+	}
+
+	// menu >= MENU_INGAME, so the budget is ingameScrollWithBarMaxChars = 49 and
+	// never the 35 of the main-menu branch (:3674).
+	helpText_.wrapText(kHelpMaxChars);
+	loadHelpItems(helpText_, 0);
+
+	int h = 0;
+	for (int j = 0; j < numItems_; ++j) {
+		// VERBATIM (:3678-3682): the original tests items[0].flags, not
+		// items[j].flags. No help row ever carries ITEM_HIDDEN, so the two read
+		// the same here — kept as written rather than "fixed".
+		if ((items_[0].def.flags & kItemHidden) == 0) h += itemHeight(j);
+	}
+
+	// menuRect[3] is still the setMenuSettings height (256) at this point, NOT
+	// the 241 paint narrows it to (:848); the second half of the original's
+	// condition, `menu >= MENU_INGAME`, is true for all ten leaves.
+	if (kHelpInitRectH < h) {                          // (:3684-3699)
+		numItems_ = 0;
+		helpText_.setLength(0);
+		if (env_.loc != nullptr) helpText_.append(env_.loc->get(kTextHelp, resource));
+		helpNarrowed_ = true;                          // menuRect[2] -= 27 (:3697)
+		// menuRect[2] / CHAR_SPACING[0] = 407 / 11 = 37 (:3698). listRect() is
+		// already narrowed, so this is the original's own expression; the
+		// division is by 11, never by the rewrite's 9 px advance (NEW FACT 9).
+		helpText_.wrapText(listRect().w / kCharSpacing);
+		loadHelpItems(helpText_, 0);
+	}
+
+	std::fprintf(stderr, "[menu] help %d: %d lines, wrap %d, rect w %d\n", resource,
+		numItems_, helpNarrowed_ ? listRect().w / kCharSpacing : kHelpMaxChars,
+		listRect().w);
+}
+
+// LoadNotebook (:3777-3809) — the SHELL only. The quest loop needs
+// player->notebookIndexes / numNotebookIndexes / isQuestDone / isQuestFailed,
+// filled by Player::updateQuests from EV_UPDATEJOURNAL, none of which the
+// rewrite has (spec §10.2, §15). So the page carries its two header rows and
+// nothing else: a visible, explainable gap rather than invented quest text.
+void MenuSession::loadNotebook() {
+	type_ = kMenuTypeNotebook;                         // (:3779)
+
+	// items[n++].Set(render->mapNameField, EMPTY_TEXT, 9) (:3780): flags 9 =
+	// ITEM_NOSELECT | ITEM_ALIGN_CENTER, a centred 16 px label row.
+	int titleId = kEmptyTextId;
+	if (env_.loc != nullptr && env_.tables != nullptr &&
+	    (int)env_.tables->levelNames.size() >= kMapNameId) {
+		titleId = env_.loc->makeId(kTextIngame2, env_.tables->levelNames[kMapNameId - 1]);
+	} else {
+		std::fprintf(stderr, "[menu] PDA: no level name for map %d — title row left blank\n",
+			kMapNameId);
+	}
+	addItem(titleId, kItemNoSelect | kItemAlignCenter, kActionNone, 0, kEmptyTextId);
+	// items[n++].Set(EMPTY_TEXT, EMPTY_TEXT, 73) (:3781): flags 73 =
+	// ITEM_DIVIDER | ITEM_ALIGN_CENTER | ITEM_NOSELECT. An EMPTY_TEXT divider is
+	// the full-width rule buildDivider draws from three seed glyphs.
+	addItem(kEmptyTextId, kItemDivider | kItemAlignCenter | kItemNoSelect,
+		kActionNone, 0, kEmptyTextId);
+
+	// The page opens scrolled to the BOTTOM (:3805-3808): index = numItems minus
+	// the number of lines that fit, clamped to 0. With the two header rows and
+	// (320 - 26) / 16 = 18 lines that is 0 — the empty log has nothing to scroll.
+	const int fitLines = (kDisplayH - 26) / kFontHeight;
+	const int index = numItems_ - fitLines;
+	scrollIndex_ = index;
+	selectedIndex_ = index;
+	if (index < 0) {
+		selectedIndex_ = 0;
+		scrollIndex_ = 0;
+	}
+
+	static bool logged = false;
+	if (!logged) {
+		logged = true;
+		std::fprintf(stderr, "[menu] PDA: shell only (%d rows) — EV_UPDATEJOURNAL / "
+			"Player::updateQuests are not ported, so the quest log is empty\n", numItems_);
+	}
+}
+
 // fillStatus (:3928-3979) reduced to the values the rewrite can actually
 // source. The original stores them as text arguments and paint resolves each
 // row's textField2, which initMenu assigned as ARGUMENT1..17 (:1575-1594); the
@@ -733,6 +976,34 @@ int MenuSession::scrollPixels() const {
 	return std::clamp(px, 0, maxScroll);
 }
 
+// DELIBERATE DEVIATION (spec 2026-08-28-menu, DEVIATION section) — the last
+// scrollIndex_ that still changes anything on screen, i.e. the FIRST index whose
+// pixel offset already reaches the clamp maxScroll = contentPx - kViewPx.
+// Every larger index maps to the same clamped offset in scrollPixels(), so it
+// would be a dead press that has to be undone before the page moves again.
+// Neither side of this is original behaviour: moveDir's bound `scrollIndex <
+// numItems - maxItems` (src/MenuSystem.cpp:401-455) works in ITEMS with the
+// [GEC] constant maxItems = 4 (:1231), while the type 5/7 pixel mapping it is
+// paired with is the [GEC] sync block (src/MenuSystem.cpp:502-507). There is no
+// J2ME behaviour to be faithful to, so this is a product decision: the port's own
+// mapping was rejected because it still leaves ~9 dead presses AND makes the step
+// uneven (6-14 px); clamping the index removes the dead range entirely and keeps
+// one line per press. Do NOT "restore" the verbatim item-count bound.
+int MenuSession::maxScrollIndex() const {
+	const int maxScroll = contentHeight() - kViewPx;
+	if (maxScroll <= 0) return 0;
+	int px = 0;
+	for (int i = 0; i < numItems_; ++i) {
+		if (px >= maxScroll) return i;
+		if ((items_[i].def.flags & kItemHidden) != 0) continue;
+		px += itemHeight(i);
+	}
+	// Unreachable with real content: the loop can only fall through if the last
+	// row alone is taller than the whole view (h > kViewPx). numItems_ > 0 here,
+	// because maxScroll > 0 means contentHeight() > kViewPx.
+	return numItems_ - 1;
+}
+
 // thumbLen L = V*H/C (SetScrollBox, src/Button.cpp:397-405). Shared by the bar
 // drag (which needs the free track length) and the view model.
 int MenuSession::barThumbLen() const {
@@ -829,7 +1100,15 @@ void MenuSession::moveDir(int n) {
 	if (type_ == kMenuTypeHelp || type_ == kMenuTypeNotebook) {
 		if (n < 0 && scrollIndex_ > 0) {
 			scrollIndex_ += n;
-		} else if (n > 0 && scrollIndex_ < numItems_ - kMaxItems) {
+		} else if (n > 0 && scrollIndex_ < maxScrollIndex()) {
+			// DELIBERATE DEVIATION: the verbatim bound here is
+			// `scrollIndex < numItems - maxItems` (src/MenuSystem.cpp:401-455).
+			// See maxScrollIndex() for why the item-count bound is replaced by
+			// the pixel clamp: with the rewrite's mapping it lets Down walk past
+			// the last offset the clamp allows, so the page stops moving and the
+			// presses have to be undone one by one before it moves again.
+			// Only this cursor-less branch (types 5/7) changes; the selection
+			// path below keeps the legacy window pull unchanged.
 			scrollIndex_ += n;
 		}
 		selectedIndex_ = scrollIndex_;

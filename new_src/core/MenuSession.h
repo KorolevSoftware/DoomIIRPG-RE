@@ -92,6 +92,14 @@ private:
 	int  addEntityRow(int subType, int defParm, int flags, int action, int param);
 	void buildItemsScreen();          // MENU_ITEMS (:1930-1986)
 	void buildWeaponsScreen();        // MENU_ITEMS_WEAPONS (:1988-2021)
+	// LoadHelpResource(short) (:3662-3702): the type-5 body of a HELP leaf.
+	void loadHelpResource(int resource);
+	// LoadHelpItems(Text*, int) (:3811-3838): one item per '|'-separated line.
+	void loadHelpItems(const Text& text, int extraFlags);
+	// One line of a help page, taken verbatim from [beg, end) of `src`.
+	int  addHelpRow(int srcLabelId, const Text& src, int beg, int end, int flags);
+	// LoadNotebook (:3777-3809), shell only: the map-name row and the divider.
+	void loadNotebook();
 	// SetYESNO(short, int, int, int[, int, int]) (:3611-3660): the message rows,
 	// the blank row, the Yes row and the No row of a type-6 confirm screen.
 	void setYesNo(int strId, int preselect, int yesAction, int yesParam,
@@ -114,6 +122,7 @@ private:
 	int  itemHeight(int i) const;     // getMenuItemHeight (:4947-4984)
 	int  contentHeight() const;       // sum over the non-hidden rows (:2742-2751)
 	int  scrollPixels() const;        // scrollIndex_ -> pixels (spec §6.3, A2)
+	int  maxScrollIndex() const;      // last index the pixel clamp still moves (types 5/7)
 	int  barThumbLen() const;         // L = V*H/C (SetScrollBox, src/Button.cpp:397-405)
 	void barDragTo(int cursorY, int maxScroll);  // fmScrollButton::Update (:497-534)
 	bool selectable(int i) const;     // the EMPTY_TEXT / 0x8001 test (:432,446)
@@ -129,6 +138,15 @@ private:
 	int numItems_ = 0;
 	int selectedIndex_ = 0;
 	int scrollIndex_ = 0;
+	// LoadHelpResource's side effect on the canvas rect: `menuRect[2] -= 27`
+	// before the narrower re-wrap (:3697). setMenuSettings runs at the top of
+	// every initMenu (:1242), so the mutation never outlives one screen — this
+	// flag is reset there for the same reason.
+	bool helpNarrowed_ = false;
+	// The text-type-2 index the current help page was built from, so its rows
+	// can carry a real (non-EMPTY_TEXT) source string id the way the original's
+	// ARGUMENT1..N ids do (:4090-4098).
+	int helpTextIndex_ = 0;
 
 	// The navigation stack (:4045-4081). The original keeps five parallel
 	// stacks; the two scroll-pixel ones (scrollY1Stack / scrollY2Stack) are
@@ -157,6 +175,7 @@ private:
 	Text valueBuf_[kMaxRows];     // the textField2 column (:1038-1044)
 	Text literalBuf_[kMaxRows];   // the rewrite's ARGUMENT1..N slots (:4090-4098)
 	Text yesNoText_;              // setYesNo's message before it is split on '\n'
+	Text helpText_;               // localization->getLargeBuffer() of LoadHelpResource
 	MenuRow rowBuf_[kMaxRows];
 	Text statusText_;
 	Text statusTailText_;     // the shield half, built with leading spaces (:751-756)
