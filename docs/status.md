@@ -149,7 +149,38 @@ impact point and flash correct.
 Also user-confirmed on 2026-08-26: cinematic fov/weapon-suppression fixes (weapon unchanged in
 gameplay, absent in cinematics) and the cinematic letterbox black bars.
 
-## Current focus — UI layer COMPLETE (2026-08-28, every group user-confirmed)
+## Current focus — MENU COMPLETE (2026-08-29, every group user-confirmed)
+
+8 of 8 groups, spec `docs/architecture/specs/2026-08-28-menu.md` + ADR 0013:
+G1 `io/MenuData` (menus.bin parsed, golden-checked at boot), G2 menu primitives
+and sheets, G3 the menu opens (root list, wobbling cursor, soft keys, health/shield
+readout), G4 scrolling + the 4-sheet scrollbar + faithful drag on list and bar,
+G5 the navigation stack and sub-screens, G7 confirm screens, G6 help pages and the
+PDA shell, G8 info buttons and the torn-page popup. Inventory and weapons bodies
+are built in code as the original does, and selecting a weapon row equips it — the
+rewrite's first weapon switch from the UI.
+
+Working: root list, Inventory -> Weapons (with the equip), Status -> Player values,
+Game Help's ten topics as real text, PDA shell, Options, the four confirms, per-row
+info popups.
+
+Deliberately refusing, with reasons logged: Save Game, View Map, Restart Level and
+Save & Quit YES (no save system, no automap state, no map reload), Credits,
+Controls, Nano Drinks, item use, the details screen. They draw as NORMAL rows —
+the legacy `ITEM_DISABLED` look belongs only to rows the DATA disables, a
+distinction the reference build taught us after we got it wrong.
+
+Deviations, all recorded at the code and in the spec's DEVIATION section:
+soft-key hit rects narrowed to the arrow icons; `kViewPx` 241 chosen over the
+port-derived 256 after the user saw the last row jammed against the border; and
+the help-page scroll clamp bounded by content height rather than the port's
+item-count bound (neither side is J2ME behaviour — both are `[GEC]`).
+
+Known gaps: no key bound to the info action (popup is mouse-only), `%NN` help
+arguments would survive literally, quest/journal content absent, Level/Grades
+values unsourced.
+
+## Previous focus — UI layer COMPLETE (2026-08-28, every group user-confirmed)
 
 Custom immediate-mode UI, 8 groups of 8, spec
 `docs/architecture/specs/2026-08-27-ui-layer.md` + ADR 0012:
