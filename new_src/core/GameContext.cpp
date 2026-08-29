@@ -651,6 +651,22 @@ void GameContext::applyUiAction(UiAction a, int index) {
 			return;
 		}
 		break;
+	case UiAction::Info:
+		// Same two-step as ListRow, and for the same reason: the legacy handler
+		// latches the index the info button carries and then acts on it
+		// (src/MenuSystem.cpp:4802-4805). Unlike ListRow this index is NOT the
+		// selection — the cursor stays where it is.
+		if (state_ == StateId::Menu) {
+			menu_.setInfoIndex(index);
+			queued = Action::MenuInfo;
+		} else {
+			std::fprintf(stderr, "[ui] info button %d outside the menu\n", index);
+			return;
+		}
+		break;
+	case UiAction::InfoClose:
+		queued = Action::MenuInfoClose;
+		break;
 	case UiAction::Resume:
 		// Touch-only in the original (src/MenuSystem.cpp:4787-4789): no key
 		// produces this action.

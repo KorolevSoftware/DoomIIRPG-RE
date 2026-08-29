@@ -63,8 +63,29 @@ constexpr uint32_t kDisabledOverlay = 0x3333994C;
 constexpr char kCursorGlyph = '\x8A';    // Graphics::drawCursor (src/Graphics.cpp:670-686)
 constexpr char kDisabledGlyph = '\x89';  // disabled LABEL row fill (src/MenuSystem.cpp:1104-1113)
 
+// Info button (:5141-5145): rect x = menuRect[0] + menuItem_width +
+// menuItem_paddingBottom = 70 + 296 + 10, size = the Pressed sheet's 48x32.
+// Its render modes are set once in updateTouchButtonState (:4448-4449):
+// normalRenderMode = 2 (RENDER_BLEND50 -> alpha 128, src/GLES.cpp:642-646) on
+// the Normal sheet, highlightRenderMode = 0 on the Pressed one.
+constexpr int kItemPaddingBottom = 10;   // setMenuSettings (:4193)
+constexpr int kInfoW = 48;
+constexpr int kInfoH = 32;
+constexpr uint8_t kInfoAlphaIdle = 128;
+
+// Torn-page popup (:1135-1173): a 50 % black wash over the whole canvas, the
+// page at x = 230 - (width >> 1), y = 10, and the wrapped help text centred on
+// the page. 230 is a literal in the original, not SCR_CX.
+constexpr int kPopupCx = 230;
+constexpr int kPopupY = 10;
+constexpr uint32_t kPopupWash = 0x80000000;
+
 UiId rowSlotId(int slot) {
 	return (UiId)((int)UiId::MenuRow0 + slot);
+}
+
+UiId infoSlotId(int slot) {
+	return (UiId)((int)UiId::MenuInfo0 + slot);
 }
 
 } // namespace
@@ -72,6 +93,10 @@ UiId rowSlotId(int slot) {
 UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 	UiResult res;
 	const UiAssets& art = ui.art();
+	// While the popup is up the legacy touch handler runs no hit test at all:
+	// every button branch lives inside `if (!this->drawHelpText)`
+	// (src/MenuSystem.cpp:4710-4808), so the rows AND both soft keys are inert.
+	const bool popup = m.helpPopup != nullptr;
 
 	// ---- chrome, in the legacy paint order (src/MenuSystem.cpp:734-773) ----
 	if (m.drawBottomPanel) {
@@ -101,14 +126,14 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 			ui.isActive(UiId::MenuSoftLeft) ? kSoftAlphaHeld : kSoftAlphaIdle);
 		softLeftFired = ui.softKey(UiId::MenuSoftLeft, *m.softLeft, kSoftLeftTextX,
 			kSoftTextY, Graphics2D::kAnchorLeft | Graphics2D::kAnchorBottom,
-			kSoftLeftRect);
+			kSoftLeftRect, !popup);
 	}
 	if (m.softRight != nullptr) {
 		ui.imageAlpha(art.menuSoftKey, kSoftRightRect.x, kSoftRightRect.y,
 			ui.isActive(UiId::MenuSoftRight) ? kSoftAlphaHeld : kSoftAlphaIdle);
 		softRightFired = ui.softKey(UiId::MenuSoftRight, *m.softRight, kSoftRightTextX,
 			kSoftTextY, Graphics2D::kAnchorRight | Graphics2D::kAnchorBottom,
-			kSoftRightRect);
+			kSoftRightRect, !popup);
 	}
 
 	// ---- the list, clipped like the original (:852) ----
@@ -121,6 +146,10 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 	// pass so a pressed plate lands on top; here the 296 px rows share one x and
 	// never overlap, so one pass with the held alpha is pixel-identical.
 	int rowHit = -1;
+	int infoHit = -1;
+	// One gate for both button pools, so a drag and the popup suppress the same
+	// set of hit tests the legacy handler suppresses.
+	const bool takeHits = m.rowHits && !popup;
 	if (!m.rowHits) {
 		// A touch drag has taken the gesture: the legacy move handler clears
 		// every button highlight before it starts scrolling the content
@@ -148,9 +177,27 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 						ui.imageAlpha(art.menuOptionButton, m.rect.x, y0,
 							ui.isActive(id) ? kRowAlphaHeld : kRowAlphaIdle);
 					}
-					if (m.rowHits && y <= kNoTouchBelowY) {
+					if (takeHits && y <= kNoTouchBelowY) {
 						const UiRect hit{ m.rect.x, y0, m.itemWidth, m.itemHeight };
 						if (ui.buttonRect(id, hit)) rowHit = i;
+					}
+					// The info button of the same slot (:5132-5152). It is drawn
+					// whether or not the row is ITEM_DISABLED — the legacy info
+					// block sits outside that test — and it loses its touch area
+					// under the same y > 210 rule as the row (:5146-5148).
+					if (r.info) {
+						const UiId iid = infoSlotId(slot);
+						const UiRect ir{ m.rect.x + m.itemWidth + kItemPaddingBottom,
+							y0, kInfoW, kInfoH };
+						if (ui.isActive(iid)) {
+							ui.image(art.menuInfoPressed, ir.x, ir.y,
+								Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
+						} else {
+							ui.imageAlpha(art.menuInfoNormal, ir.x, ir.y, kInfoAlphaIdle);
+						}
+						if (takeHits && y <= kNoTouchBelowY) {
+							if (ui.buttonRect(iid, ir)) infoHit = i;
+						}
 					}
 					++slot;
 				}
@@ -233,6 +280,25 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 
 	ui.popClip();
 
+	// ---- the torn-page popup, drawn last and outside the clip (:1135-1173) ----
+	if (popup) {
+		ui.panel(UiRect{ 0, 0, kCanvasW, kCanvasH }, kPopupWash);
+		const int px = kPopupCx - (art.menuTornPage.width() >> 1);
+		ui.image(art.menuTornPage, px, kPopupY,
+			Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
+		ui.label(*m.helpPopup, px + (art.menuTornPage.width() >> 1),
+			kPopupY + (art.menuTornPage.height() >> 1),
+			Graphics2D::kAnchorHCenter | Graphics2D::kAnchorVCenter);
+		// Dismissed by a release anywhere (:4809-4813). The release that ends a
+		// drag returns before that point (:4676-4689), which is what m.rowHits
+		// already reports — a bar drag stays possible while the page is up,
+		// because the legacy bar branch runs before the drawHelpText test.
+		if (ui.in().released && m.rowHits) {
+			res.action = UiAction::InfoClose;
+		}
+		return res;
+	}
+
 	// One intent per frame, in draw order. Row clicks report the ITEM index:
 	// the legacy touch handler assigns selectedIndex = button->selectedIndex and
 	// then calls select() (:4787-4792), and the producer does the same with the
@@ -244,6 +310,12 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 	} else if (rowHit >= 0) {
 		res.action = UiAction::ListRow;
 		res.index = rowHit;
+	} else if (infoHit >= 0) {
+		// The legacy release path assigns selectedHelpIndex from the button's own
+		// selectedIndex and never touches selectedIndex (:4802-4805), so opening a
+		// row's help does NOT move the cursor.
+		res.action = UiAction::Info;
+		res.index = infoHit;
 	} else if (ui.in().wheel != 0) {
 		// NEW, no original: one notch behaves like one arrow key, the same
 		// convention as the loot list and the dialog box.

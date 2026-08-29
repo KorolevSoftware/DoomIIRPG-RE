@@ -100,6 +100,14 @@ constexpr int kMapNameId = 1;
 // the original's 11 px advance — never with the rewrite's 9 px one (NEW FACT 9).
 constexpr int kCharSpacing = 11;
 
+// WrapHelpText (src/MenuItem.cpp:29-34): composeTextField(helpField) then
+// wrapText(menuHelpMaxChars, 12, '\n'), with menuHelpMaxChars set for this one
+// call to imgGameMenuTornPage->width / FONT_WIDTH[0] = 408 / 12 (:1162). A
+// literal CHARACTER budget again: the rewrite's font advances 9, so deriving it
+// from the page width here would give 45 (NEW FACT 9).
+constexpr int kHelpPopupChars = 408 / 12;   // 34
+constexpr int kHelpPopupLines = 12;         // the 0xc argument of WrapHelpText
+
 // items[i].flags & 0x8001 == ITEM_NOSELECT | ITEM_HIDDEN (:432, :446).
 constexpr int kUnselectableMask = kItemNoSelect | kItemHidden;
 
@@ -218,6 +226,22 @@ bool isCodeBuiltScreen(int menuId) {
 		menuId == kMenuQuestLog || helpResourceFor(menuId) > 0;
 }
 
+// The screens whose action rows carry an "i" button, verbatim from the paint
+// whitelist (:5132-5140): menu <= MENU_INGAME_STATUS, MENU_INGAME_HELP,
+// MENU_ITEMS, MENU_ITEMS_WEAPONS, MENU_ITEMS_DRINKS and the three vending ids.
+// `menu <= 30` reaches every main-menu id too, but ST_MENU only ever runs the
+// in-game tree here, where it means exactly MENU_INGAME (29) and
+// MENU_INGAME_STATUS (30). The vending ids have no MenuId in the rewrite;
+// MENU_ITEMS_DRINKS has one, and its GOTO row is refused in initMenu, so that
+// arm cannot fire yet — it is kept because it is part of the ported condition.
+// updateTouchButtonState' own drawButton whitelist (:4479-4489) resolves to the
+// same set of ids for this tree, so the drawn button and the clickable one
+// always agree.
+bool screenHasInfoButtons(int menuId) {
+	return menuId <= kMenuStatus || menuId == kMenuHelp || menuId == kMenuItems ||
+		menuId == kMenuItemsWeapons || menuId == kMenuItemsDrinks;
+}
+
 ScreenGeom geometryFor(int menuId) {
 	switch (menuId) {
 	// One case group in the original (:4330-4349): w = the 296 px option
@@ -281,6 +305,11 @@ UiRect MenuSession::barRect() const {
 // business here — the legacy setMenu pushes ST_MENU onto the canvas (:650-653),
 // the rewrite arrives from GameContext::enterState_.
 void MenuSession::begin() {
+	// The popup cannot survive a screen change (it swallows every action while
+	// it is up), but the entry hook resets it anyway, exactly as the legacy
+	// constructor leaves it (:159-160).
+	helpIndex_ = -1;
+	infoIndex_ = -1;
 	setMenu(kMenuInGame);
 }
 
@@ -1069,6 +1098,10 @@ void MenuSession::updateDrag(const UiInput& in) {
 			0, maxScroll);
 		break;
 	case DragMode::Pending:
+		// handleUserMoved gates the CONTENT drag on drawHelpText (:4853) but not
+		// the bar drag: the bar branch (:4905-4913) sits before that test, and so
+		// does the press that latches it (:4691-4702). Both halves are kept.
+		if (helpIndex_ >= 0) break;
 		if (std::abs(in.cursorX - pressX_) <= kDragDeadBoxPx &&
 		    std::abs(in.cursorY - pressY_) <= kDragDeadBoxPx) {
 			break;
@@ -1192,6 +1225,17 @@ void MenuSession::scrollPageDown() {                     // (:332-346)
 // (LEVEL_STATS / SHOWDETAILS / MORE_GAMES), and ACTION_PASSTURN is explicitly
 // ignored (:2891), so both do nothing here.
 void MenuSession::handleAction(Action a) {
+	// The torn page swallows everything (:2840-2848): only ACTION_MENU,
+	// ACTION_FIRE and ACTION_MENU_ITEM_INFO close it, and every other action
+	// returns without reaching the list. ACTION_BACK is deliberately NOT in that
+	// list, so Action::BackKey stays swallowed here too.
+	if (helpIndex_ >= 0) {
+		if (a == Action::Menu || a == Action::Use || a == Action::MenuInfo ||
+		    a == Action::MenuInfoClose) {
+			closeHelp();
+		}
+		return;
+	}
 	switch (a) {
 	case Action::Forward:    moveDir(-1); break;          // ACTION_UP -> scrollUp (:322-330)
 	case Action::Back:       moveDir(1); break;           // ACTION_DOWN -> scrollDown
@@ -1201,6 +1245,7 @@ void MenuSession::handleAction(Action a) {
 	case Action::Menu:
 	case Action::BackKey:    back(); break;               // ACTION_MENU / ACTION_BACK
 	case Action::MenuResume: returnToGame(); break;       // right soft key (:4787-4789)
+	case Action::MenuInfo:   showHelp(infoIndex_); break; // info button (:4802-4805)
 	default: break;
 	}
 }
@@ -1211,6 +1256,38 @@ void MenuSession::handleAction(Action a) {
 void MenuSession::setSelectedIndex(int i) {
 	if (i < 0 || i >= numItems_) return;
 	selectedIndex_ = i;
+}
+
+void MenuSession::setInfoIndex(int i) {
+	if (i < 0 || i >= numItems_) return;
+	infoIndex_ = i;
+}
+
+// The touch path of the popup (:4802-4805). Note what it does NOT do: unlike
+// the key path (:2849-2856) it never tests helpField against EMPTY_TEXT, so an
+// info button on a row without help text opens an empty page. Kept verbatim —
+// every row of the whitelisted screens ships a help id, and inventing a refusal
+// here would be a rewrite of the original's own behaviour.
+void MenuSession::showHelp(int i) {
+	if (i < 0 || i >= numItems_) return;
+	helpIndex_ = i;
+	helpPopupText_.setLength(0);
+	const int id = items_[i].def.helpId;
+	if (env_.loc != nullptr) {
+		// composeTextField(helpField, text) (src/MenuItem.cpp:31). The rewrite has
+		// no text-argument table, so a %NN argument would survive into the page —
+		// none of the in-game help strings carries one.
+		helpPopupText_.append(env_.loc->get(env_.loc->typeOf(id), env_.loc->indexOf(id)));
+	}
+	helpPopupText_.wrapText(kHelpPopupChars, kHelpPopupLines, '\n');
+	if (helpPopupText_.length() == 0) {
+		std::fprintf(stderr, "[menu] row %d has no help text (id %d) — empty page\n", i, id);
+	}
+}
+
+void MenuSession::closeHelp() {                          // (:2844-2845, :4811-4812)
+	helpIndex_ = -1;
+	infoIndex_ = -1;
 }
 
 void MenuSession::select(int i) {
@@ -1361,6 +1438,11 @@ void MenuSession::composeLabel(int i) {
 	// deliberately NOT ORed in here.
 	row.disabled = (d.flags & kItemDisabled) != 0;
 
+	// The "i" button, on action rows of the whitelisted screens only
+	// (:5132-5140). ITEM_DISABLED does not remove it: the legacy info block is
+	// outside that test.
+	row.info = row.action && screenHasInfoButtons(menu_);
+
 	// EMPTY_TEXT without ITEM_DIVIDER draws nothing but keeps its height (:930).
 	if (d.labelId == kEmptyTextId && (d.flags & kItemDivider) == 0) return;
 
@@ -1471,6 +1553,11 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 	softRightText_.append("Resume");      // ASCII literal in the original
 	softRightText_.dehyphenate();
 	m.softRight = &softRightText_;
+
+	// The torn page, drawn over everything else while selectedHelpIndex is set
+	// (:1135-1173). The text is wrapped once, in showHelp(), because nothing can
+	// change it while the modal owns the input.
+	if (helpIndex_ >= 0) m.helpPopup = &helpPopupText_;
 
 	return true;
 }

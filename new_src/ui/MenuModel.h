@@ -28,6 +28,11 @@ struct MenuRow {
 	                       // its padding
 	bool action = false;   // legacy `items->action != 0` — drives ALL row geometry
 	bool centered = false; // ITEM_ALIGN_CENTER
+	// The 48x32 "i" button right of the plate. Set by the producer for action
+	// rows of the whitelisted screens only (src/MenuSystem.cpp:5132-5140); an
+	// ITEM_DISABLED row still gets one, because the legacy info block sits
+	// outside the disabled test.
+	bool info = false;
 	bool disabled = false; // ITEM_DISABLED as it comes from the DATA (menus.bin
 	                       // flags, or a per-screen patch of the original such as
 	                       // items[2].flags = inventory[18] + 4). A row the
@@ -84,6 +89,13 @@ struct MenuViewModel {
 	const Text* statusLine = nullptr;  // health/shield readout (:742-758); null = skip
 	const Text* softLeft = nullptr;    // loc(3,80) "Back"
 	const Text* softRight = nullptr;   // ASCII literal "Resume"
+
+	// The torn-page help popup (drawHelpText, src/MenuSystem.cpp:1135-1173).
+	// Non-null = the modal is up: it is drawn over the whole screen and NOTHING
+	// under it takes a hit any more, exactly like the legacy touch handler,
+	// which skips every button test while drawHelpText is set (:4710-4808).
+	// Already wrapped by the producer to 34 chars / 12 lines.
+	const Text* helpPopup = nullptr;
 };
 
 } // namespace newcore

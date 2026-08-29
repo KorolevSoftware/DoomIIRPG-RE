@@ -27,9 +27,10 @@ class Tables;
 // MENU_ITEMS_WEAPONS 73), whose bodies the original appends in initMenu.
 // GROUP 7 adds the three code-built confirm screens (LOAD 49, RESTARTLVL 52,
 // SAVEQUIT 53) through setYesNo, the port of SetYESNO.
-// The remaining code-built screens (PDA 46, the item-use confirm 77, the drinks
-// list 75, the details screen 71, the help leaves) and the ITEM_SHOWDETAILS info
-// buttons arrive with G6/G8.
+// GROUP 6 adds the ten type-5 HELP leaves and the PDA shell (QUESTLOG 46).
+// GROUP 8 adds the per-row info buttons and the torn-page help popup.
+// The remaining code-built screens (the item-use confirm 77, the drinks list 75,
+// the ITEM_SHOWDETAILS details screen 71) have no group yet.
 class MenuSession {
 public:
 	// maxItems: [GEC] hard-set to 4 at src/MenuSystem.cpp:1231; what the J2ME
@@ -55,6 +56,10 @@ public:
 	void begin();                     // ST_MENU entry hook (setMenu(MENU_INGAME))
 	void handleAction(Action a);      // port of handleMenuEvents (src/MenuSystem.cpp:2826-2969)
 	void setSelectedIndex(int i);     // mouse latch (:4787-4792)
+	// Info-button latch (:4802-4805). Separate from the selection on purpose:
+	// the legacy touch path writes selectedHelpIndex and leaves selectedIndex
+	// alone, so opening a row's help never moves the cursor.
+	void setInfoIndex(int i);
 	// Touch drag scrolling, from the pointer state of THIS frame. Must run
 	// before buildViewModel(): it decides both the frame's scroll offset and
 	// whether the rows take hits at all (handleUserMoved, :4869-4913).
@@ -106,6 +111,10 @@ private:
 		int noAction = kActionBack, int noParam = 0);
 	// One message line of setYesNo, taken verbatim from [beg, end) of `src`.
 	int  addMessageRow(int srcStrId, const Text& src, int beg, int end);
+	// drawHelpText / selectedHelpIndex (:159-160, :4802-4813, :2840-2857): the
+	// torn-page modal. showHelp wraps the row's helpField into helpPopupText_.
+	void showHelp(int i);
+	void closeHelp();
 	void gotoMenu(int menuId);        // (:2818-2824)
 	void pushMenu(int menuId, int selectedIndex, int scrollIndex);  // (:4059-4069)
 	int  popMenu(int& selectedIndex, int& scrollIndex);             // (:4071-4081)
@@ -147,6 +156,13 @@ private:
 	// can carry a real (non-EMPTY_TEXT) source string id the way the original's
 	// ARGUMENT1..N ids do (:4090-4098).
 	int helpTextIndex_ = 0;
+	// selectedHelpIndex (:159): the row whose torn page is up, -1 = no popup.
+	// It doubles as the legacy drawHelpText flag, which is only ever set
+	// together with it (:4803-4804, :2844-2845).
+	int helpIndex_ = -1;
+	// The row the last info button carried, latched before Action::MenuInfo
+	// reaches handleAction (the setSelectedIndex idiom).
+	int infoIndex_ = -1;
 
 	// The navigation stack (:4045-4081). The original keeps five parallel
 	// stacks; the two scroll-pixel ones (scrollY1Stack / scrollY2Stack) are
@@ -176,6 +192,7 @@ private:
 	Text literalBuf_[kMaxRows];   // the rewrite's ARGUMENT1..N slots (:4090-4098)
 	Text yesNoText_;              // setYesNo's message before it is split on '\n'
 	Text helpText_;               // localization->getLargeBuffer() of LoadHelpResource
+	Text helpPopupText_;          // WrapHelpText's buffer (src/MenuItem.cpp:29-34)
 	MenuRow rowBuf_[kMaxRows];
 	Text statusText_;
 	Text statusTailText_;     // the shield half, built with leading spaces (:751-756)

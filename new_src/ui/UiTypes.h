@@ -37,6 +37,11 @@ enum class UiAction : int {
 	                  // src/MenuSystem.cpp:4787-4789)
 	ScrollUp, ScrollDown, ScrollHome, ScrollEnd,
 	ListRow,          // index carries the row
+	// In-game menu info buttons (GROUP 8). Info carries the row in `index` and
+	// opens that row's torn-page help (src/MenuSystem.cpp:4797-4805);
+	// InfoClose is the release that dismisses it (:4809-4813). Both are
+	// touch-only in the original's port too.
+	Info, InfoClose,
 };
 
 // One navigation edge per frame. Moves a selected index owned by the screen's

@@ -31,6 +31,12 @@ enum class Action : int {
 	// so it exists purely so the UI intent travels through the one action queue
 	// (spec 2026-08-28-menu §9).
 	MenuResume,
+	// The in-game menu's info buttons (GROUP 8). MenuInfo is the port's
+	// ACTION_MENU_ITEM_INFO (src/Enums.h:1009), which the original's touch
+	// handler raises from an info button (src/MenuSystem.cpp:4802-4805); no key
+	// is bound to it in the rewrite. MenuInfoClose has no legacy action id: it
+	// is the touch release that dismisses the torn page (:4809-4813).
+	MenuInfo, MenuInfoClose,
 };
 
 // The only thing a module may know about the state machine (spec
