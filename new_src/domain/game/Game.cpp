@@ -32,6 +32,9 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	loot.init({ &db, &defs });                          // peer subsystem wiring (spec §P2-GE)
 	db.resetEntities();
 	monstersTurn = 0;
+	lootFound = 0;                                 // src/Game.cpp:681 (unloadMap)
+	lootSource = -1;
+	showingLoot = false;
 	queueAdvanceTurn = false;
 
 	// Load-time AUTO_ANIMATE injection (src/Game.cpp:374-397): raw maps carry
@@ -66,28 +69,81 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		map.mapSprites[i + 3 * map.numSprites] = (int16_t)mode;
 	}
 
-	// Create entities from TILE-flagged sprites whose tileNum+257 resolves to
-	// a door (271-278), plus monster/NPC/corpse sprites so script loot
-	// opcodes, the pickup path and the stacked-character renderer have
-	// targets (legacy loadMapEntities gives every sprite an entity,
-	// src/Game.cpp:374-452; the rewrite limits itself to the families that
-	// participate in gameplay this phase — items/decor would change
-	// TraceSystem::trace blocking).
+	// Full legacy spawn rule (ADR 0015, src/Game.cpp:373-486): every sprite
+	// whose lookup(tileNum) returns a def gets an entity, plus a fallback for
+	// def-less sprites flagged SOLIDSIDE. Hidden sprites do get an entity —
+	// they are only left unlinked (src/Game.cpp:451-454).
+	const EntityDef* const spriteWallDef = defs.find(Enums::ET_SPRITEWALL, 0);          // :371
+	const EntityDef* const spriteWallNoclipDef = defs.find(Enums::ET_NONOBSTRUCTING_SPRITEWALL, 0);
+	numDestroyableObj = 0;                        // src/Game.cpp:448-450
+	int census[Enums::ET_MAX] = { 0 };
+	int numLinked = 0;
+	int numDeflessWalls = 0;
 	int nextSlot = 2; // entities[0]=world, entities[1]=player (reserved)
 	for (int i = 0; i < map.numSprites; ++i) {
-		if (nextSlot >= EntityDb::kEntities) break;
 		int info = map.mapSpriteInfo[i];
-		if (info & 0x10000) continue; // hidden
-		if (info & Enums::SPRITE_FLAG_NOENTITY) continue; // no-entity sprites never spawn entities (src/Game.cpp:398-400)
+		// No-entity sprites: legacy clears the bit and skips (src/Game.cpp:397-400).
+		if (info & Enums::SPRITE_FLAG_NOENTITY) {
+			map.mapSpriteInfo[i] &= ~Enums::SPRITE_FLAG_NOENTITY;
+			continue;
+		}
 		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
+		// Link coordinates are read before the nudge (src/Game.cpp:401-403).
+		int x = map.mapSprites[i + 0 * map.numSprites];
+		int y = map.mapSprites[i + 1 * map.numSprites];
+		// World-weapon pickup pose (src/Game.cpp:404-406): frame 2 in bits 8-15,
+		// for every sprite in the tile range regardless of the def family.
+		if (tileNum >= Enums::TILENUM_WEAPON_FRAME_FORCE_MIN &&
+		    tileNum <= Enums::TILENUM_WEAPON_FRAME_FORCE_MAX) {
+			map.mapSpriteInfo[i] |= 0x200;
+			info = map.mapSpriteInfo[i];
+		}
+		// Link-tile nudge for oriented sprites sitting on a tile border
+		// (src/Game.cpp:407-418). x/y stay local — never written back.
+		if ((info & SpriteInfo::ORIENTED) && (((x & 0x3F) == 0) || ((y & 0x3F) == 0))) {
+			if      (info & Enums::SPRITE_FLAG_EAST)  ++x;
+			else if (info & Enums::SPRITE_FLAG_SOUTH) ++y;
+			else if (info & Enums::SPRITE_FLAG_NORTH) --y;
+			else if (info & Enums::SPRITE_FLAG_WEST)  --x;
+		}
 		const EntityDef* def = (tileNum >= 0 && tileNum < 512) ? defs.lookup(tileNum) : nullptr;
-		if (!def) continue;
-		if (def->eType == Enums::ET_DOOR) {
-			if (tileNum < Enums::TILENUM_FIRST_DOOR || tileNum > Enums::TILENUM_LAST_DOOR) continue;
-		} else if (def->eType != Enums::ET_MONSTER && def->eType != Enums::ET_CORPSE &&
-		           def->eType != Enums::ET_NPC) {
+		if (def == nullptr) {
+			// Def-less solid sprite: borrow a sprite-wall def (src/Game.cpp:457-481).
+			if ((info & Enums::SPRITE_FLAG_SOLIDSIDE) == 0) continue;
+			const EntityDef* wallDef =
+				(tileNum == Enums::TILENUM_SPRITEWALL_NOCLIP_A ||
+				 tileNum == Enums::TILENUM_SPRITEWALL_NOCLIP_B)
+					? spriteWallNoclipDef : spriteWallDef;
+			if (wallDef == nullptr) {
+				std::fprintf(stderr, "[spawn] sprite=%d tile=%d: no sprite-wall def\n", i, tileNum);
+				continue;
+			}
+			if (nextSlot >= EntityDb::kEntities) {
+				std::fprintf(stderr, "[spawn] ERR_MAX_ENTITIES(35): %d slots exhausted at sprite %d\n",
+					EntityDb::kEntities, i);
+				break;
+			}
+			Entity& w = db.entities()[nextSlot++];
+			w.def = wallDef;                      // no initspawn, no loot set, no active bit
+			w.setSprite(i);
+			++numDeflessWalls;
+			if (wallDef->eType < Enums::ET_MAX) ++census[wallDef->eType];
+			if ((map.mapSpriteInfo[i] & Enums::SPRITE_FLAG_HIDDEN) == 0) {
+				db.linkEntity(&w, x >> 6, y >> 6);
+				++numLinked;
+			}
 			continue;
+		}
+		if (def->eType == Enums::ET_DOOR) {
+			// Rewrite-only range guard, harmless on shipped data: the only
+			// eType==5 defs in entities.bin are tileIndex 271-278.
+			if (tileNum < Enums::TILENUM_FIRST_DOOR || tileNum > Enums::TILENUM_LAST_DOOR) continue;
+		}
+		if (nextSlot >= EntityDb::kEntities) {
+			std::fprintf(stderr, "[spawn] ERR_MAX_ENTITIES(35): %d slots exhausted at sprite %d\n",
+				EntityDb::kEntities, i);
+			break;
 		}
 
 		Entity& e = db.entities()[nextSlot++];
@@ -95,6 +151,10 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		e.setSprite(i);
 		if (def->eType == Enums::ET_DOOR) {
 			e.info |= Entity::kInfoActive;
+		} else if (def->eType == Enums::ET_ITEM) {
+			// Nothing per-entity: legacy initspawn() has no ET_ITEM case, so no
+			// active/dirty marker, no loot set and param stays 0
+			// (src/Entity.cpp:49-112). Only the shared tail (linkEntity) applies.
 		} else if (def->eType == Enums::ET_MONSTER) {
 			// Monster half (src/Game.cpp:430-447 + src/Entity.cpp:59-81):
 			// payload from the fixed pool, random art flip, shared-stat clone
@@ -134,38 +194,72 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 			map.mapSprites[i + 8 * map.numSprites] = (int16_t)scale;
 			e.info |= Entity::kInfoActive;                   // :77 (0x20000)
 			CorpseLoot::populateDefaultLootSet(e);           // :109-111
-		} else {
+		} else if (def->eType == Enums::ET_DECOR && def->eSubType != Enums::DECOR_STATUE) {
+			// src/Entity.cpp:81-86: decor flagged hidden in the map data is
+			// unhidden (and therefore linked below); the wall switch shrinks.
+			map.mapSpriteInfo[i] &= ~Enums::SPRITE_FLAG_HIDDEN;
+			if ((map.mapSpriteInfo[i] & SpriteInfo::kTileNumMask) == Enums::TILENUM_SWITCH) {
+				map.mapSprites[i + 8 * map.numSprites] = 32;   // S_SCALEFACTOR
+			}
+		} else if (def->eType == Enums::ET_ATTACK_INTERACTIVE) {
+			e.info |= Entity::kInfoActive;                     // src/Entity.cpp:87-89 (0x20000)
+		} else if (def->eType == Enums::ET_CORPSE) {
 			// Placed corpse props spawn with info |= 0x420000
-			// (src/Entity.cpp:96-98); generalized to every monster/corpse.
+			// (src/Entity.cpp:96-98); generalized to every corpse.
 			e.info |= Entity::kInfoActive | Entity::kInfoDirty;
+			CorpseLoot::populateDefaultLootSet(e);             // src/Entity.cpp:103-111
+		} else if (def->eType == Enums::ET_NPC) {
 			// ET_NPC construction sets param = 1 -> chat-icon overhead in
 			// legacy (src/Entity.cpp:99-101); the icon itself is not rendered
 			// this cycle (spec 2026-08-25-character-animation §1 elision).
-			// Loot sets exist only for monsters/corpses
-			// (src/Entity.cpp:103-111).
-			if (def->eType == Enums::ET_NPC) e.param = 1;
-			else CorpseLoot::populateDefaultLootSet(e);
+			// NPCs carry no loot set (src/Entity.cpp:103-108).
+			e.param = 1;
 		}
-		int x = map.mapSprites[i + 0 * map.numSprites];
-		int y = map.mapSprites[i + 1 * map.numSprites];
-		db.linkEntity(&e, x >> 6, y >> 6);
+		// Everything else (ET_ITEM, ET_ENV_DAMAGE, ET_SPRITEWALL,
+		// ET_NONOBSTRUCTING_SPRITEWALL, ET_DECOR_NOCLIP, statues) has no
+		// initspawn branch at all (src/Entity.cpp:50-111).
+
+		// Destroyable-object stat (src/Game.cpp:448-450): eType 10 minus the
+		// crate (2) and subtype 3.
+		if (def->eType == Enums::ET_ATTACK_INTERACTIVE &&
+		    def->eSubType != Enums::INTERACT_CRATE && def->eSubType != 3) {
+			++numDestroyableObj;
+		}
+		if (def->eType < Enums::ET_MAX) ++census[def->eType];
+		// Link gate (src/Game.cpp:451-454): re-read the flags — the decor
+		// branch above may have just cleared the hidden bit.
+		const bool linked = (map.mapSpriteInfo[i] & Enums::SPRITE_FLAG_HIDDEN) == 0;
+		if (linked) {
+			db.linkEntity(&e, x >> 6, y >> 6);
+			++numLinked;
+		}
+		// Post-spawn self-hide (src/Game.cpp:455-457).
+		if (tileNum >= Enums::TILENUM_HIDE_AFTER_SPAWN_MIN &&
+		    tileNum <= Enums::TILENUM_HIDE_AFTER_SPAWN_MAX) {
+			map.mapSpriteInfo[i] |= Enums::SPRITE_FLAG_HIDDEN;
+		}
 		if (def->eType == Enums::ET_MONSTER) {
 			// :441 - legacy sets 0x40000 so spawn deactivate() links the monster onto the inactive ring (src/Game.cpp:441-443)
 			e.info |= Entity::kInfoOnActiveList;
 			monsters.deactivate(&e); // every monster starts on the inactive ring
 			std::fprintf(stderr,
-				"[monster] spawn sprite=%d sub=%d parm=%d hp=%d/%d\n",
+				"[monster] spawn sprite=%d sub=%d parm=%d hp=%d/%d (%d,%d)%s\n",
 				i, def->eSubType, def->parm,
 				e.monster ? e.monster->ce.getStat(0) : -1,
-				e.monster ? e.monster->ce.getStat(1) : -1);
-			continue;                // monster log replaces the generic one below
+				e.monster ? e.monster->ce.getStat(1) : -1,
+				x >> 6, y >> 6, linked ? "" : " unlinked");
 		}
-		fprintf(stderr, "%s entity sprite=%d tile=%d (%d,%d) sub=%d loot=[%X %X %X]\n",
-			def->eType == Enums::ET_DOOR ? "DOOR" :
-			def->eType == Enums::ET_NPC ? "NPC" : "BODY",
-			i, tileNum, x >> 6, y >> 6, def->eSubType,
-			e.lootSet[0], e.lootSet[1], e.lootSet[2]);
 	}
+	std::fprintf(stderr,
+		"[spawn] %d entities (%d/%d slots), %d linked, %d destroyable; "
+		"monster=%d npc=%d door=%d item=%d decor=%d envdmg=%d corpse=%d "
+		"interact=%d spritewall=%d noclipwall=%d decornoclip=%d (def-less walls %d)\n",
+		nextSlot - 2, nextSlot, EntityDb::kEntities, numLinked, numDestroyableObj,
+		census[Enums::ET_MONSTER], census[Enums::ET_NPC], census[Enums::ET_DOOR],
+		census[Enums::ET_ITEM], census[Enums::ET_DECOR], census[Enums::ET_ENV_DAMAGE],
+		census[Enums::ET_CORPSE], census[Enums::ET_ATTACK_INTERACTIVE],
+		census[Enums::ET_SPRITEWALL], census[Enums::ET_NONOBSTRUCTING_SPRITEWALL],
+		census[Enums::ET_DECOR_NOCLIP], numDeflessWalls);
 }
 
 // ---- Phase 5: script-facing services ----
@@ -206,6 +300,19 @@ void Game::advanceTurn() {
 	if (vm_) vm_->executeStaticFunc(Enums::SCR_PER_TURN); // PER_TURN hook (:1279)
 }
 
+// Crate opening (src/PlayingInputHandler.cpp:387-393). The unlink is
+// immediate — the crate stops blocking the player and stops being a
+// trace/facing target while the 4-frame animation is still running.
+// Clock choice (ADR 0016): the SpriteLerps clock is the rewrite's simulation
+// clock for sprite animation, so arming and advancing share it.
+void Game::openCrate(Entity* e) {
+	if (e == nullptr || e->def == nullptr) return;
+	e->param = lerps.clockMs() + 200;          // legacy entity->param = upTimeMs + 200 (:389)
+	db.unlinkEntity(e);                        // (:390)
+	facingDirty = true;                        // deviation: drop the crate name from the HUD this turn
+	std::fprintf(stderr, "[use] crate opened sprite=%d\n", e->getSprite());
+}
+
 // ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
 
 int Game::difficulty() const {
@@ -232,9 +339,21 @@ void composeArgs(std::string& text, const std::string* args, int numArgs) {
 	text.swap(out);
 }
 
+// Port of Game::touchTile (src/Game.cpp:687-699). x/y arrive in canvas units
+// (src/MovementController.cpp:170); legacy findMapEntity shifts them itself
+// (src/Game.cpp:729-736) while the rewrite's takes tile coords, so the shift
+// happens here. The bool return (b2) has no reader in the rewrite.
 void Game::touchTile(int x, int y, bool b) {
-	// Legacy touchTile drives automap uncover + pickups (absent this phase).
-	(void)x; (void)y; (void)b;
+	EntityDb::TileWalk walk("Game::touchTile");
+	Entity* next = nullptr;
+	for (Entity* e = db.findMapEntity(x >> 6, y >> 6); e != nullptr && walk.ok(e); e = next) {
+		next = e->nextOnTile;                  // :692 cached BEFORE touched() unlinks
+		// Legacy gate is `b || eType == ET_ENV_DAMAGE` (:693); ET_ENV_DAMAGE
+		// is unported (no pain/status-effect system, spec §5) and touched()
+		// ignores that type, so the b == false pass is a no-op either way.
+		if (!b) continue;
+		items.touched(e);                      // :694
+	}
 }
 
 // src/Game.cpp:974-981.
@@ -283,6 +402,30 @@ void Game::update(int dtMs) {
 			map_->mapSpriteInfo[s] = info & 0xFFFF00FF;   // back to IDLE (:1601-1602)
 			ent.monster->frameTime = 0;
 		}
+	}
+
+	// Crate opening animation, ported out of the renderer
+	// (src/Render.cpp:1607-1617) with the same deviation precedent as the
+	// pain-pose revert above: legacy steps the frame only while the crate is
+	// drawn, we step it in the simulation for every armed crate. Both reach
+	// frame 3 in ~600 ms and latch there — the sprite is never hidden.
+	const int now = lerps.clockMs();
+	for (Entity& ent : db.entities()) {
+		if (ent.def == nullptr || ent.param == 0) continue;
+		if (ent.def->eType != Enums::ET_ATTACK_INTERACTIVE || ent.def->eSubType != 2) continue;
+		const int s = ent.getSprite();
+		if (s < 0 || s >= map_->numSprites) continue;
+		const int info = map_->mapSpriteInfo[s];
+		int frame = (info >> 8) & 0xFF;                   // src/Render.cpp:1508
+		if (now > ent.param) {                            // (:1608-1611)
+			++frame;
+			ent.param = now + 200;
+		}
+		if (frame > 3) {                                  // (:1612-1615)
+			ent.param = 0;
+			frame = 3;
+		}
+		map_->mapSpriteInfo[s] = (info & 0xFFFF00FF) | (frame << 8);  // (:1616)
 	}
 }
 

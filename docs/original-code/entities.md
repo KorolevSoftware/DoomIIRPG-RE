@@ -140,3 +140,119 @@ There `0x200000` means "monster position record follows" (`src/Entity.cpp:1514`,
 Rule for the rewrite: never name an `Entity::info` bit after a `SPRITE_FLAG_*`
 constant, and never route the `0xFFFF00FF` anim-byte idiom through the entity
 word.
+
+## 6. Collision: which eTypes block what (`CONTENTS_*` masks)
+
+Bit *i* of a contents mask = `ET_*` ordinal *i* (`src/Enums.h:10-24`); the
+trace predicate is literally `0x0 != (n4 & 1 << def->eType)`
+(`src/Game.cpp:221`). Masks from `src/Enums.h:26-40`.
+
+| eType | blocks player walk (13501) | blocks monster (15535) | blocks shot (13997) | blocks view (5293) |
+|---|---|---|---|---|
+| 0 ET_WORLD | yes (via `traceWorld`) | yes | yes | yes |
+| 1 ET_PLAYER | no | yes | no | no |
+| 2 ET_MONSTER | yes | yes | yes | yes |
+| 3 ET_NPC | yes | yes | yes | yes |
+| 4 ET_PLAYERCLIP | yes | no | no | no |
+| 5 ET_DOOR | yes | yes | yes | yes |
+| 6 ET_ITEM | no | no | no | no |
+| 7 ET_DECOR | yes | yes | yes | yes |
+| 8 ET_ENV_DAMAGE | no | no | no | no |
+| 9 ET_CORPSE | no | no | yes | no |
+| 10 ET_ATTACK_INTERACTIVE | yes | yes | yes | yes |
+| 11 ET_MONSTERBLOCK_ITEM | no | yes | no | no |
+| 12 ET_SPRITEWALL | yes | yes | yes | yes |
+| 13 ET_NONOBSTRUCTING_SPRITEWALL | yes | yes | yes | no |
+| 14 ET_DECOR_NOCLIP | no | no | no | no |
+
+Other masks: `CONTENTS_INTERACTIVE 1068` = {MONSTER, NPC, DOOR,
+ATTACK_INTERACTIVE}; `CONTENTS_PICKUP 64` = {ITEM};
+`CONTENTS_SPRITEWALL 12288` = {SPRITEWALL, NONOBSTRUCTING_SPRITEWALL};
+`CONTENTS_NOFLOAT 12424` = {NPC, DECOR, SPRITEWALL, NONOBSTRUCTING_SPRITEWALL};
+`CONTENTS_DYNAMITE_SOLID 13349` = {WORLD, MONSTER, DOOR, ATTACK_INTERACTIVE,
+SPRITEWALL, NONOBSTRUCTING_SPRITEWALL};
+`CONTENTS_ISEMPTY_SCRIPT 25152` = {ITEM, CORPSE, NONOBSTRUCTING_SPRITEWALL,
+DECOR_NOCLIP}; `CONTENTS_SPLASH_SOLID 4129` = {WORLD, DOOR, SPRITEWALL};
+`CONTENTS_LINE_O_SIGHT 4131` = {WORLD, PLAYER, DOOR, SPRITEWALL};
+`CONTENTS_MONSTERWPSOLID 5295` = VIEWSOLID + PLAYER.
+
+Mask call sites: player walk `src/MovementController.cpp:326`; weapon fire
+`src/PlayingInputHandler.cpp:200` (plus `|= 0x10` for melee, `:209-212`, and
+`|= 0x4100` for weapon 2, `:205-207`); monster move/LOS/spawn checks
+`src/Entity.cpp:733,1078,1302,1329` and `src/Game.cpp:717,3558`; knockback
+picks 13501 for the player, 15535 otherwise (`src/Entity.cpp:1223,1229`).
+
+### 6.1 What makes an entity actually block
+
+`Game::trace` (`src/Game.cpp:216-226`) iterates `entityDb[tileX + 32*tileY]`
+over the bbox tiles and needs only: entity is in that list, `def != nullptr`,
+eType bit ∈ mask, eType != `ET_WORLD`. **No `Entity::info` bit is consulted** —
+`kInfoActive 0x20000`, the link bit `0x100000` and `0x10000` are irrelevant to
+blocking. `Game::linkEntity` (`src/Game.cpp:95-119`) is what inserts into the
+list; `info |= 0x100000` at `:118` is bookkeeping only.
+`Game::deactivate` (`src/Game.cpp:825-856`) never unlinks, so inactive
+monsters block too.
+
+Per-candidate geometry (`src/Game.cpp:249-288`):
+* `mapSpriteInfo[sprite] & 0xF000000` (oriented) → ±32 segment through the
+  sprite centre, horizontal when `& 0x3000000`, else vertical;
+  `CapsuleToLineTrace`.
+* otherwise a circle, r² = 625, or 256 for `ET_ENV_DAMAGE`;
+  `CapsuleToCircleTrace`.
+* hit when frac < 16384 (14.14 fixed point).
+
+### 6.2 Blocking without an entity
+
+* **Def-less sprite walls**: `lookup(tileNum) == nullptr` but
+  `mapSpriteInfo & 0x800000` → the sprite still gets an entity, borrowing
+  `find(13,0)` for tiles 166/168 and `find(12,0)` otherwise, with no
+  `initspawn()` (`src/Game.cpp:457-481`). map00 has 7 (tiles 128, 202, 264,
+  326, 340).
+* **World clip lines**: `Render::traceWorld` (`src/Render.cpp:1226-1266`) runs
+  only when the mask has bit 0. `n7 = lineFlags[i>>1] >> ((i&1)<<2) & 0x7`:
+  `4` never blocks (whole test skipped), `6` skipped, `5` blocks only when the
+  mask has `0x10` (PLAYERCLIP) or `0x800` (MONSTERBLOCK_ITEM), `7` is
+  back-face culled, `0..3` always block. This is the only real use of
+  `ET_PLAYERCLIP` — no entity def has eType 4.
+* `mapFlags[tile] & 0x1` links the shared world entity into `entityDb`
+  (`src/Game.cpp:497-506`), but the entity loop skips `eType == 0`, so it
+  matters for pathing/`findMapEntity`, not for the movement block.
+
+### 6.3 Entity spawn rule (`Game::loadMapEntities`, `src/Game.cpp:373-486`)
+
+Per sprite: `tileNum = mapSpriteInfo & 0xFF`, `+257` when `& 0x400000`.
+`& 0x200000` → the bit is cleared and no entity is made (`:397-400`).
+Otherwise `lookup(tileNum)` → entity with `info = (spriteIdx+1) & 0xFFFF`,
+`initspawn()`, `mapSprites[S_ENT+i] = slot`, then `linkEntity` unless
+`mapSpriteInfo & 0x10000` (`:419-455`); else the sprite-wall fallback of §6.2.
+
+Link-tile nudge for oriented sprites on a tile border (`:407-418`): when
+`mapSpriteInfo & 0xF000000` and `(x & 0x3F) == 0 || (y & 0x3F) == 0`,
+`0x4000000 → x+1`, `0x2000000 → y+1`, `0x1000000 → y-1`, `0x8000000 → x-1`
+before `>> 6`. On map00 this fires for 51 sprites and changes the link tile
+for 20 of them.
+
+Family extras: `ET_DECOR` with `eSubType != DECOR_STATUE(3)` clears
+`mapSpriteInfo & 0x10000` (so it links even if flagged hidden) and sets
+scale 32 for `TILENUM_SWITCH 173` (`src/Entity.cpp:81-86`);
+`ET_ATTACK_INTERACTIVE` sets `info |= 0x20000` (`:87-89`) and increments
+`numDestroyableObj` when `eSubType` is neither 2 nor 3 (`src/Game.cpp:448-450`).
+
+### 6.4 Capacity
+
+`entities = new Entity[275]` (`src/Game.cpp:40`), `Error(35)` at
+`src/Game.cpp:420,458,489`; `entityMonsters[80]` (`src/Game.h:58`),
+`Error(37)` at `src/Game.cpp:433`. Replaying the rule over the ten shipped
+maps: peak 209/275 entities (map00) and 65/80 monsters (map08). Spawning
+every def'd sprite is therefore safe. Per-eType map00 census and the list of
+the 86 player-solid entities the rewrite currently omits:
+`docs/research/2026-08-30-sprite-blocking.md`.
+
+Entity def table (`tmp_entities.bin`, 190 records, layout in
+`src/EntityDef.cpp:35-43`): 1 WORLD, 1 PLAYER, 41 MONSTER, 10 NPC, 8 DOOR,
+46 ITEM, 19 DECOR, 2 ENV_DAMAGE, 44 CORPSE, 6 ATTACK_INTERACTIVE,
+2 SPRITEWALL, 1 NONOBSTRUCTING_SPRITEWALL, 9 DECOR_NOCLIP, 0 PLAYERCLIP,
+0 MONSTERBLOCK_ITEM. Player-solid tile sets:
+DECOR `{125,133,136,147,149,150,153,154,156,173,179,180,181,182,183,187,188,189,201}`,
+ATTACK_INTERACTIVE `{121,123,127,135,152,178}`,
+SPRITEWALL `{508,509}`, NONOBSTRUCTING_SPRITEWALL `{507}`.

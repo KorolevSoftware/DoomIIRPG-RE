@@ -112,6 +112,7 @@ static constexpr int STAT_MAX = 8;
 static constexpr int ITEM_CLASS_INVENTORY = 0;
 static constexpr int ITEM_CLASS_WEAPON = 1;
 static constexpr int ITEM_CLASS_AMMO = 2;
+static constexpr int ITEM_CLASS_FOOD = 3;    // IT_FOOD (src/Enums.h:99)
 
 // Player inventory slots (src/Enums.h:196-232), the subset the item screens
 // walk. The *_MAX names are exclusive bounds, exactly as the legacy loops use
@@ -120,8 +121,12 @@ static constexpr int INV_DRINK_MIN = 0;
 static constexpr int INV_DRINK_MAX = 11;
 static constexpr int INV_ARMOR_MIN = 11;
 static constexpr int INV_ARMOR_MAX = 13;
+static constexpr int INV_BOTTLED_WATER = 13;           // src/Enums.h:215
 static constexpr int INV_HEALTH_MIN = 16;
 static constexpr int INV_HEALTH_MAX = 18;
+static constexpr int INV_JOURNAL = 18;                 // INV_OTHER_JOURNAL (src/Enums.h:221)
+static constexpr int INV_RED_KEY = 19;                 // INV_OTHER_RED_KEY (src/Enums.h:222)
+static constexpr int INV_BLUE_KEY = 20;                // INV_OTHER_BLUE_KEY (src/Enums.h:223)
 static constexpr int INV_OTHER_HOLY_WATER = 22;
 static constexpr int INV_ONE_UAC_CREDIT = 24;
 
@@ -129,6 +134,7 @@ static constexpr int INV_ONE_UAC_CREDIT = 24;
 static constexpr int AMMO_NONE = 0;
 static constexpr int AMMO_HOLY_WATER = 3;
 static constexpr int AMMO_SOUL_CUBE = 6;
+static constexpr int AMMO_SENTRY_BOT = 7;
 static constexpr int AMMO_ITEM = 8;
 static constexpr int AMMO_MAX_SOULS = 5;
 
@@ -136,6 +142,7 @@ static constexpr int AMMO_MAX_SOULS = 5;
 static constexpr int WP_HOLY_WATER_PISTOL = 2;
 static constexpr int WP_ITEM = 14;
 static constexpr int WP_PLAYERMAX = 15;
+static constexpr int WP_SENTRY_BOT_MASK = 120;         // 0x78 (src/Enums.h:157)
 
 // Door subtypes.
 static constexpr int DOOR_LOCKED = 1;
@@ -145,9 +152,39 @@ static constexpr int DOOR_UNLOCKED = 2;
 static constexpr int TILENUM_FIRST_DOOR = 271;
 static constexpr int TILENUM_LAST_DOOR = 281;
 
+// World-weapon pickup frame force at map load: tiles TILENUM_ASSAULT_RIFLE(1)
+// .. TILENUM_SOUL_CUBE(12) get sprite frame 2 (src/Game.cpp:405-407). The range
+// stops at 12, so the two sentry-bot tiles 13/14 keep frame 0 — legacy
+// spawnDropItem uses 1..13 instead (src/Game.cpp:2653-2655); the discrepancy is
+// in the original and is reproduced as is.
+static constexpr int TILENUM_WEAPON_FRAME_FORCE_MIN = 1;
+static constexpr int TILENUM_WEAPON_FRAME_FORCE_MAX = 12;
+
 // Shootable practice-target decor (src/Enums.h:763; tested as 0x95 against the
 // sprite tile number at src/PlayingInputHandler.cpp:348).
 static constexpr int TILENUM_PRACTICE_TARGET = 149;
+
+// Wall switch decor: initspawn shrinks it to scale 32 (src/Enums.h:791,
+// src/Entity.cpp:83-85).
+static constexpr int TILENUM_SWITCH = 173;
+
+// Decor subtype that keeps its hidden bit at spawn (src/Enums.h:46,
+// src/Entity.cpp:81).
+static constexpr int DECOR_STATUE = 3;
+
+// Interactive-object subtype of a crate (src/Game.cpp:449 excludes 2 and 3 from
+// the destroyable count).
+static constexpr int INTERACT_CRATE = 2;
+
+// Sprites in this tile range hide themselves right after spawning
+// (src/Game.cpp:455-457).
+static constexpr int TILENUM_HIDE_AFTER_SPAWN_MIN = 140;
+static constexpr int TILENUM_HIDE_AFTER_SPAWN_MAX = 143;
+
+// Def-less solid sprites borrow a sprite-wall def; these two tiles take the
+// non-obstructing one (src/Game.cpp:466-471).
+static constexpr int TILENUM_SPRITEWALL_NOCLIP_A = 166;
+static constexpr int TILENUM_SPRITEWALL_NOCLIP_B = 168;
 
 // Bosses.
 static constexpr int FIRSTBOSS = 12;

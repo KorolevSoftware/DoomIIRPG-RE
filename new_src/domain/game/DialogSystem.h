@@ -56,6 +56,12 @@ public:
 	void startDialog(ScriptThread* thread, int textType, int strIdx,
 		int style, int flags, bool resumeScript);
 
+	// startDialog(thread, Text&, style, flags, resume): the composed-buffer
+	// entry point (src/DialogSystem.cpp:737-747 with the text already built),
+	// used by the GIVELOOT loot list (src/ScriptThread.cpp:2210).
+	void startDialogText(ScriptThread* thread, Text& text,
+		int style, int flags, bool resumeScript);
+
 	// Help FIFO for style-2 popups (src/DialogSystem.cpp:753-908).
 	bool enqueueHelpDialog(int textType, int strIdx, int threadIdx);
 	void dequeueHelpDialog(bool force = false);

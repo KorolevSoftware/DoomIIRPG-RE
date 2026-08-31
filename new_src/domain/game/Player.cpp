@@ -107,24 +107,41 @@ void Player::reset() {
 	give(0, 18, 1); // journal
 }
 
-bool Player::give(int kind, int slot, int amount) {
+// src/Player.cpp:970-1063. The isFamiliar mirror arrays (weaponsCopy /
+// inventoryCopy / ammoCopy, :995-1000,:1010,:1036) are not ported — no
+// familiar system exists — so every branch takes the real-array side.
+bool Player::give(int kind, int slot, int amount, bool quiet) {
 	if (amount == 0) return false;
 	switch (kind) {
 	case 1: { // weapon bitmask
 		int bit = 1 << (slot & 0xFF);
+		// Sentry-bot pre-step (:978-984): a new bot refills its ammo pool and
+		// evicts the previously owned bot bits, so the acquisition below always
+		// counts as new. Runs BEFORE `isNew` is sampled, as in legacy.
+		if ((bit & Enums::WP_SENTRY_BOT_MASK) != 0 && amount > 0) {
+			give(Enums::ITEM_CLASS_AMMO, Enums::AMMO_SENTRY_BOT, 100, true);
+			weapons &= ~Enums::WP_SENTRY_BOT_MASK;
+		}
+		bool isNew = (weapons & bit) == 0;  // :985
 		if (amount < 0) {
 			weapons &= ~bit;
 			if (slot == weapon) {              // legacy has ONE active-weapon
 				weapon = -1;                   // field, player->ce->weapon; the
 				ce.weapon = -1;                // rewrite mirrors it in both
 			}
+			// Legacy reselects via selectNextWeapon() (:991-992), which is not
+			// ported; the -1 fallback stands in for it.
 			return true;
 		}
-		bool had = (weapons & bit) != 0;
-		weapons |= bit;
-		if (!had && weapon == -1) {
-			weapon = slot;                     // auto-equip keeps ce.weapon in
-			ce.weapon = slot;                  // lockstep (Combat.cpp:126 reads it)
+		weapons |= bit;                        // :1000
+		if (!quiet) {
+			// showWeaponHelp(slot, false) (:1001-1003) — no help-popup
+			// plumbing for gameplay grants (spec §5).
+		}
+		if (isNew) {                           // :1004-1006
+			selectWeapon(slot, defs_ != nullptr
+				? defs_->find(Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON, slot)
+				: nullptr);
 		}
 		return true;
 	}
@@ -135,7 +152,14 @@ bool Player::give(int kind, int slot, int amount) {
 		if (slotIdx == 24) n = std::min(n, 9999);
 		else n = std::min(n, 999);
 		if (n < 0) return false;
-		inventory[slotIdx] = (int16_t)n;
+		// Bottled water is not stored: the whole NEW total (not the delta) is
+		// converted to holy water at x20 and inventory[13] stays 0
+		// (:1023-1025). Legacy quirk, reproduced verbatim.
+		if (slotIdx == Enums::INV_BOTTLED_WATER) {
+			give(Enums::ITEM_CLASS_AMMO, Enums::AMMO_HOLY_WATER, n * 20, true);
+		} else {
+			inventory[slotIdx] = (int16_t)n;
+		}
 		return true;
 	}
 	case 2: { // ammo
@@ -145,6 +169,7 @@ bool Player::give(int kind, int slot, int amount) {
 		else n = std::min(n, 100);
 		if (n < 0) return false;
 		ammo[slot] = (int16_t)n;
+		// hud->repaintFlags |= 0x4 (:1051): the HUD model is rebuilt per frame.
 		return true;
 	}
 	case 3: { // health

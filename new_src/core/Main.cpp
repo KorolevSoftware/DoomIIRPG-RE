@@ -268,6 +268,7 @@ int main(int argc, char* argv[]) {
 	// Phase 4: player + world game state (doors, items). Spawn placement
 	// happens in the Loading tick (legacy Game::spawnPlayer port).
 	Player player;
+	player.setDefs(&g_entityDefs);   // auto-equip lookup in give (spec §G3.3)
 	player.reset();
 
 	Game game;
@@ -280,11 +281,13 @@ int main(int argc, char* argv[]) {
 	ScriptVM vm;
 	GameContext ctx;
 	DialogSystem dialogs;
-	vm.init({                  // Env: map, defs, game, player, loc, hud, ctx, dialogs, gameTime
-		&g_map, &g_entityDefs, &game, &player, &loc, &hud, &ctx, &dialogs, &ctx.gameTime });
+	vm.init({                  // Env: map, defs, game, player, loc, tables, hud, ctx, dialogs, gameTime
+		&g_map, &g_entityDefs, &game, &player, &loc, &tables, &hud, &ctx, &dialogs, &ctx.gameTime });
 	game.setVM(&vm);
 	game.combat.init({         // Env: game, player, hud, loc, tables, map, gameTime (spec §2.2)
 		&game, &player, &hud, &loc, &tables, &g_map, &ctx.gameTime });
+	game.items.init({          // Env: db, defs, map, player, hud, loc, tables, vm, game (§G2.3)
+		&game.db, &g_entityDefs, &g_map, &player, &hud, &loc, &tables, &vm, &game });
 	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges
 	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world, dialogs, ui, menus
 		&g_map, &g_entityDefs, &tables, &loc, &font, &g_media,

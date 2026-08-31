@@ -97,6 +97,15 @@ void DialogSystem::startDialog(ScriptThread* thread, int textType, int strIdx,
 	env_.ctx->setState(StateId::Dialog);         // (:746)
 }
 
+// Same body minus the composeText call: the caller already built the buffer.
+void DialogSystem::startDialogText(ScriptThread* thread, Text& text,
+	int style, int flags, bool resumeScript) {
+	resumeScriptAfterClosed_ = resumeScript;
+	thread_ = thread;
+	prepareDialog(text, style, flags);
+	env_.ctx->setState(StateId::Dialog);
+}
+
 void DialogSystem::prepareDialog(Text& text, int style, int flags) {
 	// Lines per page (src/DialogSystem.cpp:607-618).
 	if (style == 3) viewLines_ = 4;
@@ -162,6 +171,7 @@ void DialogSystem::prepareDialog(Text& text, int style, int flags) {
 
 void DialogSystem::closeDialog(bool skip) {
 	closing_ = true;
+	env_.game->showingLoot = false;              // (:526) re-arms EV_GIVELOOT
 	buffer_.setLength(0);
 	// player->unpause is an empty stub in legacy too (:527, src/Player.cpp:1419-1423).
 

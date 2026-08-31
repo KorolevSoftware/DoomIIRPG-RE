@@ -87,9 +87,19 @@ public:
 	// Starts the player at default stats (3 classes not implemented yet).
 	void reset();
 
-	// give(kind, slot, amount): kind 0 = inventory, 1 = weapons, 2 = ammo,
-	// 3 = health. Mirrors legacy Player::give.
-	bool give(int kind, int slot, int amount);
+	// The defs table give() needs for the auto-equip lookup the legacy does
+	// itself (find(6, 1, wp), src/Player.cpp:160). Wired in core/Main.cpp.
+	void setDefs(const EntityDefs* defs) { defs_ = defs; }
+
+	// give(kind, slot, amount, quiet): kind 0 = inventory, 1 = weapons,
+	// 2 = ammo, 3 = health. Mirrors legacy Player::give (src/Player.cpp:970).
+	// `quiet` is the legacy `b` flag: it gates only the help popups
+	// (showWeaponHelp/showInvHelp/showAmmoHelp, :1001,:1029,:1049), none of
+	// which is ported — it changes no state here.
+	bool give(int kind, int slot, int amount, bool quiet = false);
+
+	// src/Player.cpp:2489-2493 — any of the four sentry-bot weapon bits.
+	bool hasASentryBot() const { return (weapons & Enums::WP_SENTRY_BOT_MASK) != 0; }
 
 	// Equips weapon `i`; `def` is the caller's find(ET_ITEM, 1, i) result, which
 	// the legacy looks up itself (src/Player.cpp:160). Port of
@@ -123,6 +133,9 @@ public:
 	// Fire-pipeline entry (src/Player.cpp:754-799): guard chain then
 	// combat.performAttack. Returns false when the shot is refused.
 	bool fireWeapon(Combat& combat, Entity* target, int x, int y);
+
+private:
+	const EntityDefs* defs_ = nullptr;
 };
 
 } // namespace newcore

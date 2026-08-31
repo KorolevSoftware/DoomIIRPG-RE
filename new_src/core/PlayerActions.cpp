@@ -162,6 +162,16 @@ void PlayerActions::handleAction(Action a) {
 		break;
 	}
 	case Action::Use: {
+		// Loot source naming, the very first thing the legacy ACTION_FIRE
+		// branch does (src/PlayingInputHandler.cpp:189-195): a faced
+		// ET_ATTACK_INTERACTIVE names the next GIVELOOT header, anything else
+		// clears it. Legacy reads Entity::name (= def->name | 0x400, i.e. the
+		// same string in the ingame text type); the rewrite has no per-entity
+		// name override, so def->name is used directly.
+		env_.game->lootSource =
+			(p.facingEntity != nullptr && p.facingEntity->def != nullptr &&
+			 p.facingEntity->def->eType == Enums::ET_ATTACK_INTERACTIVE)
+				? p.facingEntity->def->name : -1;
 		// Corpse loot FIRST: the legacy ACTION_FIRE trace selects lootable
 		// corpses before tile TRIGGER events and door use (ST_LOOTING return
 		// preempts executeTile :398 and the door branch :445,
@@ -180,6 +190,29 @@ void PlayerActions::handleAction(Action a) {
 		if (corpse != nullptr) {
 			env_.host->requestState(StateId::Looting);
 			break;
+		}
+		// Fire-target election, hoisted here out of the fire block below so
+		// the crate branch can read it: legacy elects once (:197-385) and the
+		// crate open (:387-393) sits between the corpse loot and the
+		// front-tile script. electedDist must be captured now — a World hit's
+		// distFrom reads the trace scratch collision point
+		// (TraceSystem.cpp:233-239), which a later trace would overwrite;
+		// entity hits are position-derived and stable.
+		const int weapon2 = p.ce.weapon;                   // legacy ce->weapon (:197)
+		TraceHit elected;                                  // legacy `entity`
+		int electedDist = 0;
+		if (weapon2 >= 0) {
+			elected = env_.targeting->electFireTarget(weapon2);
+			electedDist = elected.blocks()
+				? env_.game->trace.distFrom(elected, p.viewX, p.viewY) : 0;
+		}
+		// Crate open (:387-393): eType 10 / eSubType 2 within one tile.
+		// tileDistSq(1) is legacy tileDistances[0] = 4096 (Combat.cpp:69-72).
+		// The weapon 11 else-arm of the legacy is empty.
+		if (elected.isEntity() &&
+		    elected.eType == Enums::ET_ATTACK_INTERACTIVE && elected.eSubType == 2 &&
+		    electedDist <= env_.game->combat.tileDistSq(1)) {
+			env_.game->openCrate(elected.entity);
 		}
 		// Faced-tile TRIGGER event FIRST, before door use; a script that ran
 		// consumes the turn unless it set skipAdvanceTurn
@@ -207,12 +240,11 @@ void PlayerActions::handleAction(Action a) {
 		// ---- fire (legacy probe src/PlayingInputHandler.cpp:189-548) ----
 		// Order preserved: loot -> tile event -> door -> fire; reached ONLY
 		// when nothing above consumed the press (legacy return-true chain).
-		const int weapon2 = p.ce.weapon;   // legacy reads ce->weapon (:197)
+		// weapon2 / elected / electedDist come from the hoisted election above
+		// (legacy elects once at :197-385 and reuses it here).
 		if (weapon2 >= 0 && !env_.game->combat.active) {
 			TraceSystem& trace = env_.game->trace;
-			const TraceHit elected = env_.targeting->electFireTarget(weapon2);
-			const int dist2 = elected.blocks()
-				? trace.distFrom(elected, p.viewX, p.viewY) : 0;
+			const int dist2 = electedDist;
 			// Outcome mapping of the legacy shot commit (:496-540): attackable
 			// types fire at the entity, a wall within one tile is a push, and
 			// everything else (nothing elected, far geometry) is an air shot

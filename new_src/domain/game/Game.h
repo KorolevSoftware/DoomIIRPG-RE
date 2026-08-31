@@ -10,6 +10,7 @@
 #include "domain/game/Entity.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/EntityMonster.h"
+#include "domain/game/ItemPickup.h"
 #include "domain/game/MonsterSystem.h"
 #include "domain/game/Player.h"
 #include "domain/game/SpriteLerps.h"
@@ -55,11 +56,21 @@ public:
 	// bookkeeping are placeholders until those systems exist).
 	void advanceTurn();
 
+	// Crate opening (src/PlayingInputHandler.cpp:387-393): arm the 4-frame
+	// sprite animation and unlink immediately, so the crate stops blocking
+	// and stops being a trace/facing target BEFORE the animation plays.
+	void openCrate(Entity* e);
+
 	// ---- Corpse looting (docs/original-code/loot-inventory.md) ----
 
-	// Arrival tile hook (legacy touchTile -> automap uncover/pickups);
-	// stub this phase.
+	// Arrival tile hook (src/Game.cpp:687-699): walks the destination tile's
+	// entity chain and offers every entity to ItemPickup::touched. x/y are
+	// canvas units, like the legacy call site (src/MovementController.cpp:170).
 	void touchTile(int x, int y, bool b);
+
+	// Run stat (src/Game.cpp:3536-3543): the x/y/z overload only forwards,
+	// the counter is the whole body.
+	void foundLoot(int sprite, int amount) { (void)sprite; lootFound += (short)amount; }
 
 	// Trigger masks for the movement events (src/Game.cpp:974-1014):
 	// eventFlags_[0] = LEAVE mask for the source tile,
@@ -92,6 +103,13 @@ public:
 	int eventFlags_[2] = { 0, 0 };
 
 	bool facingDirty = false;       // canvas updateFacingEntity latch analog (src/Entity.cpp:527)
+	short lootFound = 0;            // run stat (src/Game.cpp:684, :3541-3543)
+	// LootingSystem::lootSource / showingLoot (src/PlayingInputHandler.cpp:189-195,
+	// src/ScriptThread.cpp:2122-2134). lootSource is the ingame-text string id
+	// naming the container the loot came from, -1 = generic header.
+	int lootSource = -1;
+	bool showingLoot = false;       // a GIVELOOT dialog is on screen; cleared by DialogSystem::closeDialog (src/DialogSystem.cpp:526)
+	int numDestroyableObj = 0;      // map-completion stat (src/Game.cpp:448-450)
 
 	Combat combat;                  // peer subsystem (ADR 0008)
 	EntityDb db;                    // peer subsystem (spec §P2-GF); wired in loadEntities
@@ -100,6 +118,7 @@ public:
 	MonsterSystem monsters;         // peer subsystem (spec §P2-GC); wired in loadEntities
 	SpriteLerps lerps;              // peer subsystem (spec §P2-GD); wired in loadEntities
 	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
+	ItemPickup items;               // peer subsystem (spec 2026-08-29-world-item-pickup §G2); wired in Main
 
 	// Difficulty source: ScriptVM vars[12], default 2 when no VM is wired
 	// (spec §1 difficulty note).

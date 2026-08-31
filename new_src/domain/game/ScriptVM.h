@@ -2,6 +2,7 @@
 #define NEW_DOMAIN_GAME_SCRIPTVM_H
 
 #include <cstdint>
+#include <string>
 
 namespace newcore {
 
@@ -14,6 +15,7 @@ class Hud;
 class Localization;
 class MapData;
 class Player;
+class Tables;
 
 // One interpreter strand of the tileEvents VM. Layout follows the legacy
 // ScriptThread (src/ScriptThread.cpp; PORT CHECKLIST 2 of
@@ -46,6 +48,7 @@ public:
 		Game* game = nullptr;
 		Player* player = nullptr;
 		Localization* loc = nullptr;
+		const Tables* tables = nullptr;  // weapon rows for the GIVELOOT starter ammo
 		Hud* hud = nullptr;
 		GameContext* ctx = nullptr;      // blockInputTime latch (abortMove/message routing live on game/hud)
 		DialogSystem* dialogs = nullptr; // EV_DIALOG target (startDialog / help enqueue)
@@ -109,6 +112,12 @@ private:
 	int evWait(ScriptThread* t, int ms);               // src/ScriptThread.cpp:120-137
 	bool evReturn(ScriptThread* t);                    // src/ScriptThread.cpp:139-153
 	void updateScriptVars();                           // src/Game.cpp:3461-3471 (refreshed slots only)
+
+	// EV_GIVELOOT payload: reads the entry list off the thread, grants every
+	// entry immediately and shows the composed list as a style-4 dialog
+	// (src/ScriptThread.cpp:2121-2222).
+	void composeLootDialog(ScriptThread* t);
+	std::string lootItemName(int cls, int idx) const;  // find(6, cls, idx)->longName, title part
 
 	void push(ScriptThread* t, int v);
 	int pop(ScriptThread* t);

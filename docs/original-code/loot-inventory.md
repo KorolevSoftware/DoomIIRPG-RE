@@ -208,6 +208,214 @@ Different path: `composeLootDialog()` parses `B, n×S`, **grants instantly**
 - EV_DROPMONSTERITEM (35) / EV_DROPITEM (25) place world drops directly
   (`src/ScriptThread.cpp:1023-1057`, `846-860`).
 
+### 3.1 World item spawn & touch trigger
+> Verified 2026-08-29, raw log `docs/research/2026-08-29-world-item-pickup.md`.
+
+**Spawn.** Items have no dedicated loader: `Game::loadMapEntities()` (`src/Game.cpp:329`)
+creates an entity for every map sprite whose tile index resolves to a def
+(`lookup(n6)`, `:404`; `n6 = mapSpriteInfo & 0xFF`, +257 iff bit 0x400000, `:375-378`).
+`eType == 6` (ET_ITEM) is decided purely by the def table — the loader has no item branch.
+- `entity->info = (spriteIndex + 1) & 0xFFFF` (`:428`), `def = lookup` (`:429`),
+  `initspawn()` (`:451`), `mapSprites[S_ENT + sprite] = entIndex` (`:452`), and
+  `linkEntity(x>>6, y>>6)` **only if** `mapSpriteInfo & 0x10000` is clear (`:453-455`) —
+  a hidden item is not in `entityDb` and cannot be touched.
+- `Entity::initspawn()` has **no** ET_ITEM case (`src/Entity.cpp:49-112`): only
+  `name = def->name | 0x400` (`:53`); no `0x20000` bit; `lootSet` deleted (`:103-108`).
+  A world item therefore has `param == 0` (unlike dropped items, where `param` = quantity).
+- Def fields used at pickup: `eSubType` = item class (0 IT_INVENTORY, 1 IT_WEAPON,
+  2 IT_AMMO, 3 IT_FOOD, `src/Enums.h:96-99`), `parm` = index inside the class,
+  `name`/`longName` = message strings, `tileIndex` = sprite art + script arg.
+  **Quantity is never stored in map data** — it is rolled inside `touchedItem()` (§3).
+- Def record (`entities.bin`) = 8 bytes little-endian: `s16 tileIndex, u8 eType,
+  u8 eSubType, u8 parm, u8 name, u8 longName, u8 description`
+  (`src/EntityDef.cpp:35-43`; LE per `src/Resource.cpp:136-140`). `EntityDef::touchMe`
+  is declared but never read from the file. Shipped table: 190 defs, 46 with `eType==6`,
+  **0 with `eType==11`** → the ET_MONSTERBLOCK_ITEM branch of `touched()` is dead code
+  for shipped data. 16 item defs have `tileIndex == 0` (drop-only, reachable via
+  `find(eType,eSubType,parm)`); world-placeable item tiles: 1..15 weapons
+  (`src/Enums.h:649-664`), 85/86/88/89/90 ammo, 107/110-117/119 inventory+food.
+- Placement/scale come from sprite data only: scale 64, Z 32 by default
+  (`src/LoadingManager.cpp:474-481`), then `Z += getHeight(x,y)` (and −32 for z-sprites)
+  in `postProcessSprites` (`src/Render.cpp:2462-2467`); sprite X/Y are 1 byte × 8 units
+  (`src/Resource.cpp:154-156`).
+
+**Draw.** `Render::renderSpriteObject` skips sprites with `mapSpriteInfo & 0x10000`
+(`src/Render.cpp:1501-1503`), takes the frame index from bits 8-15 (`:1511`), and cycles
+frames only when bit `0x80000` is set (`n7 = (n + time/100) % n7`, `:1544-1546`).
+Items have none of the special cases → plain `renderSprite`, **no bob, no idle animation**.
+World weapons (tile 1..12) get frame 2 forced at load: `mapSpriteInfo |= 0x200`
+(`src/Game.cpp:405-407`); `spawnDropItem` does the same for `1 <= tile < 14`
+(`src/Game.cpp:2653-2655`) — ranges differ by one (tiles 13/14, the red sentry bot,
+keep frame 0 when placed on a map).
+
+**Touch trigger.** `Game::touchTile(x, y, b)` (`src/Game.cpp:687-699`) walks the whole
+`entityDb` tile chain (`findMapEntity(x,y)` = `entityDb[(y>>6)*32 + (x>>6)]`,
+`src/Game.cpp:729-737`), caching `nextOnTile` **before** the call because `touched()` may
+unlink, and calls `touched()` on every entity when `b`, else only on ET_ENV_DAMAGE.
+Criterion is pure **tile occupancy** — no radius, no facing, no contents mask.
+Type filtering lives inside `Entity::touched()` (`src/Entity.cpp:118-149`): ET_ITEM /
+ET_MONSTERBLOCK_ITEM → `touchedItem()`, ET_ENV_DAMAGE → damage, everything else false
+(the world entity `entities[0]` and the player copy `entities[1]` are in the chain too).
+- The only pickup-capable call site is `MovementController::finishMovement()` with
+  `b = true` (`src/MovementController.cpp:170`). All other sites pass `false`
+  (`src/PlayingInputHandler.cpp:400,552`, `src/ZoomController.cpp:110`,
+  `src/GameStateRunner.cpp:48`) and thus only apply environmental damage.
+- Order inside a step (`src/MovementController.cpp:160-184`): gotoThread → `executeTile`
+  facing-dir flags (`:168`) → `executeTile` movement flags (`:169`) → `touchTile(...,true)`
+  (`:170`) → `advanceTurn()` (`:183`). So the pickup happens *after* the walk lerp has
+  landed on the tile and *after* that tile's scripts, and costs **no extra turn**.
+  `finishMovement()` runs from the lerp end (`src/MovementController.cpp:509-512`) or from
+  an early input snap (`src/PlayingInputHandler.cpp:45-52`).
+- **Items never block**: `attemptMove` traces with `CONTENTS_PLAYERSOLID = 13501`
+  (`src/MovementController.cpp:326`, `src/Enums.h:29`) = eType bits {0,2,3,4,5,7,10,12,13};
+  bits 6 (ET_ITEM) and 11 (ET_MONSTERBLOCK_ITEM) are clear. `CONTENTS_MONSTERSOLID = 15535`
+  (`src/Enums.h:30`) = bits {0,1,2,3,8,10,11,12,13} *does* include 11 — ET_MONSTERBLOCK_ITEM
+  blocks monsters only. `Game::trace` filters candidates by `mask & (1 << def->eType)`
+  (`src/Game.cpp:221`); the move is taken only if `traceEntity == nullptr`
+  (`src/MovementController.cpp:332-333`).
+- Failure (`touchedItem()` false: inventory/health full, bot already owned) leaves the
+  entity linked and visible, plays no sound and runs no script.
+
+**Removal.** `touchedItem()` ends with `removeEntity(this)` then sound 1054
+(`src/Entity.cpp:276-277`); `touched()` then sets `scriptStateVars[11] = def->tileIndex`
+and runs static func 11 (SCR_ITEM_PICKUP) (`src/Entity.cpp:125-126`), and for dropped
+entities clears the sprite→entity backlink and the def (`:127-130`).
+`Game::removeEntity` (`src/Game.cpp:183-192`): hides the sprite
+(`mapSpriteInfo[sprite] |= 0x10000`, only if `info & 0xFFFF` non-zero), `unlinkEntity` if
+`info & 0x100000`, and `player->facingEntity = nullptr`. `unlinkEntity` splices the chain
+and clears the link bit (`info &= 0xFFEFFFFF`, `src/Game.cpp:70-92`).
+A world item keeps its slot, `def`, sprite id and `param` — only hidden + unlinked
+(restorable via `Entity::restoreBinaryState`, `src/Entity.cpp:1861+`); a dropped item's
+slot is fully recycled for `getFreeDropEnt` (`src/Game.cpp:2612-2622`).
+
+### 3.2 Action-button ("look + Enter") pickup — it is a *script* path, not an entity path
+> Verified 2026-08-30, raw log `docs/research/2026-08-30-action-pickup.md`.
+
+**Headline: `ACTION_FIRE` never calls `touched()` on an item.** The whole `ACTION_FIRE`
+branch (`src/PlayingInputHandler.cpp:189-540`) contains no `touched()`/`touchedItem()` call,
+and its trace mask cannot even return an item. Items on shelves/ledges are picked up because
+the action button runs the **tile script of the tile in front**, and that script executes
+`EV_GIVEITEM` in "touch existing sprite" mode, which calls `Entity::touched()` on the item.
+
+#### 3.2.1 `Player::facingEntity` — what the player "looks at"
+- Computed lazily by `MovementController::checkFacingEntity()` (`src/MovementController.cpp:28-158`),
+  guarded by `if (!canvas->updateFacingEntity) return;` (`:32-34`) and cleared at the end
+  (`:157`). The **only** caller is `Hud::draw` when the top bar repaints and
+  `state == ST_PLAYING` (`src/Hud.cpp:735-740`); the dirty flag is set by movement/turn end
+  (`src/MovementController.cpp:180,308`), `setState(ST_PLAYING)` (`src/Canvas.cpp:1075`),
+  entity death/removal, scripts, etc. So it is *event-driven*, not per-frame.
+- Ray: `game->trace(dest + view*28>>14, ..., dest + view*6>>8, nullptr, 21741, 2, isZoomedIn)`
+  (`src/MovementController.cpp:36-40`). View matrix is 14.14 (`16384 = 1.0`), so the ray starts
+  **28 units** in front of the player and ends `16384*6/256 = 384` units = **6 tiles** ahead;
+  trace radius (`n5`) = 2 units.
+- Mask `21741` = bits {0,2,3,5,6,7,10,12,14} = WORLD, MONSTER, NPC, DOOR, **ITEM(6)**, DECOR,
+  ATTACK_INTERACTIVE, SPRITEWALL, DECOR_NOCLIP. `ET_MONSTERBLOCK_ITEM` (11) is *not* in it.
+  → a world item can be the facing entity and the HUD prints its name
+  (`src/Hud.cpp:284-320`), which is why pickup *feels* like "look at it and press Enter".
+- Candidate = nearest hit (`traceEntities` bubble-sorted by fraction, `src/Game.cpp:311-325`),
+  with a fix-up loop that prefers a monster / decor / interactive behind a spritewall
+  (`src/MovementController.cpp:41-86`).
+- Distance clamp: `facingEntity = nullptr` if `def->eType != 2` (monster) and
+  `distFrom(viewX,viewY) > tileDistances[2]` (`:90-93`). `Entity::distFrom` is
+  `max(dx*dx, dy*dy)` (`src/Entity.cpp:1155-1158`) and `tileDistances[j] = (64*(j+1))^2`
+  (`src/Combat.cpp:42`) → non-monsters must be within **3 tiles** (Chebyshev, squared).
+- **No height test**: `Game::trace` only filters by Z when its last argument `b` is true,
+  i.e. only while zoomed in (`src/Game.cpp:283-292`; the entity is otherwise added by the
+  pure-2D `CapsuleToCircleTrace` with radius parameter 625, `:277`). A shelf item at
+  `Z = floor+64` is therefore just as "faceable" as one on the floor.
+- Extra: facing an adjacent (`<= tileDistances[0]`, i.e. 1 tile) `ET_ITEM` with
+  `eSubType == 3` (IT_FOOD) fires `showHelp(4)` (`src/MovementController.cpp:115-117`).
+
+#### 3.2.2 `ACTION_FIRE` chain (`src/PlayingInputHandler.cpp:189-540`), in order
+1. `lootingSystem.lootSource = facingEntity->name` iff facing an `eType == 10` object, else −1 (`:190-195`).
+2. Weapon trace: `n5 = 13997` (`CONTENTS_WEAPONSOLID`, `src/Enums.h:32`) `|= 0x4100` for
+   weapon 2 (chainsaw-family/`weapon2==2`), `|= 0x10` and range `n7 = 1` tile for melee
+   (`CheckWeaponMask(weapon,2)`), otherwise `n7 = 6` tiles (`:197-221`).
+   **13997 has neither bit 6 (ITEM) nor bit 11 (MONSTERBLOCK_ITEM)** → the fire trace can
+   never return a world item, no matter the distance or height.
+3. Selection loop over `traceEntities` (`:223-368`): world/spritewall/playerclip stop it;
+   corpses (`eType 9`) at exactly `tileDistances[0]` set the loot flag `n6`; `eType 13`
+   → `entity2`; NPCs, doors, env-damage, decor tile 0x95, etc.
+4. `if (n6 != 0) { setState(ST_LOOTING); poolLoot(...); return; }` (`:374-378`) — corpse loot
+   short-circuits everything below (§1.5).
+5. Range cull for `eType 10`, `entity2` substitution, `eType 10 / eSubType 2` grab (`:379-393`).
+6. **Tile script of the tile in front** (`:395-404`):
+   ```
+   int flagForFacingDir = canvas->flagForFacingDir(4);
+   int n13 = canvas->destX + canvas->viewStepX >> 6;
+   int n14 = canvas->destY + canvas->viewStepY >> 6;
+   if (app->game->executeTile(n13, n14, flagForFacingDir, true)) {
+       if (!app->game->skipAdvanceTurn && canvas->state == Canvas::ST_PLAYING) {
+           app->game->touchTile(canvas->destX, canvas->destY, false);
+           app->game->snapMonsters(true);
+           app->game->advanceTurn();
+       }
+   }
+   ```
+   `viewStep{X,Y} ∈ {0,±64}` (`src/Canvas.h:108`) → exactly the adjacent tile (8 directions).
+   `flagForFacingDir(4)` = `4 | 1 << (((destAngle+512) & 0x3FF) >> 7) + 4`
+   (`src/MovementController.cpp:214-224`): exec-type bit **4 = TRIGGER** plus the direction bit
+   for the *reversed* facing (i.e. "player stands to the S of me"). Bit 4 is used **only** here;
+   `finishMovement`/turn use bit 8 = FACE on the player's own tile (`:168,307,508`).
+7. Only if no script ran: waterspout / door (`performDoorEvent` + `advanceTurn`, `:445-459`),
+   secret spritewall, wall push, zoom, `fireWeapon` (`:405-540`).
+
+`touchTile(destX, destY, false)` at `:400` is **not** a pickup: with `b == false`
+`Game::touchTile` only touches `ET_ENV_DAMAGE` entities (`src/Game.cpp:687-698`).
+The same `false` is used by `GameStateRunner.cpp:48`, `ZoomController.cpp:110`,
+`PlayingInputHandler.cpp:552` (pass turn); only `MovementController.cpp:170` passes `true`.
+
+#### 3.2.3 The actual grant: `EV_GIVEITEM` mode 0
+`EV_GIVEITEM` (opcode 33, `B,B,b`) with the third operand `== 0` resolves
+`sprite = (B1 << 8) | B2`, reads `mapSprites[S_ENT + sprite]` (error 16 if −1) and calls
+`entities[n].touched()` (`src/ScriptThread.cpp:969-980`) — i.e. the *identical* grant path as
+walking over the item (§3), including messages, sound 1054, `foundLoot` and `removeEntity`.
+Failure (inventory full) sets `n2 = 1` → `scriptStateVars[7] = n2` after every opcode
+(`src/ScriptThread.cpp:2041`), which is how the shipped scripts test success (`v7 == 0`).
+
+Turn cost: an action pickup **costs a turn** (`advanceTurn` at `:402`) unless the tile event
+carries flag `0x40000` (→ `skipAdvanceTurn`, `src/ScriptThread.cpp:76-79`) or the script
+changed the state (dialog/camera). A walk-over pickup costs no *extra* turn — the move itself
+already ends in `advanceTurn` (`src/MovementController.cpp:178-184`).
+
+#### 3.2.4 What a "shelf" is in the data (map00, verified)
+Map sprites are split into `numNormalSprites` + `numZSprites`; only the second group stores a
+per-sprite Z byte (`src/LoadingManager.cpp:379-381,527`), and `postProcessSprites` adds the
+floor height and subtracts 32 for z-sprites (`src/Render.cpp:2462-2467`). Normal sprites get
+Z = 32 (`src/LoadingManager.cpp:474-481`). So a "shelf" item is simply a **z-sprite with a raw
+Z byte > 64** (raw 96 → 64 units above the floor); nothing else marks it. There is no separate
+flag, no `touchMe`, and no shelf entity — in map00 the item sprites are alone on their tile.
+
+map00 evidence (tool: `tools/disasm_map_scripts.py tmp_map00.bin`, sprite table via
+`tools/map_to_obj.py`):
+
+| tile | event (trigger) | script | sprites on tile (raw Z) |
+|---|---|---|---|
+| 12,17 | `EVT 34` TRIGGER, all dirs | `v72==0 ? GIVEITEM sprite 245 : GIVEITEM sprite 244` + `EVENTOP disable` | 245 ammo (Z 64), 244 inventory parm 11 (Z 96) |
+| 13,15 | `EVT 22` TRIGGER, all dirs | `GIVEITEM sprite 233` | 233 ammo (Z 96) |
+| 8,24 | `EVT 103` TRIGGER, all dirs | `v71==0 ? sprite 237 : sprite 238` | 237 (Z 96), 238 (Z 64) |
+| 25,17 | `EVT 37` TRIGGER, all dirs | `GIVEITEM sprite 235` | 235 ammo (Z 92) + object sprite 114 |
+
+Each script advances its state var only when `v7 == 0` (previous op succeeded), so a full
+inventory does not consume the shelf. None of these events carries `0x40000`, so each press
+costs a turn. Floor items (map00 sprites 1, 4, 35, 64, 110, 129) are *normal* sprites with
+Z = 32 and have **no** tile event — they are walk-over only.
+
+#### 3.2.5 Double pickup
+The two paths do not know about each other:
+- Walk-over → `touchTile(...,true)` → `touched()` → `removeEntity()` hides + **unlinks** the
+  entity (`src/Game.cpp:183-192`), so `findMapEntity` can never return it again.
+- Script → `mapSprites[S_ENT + sprite]` **bypasses the tile chain**, and neither `touched()`
+  nor `touchedItem()` checks the hidden bit `0x10000` (`src/Entity.cpp:118-278`).
+
+Consequently, if an item that a script also gives sits on a walkable tile, picking it up by
+walking and *then* triggering the script grants it a second time. The shipped data avoids this
+with script state vars (`v71`/`v72` above) — which track *presses*, not the item — and by
+placing the shelf items in wall niches. In map00 the niche at (12,17) is in fact walkable from
+(12,18) (tile flag 0 = not solid, `tile_flags` bit 0x1 = solid world, `src/Game.cpp:497-503`),
+so the double grant is reproducible there. Port note: reproducing the original faithfully means
+*not* adding an "already taken" guard inside `touched()`.
+
 ## 4. Inventory model
 
 ### 4.1 Storage
@@ -455,6 +663,105 @@ Current rewrite auto-grants and never shows a list. Required changes:
    both markers distinct (`src/LoothingSystem.cpp:163-179`) — matters for render sparkle
    (`docs/original-code/loot-inventory.md` §1.5) and re-open prevention.
 7. Minor: sound 1055 currently a stderr stub (`:789`); move playback to crouch-settle latch.
+
+## 7. Containers — the "crate" (`ET_ATTACK_INTERACTIVE` / `INTERACT_CRATE`)
+> Verified 2026-08-30, raw log `docs/research/2026-08-30-containers.md`.
+
+### 7.1 Identity
+One single def in `entities.bin`: `tileIndex=152` (`TILENUM_OBJ_CRATE`, `src/Enums.h:765`),
+`eType=10 ET_ATTACK_INTERACTIVE`, `eSubType=2 INTERACT_CRATE`, `parm=0`, `name=136`
+(def record #158; layout `src/EntityDef.cpp:35-43`). The other eType-10 defs are **not**
+containers: 121/135 table+chair (`INTERACT_FURNITURE`, parm 1), 178 glass
+(`INTERACT_BARRICADE`, parm 2), 123/127 toilet+sink (`INTERACT_PICKUP`, parm 3 — holy-water
+refill, `src/PlayingInputHandler.cpp:405-430`). Subtype enum `src/Enums.h:54-57`.
+Crates get `info |= 0x20000` (damageable) at spawn and are *excluded* from the
+"destroyable object" counter (`src/Entity.cpp:87-95`, `src/Game.cpp:448-449`).
+
+### 7.2 Why they block
+Mask tests are `mask & (1 << eType)` (`src/Game.cpp:745`). `CONTENTS_PLAYERSOLID = 13501`
+(`src/Enums.h:29`) = bits {0,2,3,4,5,7,10,12,13} = WORLD, MONSTER, NPC, PLAYERCLIP, DOOR,
+DECOR, **ATTACK_INTERACTIVE**, SPRITEWALL, NONOBSTRUCTING_SPRITEWALL. Movement traces with
+literal 13501 (`src/MovementController.cpp:326,333`). A crate is linked into `entityDb` at map
+load, so bit 10 blocks the step; after opening it is unlinked and the tile becomes walkable.
+
+### 7.3 Opening (ACTION_FIRE) — no `use()`/`touched()` anywhere
+Inline in the fire handler (`src/PlayingInputHandler.cpp`):
+1. `:189-195` — if the faced entity is eType 10, `lootingSystem.lootSource = facingEntity->name`
+   (this is what names the loot dialog later);
+2. `:200-247` — weapon trace (mask 13997) picks the crate as `entity`;
+3. `:387-393` — if `eSubType == 2` and `dist2 <= tileDistances[0]` (=4096, one tile,
+   `src/Combat.cpp:42`): `entity->param = app->upTimeMs + 200;` then
+   `Game::unlinkEntity(entity)` (clears `info & 0x100000`, `src/Game.cpp:92`) → animation armed
+   and the crate stops being solid / stops being a facing target;
+4. `:395-398` — `executeTile(destX+viewStepX>>6, destY+viewStepY>>6, flagForFacingDir(4), true)`
+   runs the crate tile's script (TRIGGER + reversed facing-direction bit,
+   `src/MovementController.cpp:214-223`); a script that runs consumes the action, so the
+   weapon is never fired at the crate.
+There is no `use`, `activate` or `touched` call for crates; state change = `param` + unlink.
+
+### 7.4 Opening animation
+Driven inside the renderer, not by a lerp/animator (`src/Render.cpp:1607-1617`):
+frame = `(mapSpriteInfo >> 8) & 0xFF` (`:1508`); while `param != 0`, every time
+`app->time > param` → `++frame; param = time + 200`; at `frame > 3` → `param = 0; frame = 3`.
+So **4 frames 0→3, 200 ms each (~600 ms), latched open at frame 3**. `app->time` is the frame
+snapshot of `upTimeMs` (`src/Canvas.cpp:749-751`) — same clock that armed `param`.
+This is unrelated to the door mechanism, which lerps `mapSprites[S_SCALEFACTOR]`
+(`docs/original-code/doors.md`); crates never touch the scale factor and never hide the sprite.
+
+### 7.5 Loot — script route, not the corpse route
+Crates have **no lootSet**: `initspawn` frees the lootSet of anything that is not
+`ET_MONSTER`/`ET_CORPSE` (`src/Entity.cpp:100-108`). `LootingSystem::poolLoot` only walks
+`eType == 9` (`src/LootingSystem.cpp:163`) and `ST_LOOTING` is only entered from the eType-9 arm
+of the fire handler (`src/PlayingInputHandler.cpp:283-336,373-378`), so **the loot-list UI never
+appears for a crate**. The content lives in the tile script as `EV_GIVELOOT` (§2.5): instant
+`player->give(...)` + dialog, header string 129 with the crate's name taken from `lootSource`
+(else generic 130) (`src/ScriptThread.cpp:2121-2130`). Typical crate script body:
+`EVENTOP disable self; PLAYSOUND 1054; GIVELOOT [...]; RETURN`.
+In map00 all 10 tile-152 sprites map 1:1 onto such events
+(sprites 69/43/24/13/12/58/133/60/128/134 → EVT 0/12/18/40/91/100/126/130/137/138,
+IPs 1796/1705/1834/1686/1722/1815/1756/1851/1739/1779; verified with
+`tools/disasm_map_scripts.py` + sprite-table parse of `tmp_map00.bin`).
+
+### 7.6 "Already searched"
+Two persisted marks: (a) the script disables its own event — `EV_EVENTOP` sets `0x80000` in
+`tileEvents[i*2+1]` (`src/ScriptThread.cpp:808-814`) and `executeTile` skips such events
+(`src/ScriptThread.cpp:75`); (b) the entity stays unlinked at sprite frame 3. Save/load:
+a crate counts as a binary entity only while still linked (`info & 0x100000`,
+`src/Entity.cpp:1423-1436`); `restoreBinaryState` re-applies the opened state as
+frame `(eSubType == 2) ? 3 : 1` + `unlinkEntity` (`src/Entity.cpp:1877-1893`).
+
+### 7.7 Damage interactions (why you cannot shoot a crate open)
+`Combat::calcHit` gates eType-10 targets on `tableCombatMasks[def->parm] & (1 << weapon)`
+(`src/Combat.cpp:876-882`); table 4 of `tables.bin` (`src/App.cpp:393`) is
+`{0x00000000, 0x00000002, 0xFFFFFFFB, 0xFFFFFFFB}` → crate (`parm=0`) mask 0 = **immune to every
+weapon**; furniture (parm 1) only weapon 1; glass/pickup (parm 2/3) all weapons except index 2.
+Splash damage bypasses `calcHit`: `hurtEntityAt` searches with mask 30383 (bit 10 set) and calls
+`pain()`+`died()` (`src/Combat.cpp:1085-1097,1120,1188-1192`); `Entity::pain` for a crate spawns
+grey debris particles and `removeEntity` + `mapSpriteInfo |= 0x10000` (sprite hidden)
+(`src/Entity.cpp:371-390`), and the loot script is *not* re-triggered because the explosion
+flags `0x4004` require matching `0x7000` attack bits the crate events do not have
+(`src/Combat.cpp:1100-1105`, gate `src/ScriptThread.cpp:75`).
+
+### 7.8 HUD / prompt
+Faced crate → action icon row 0 of `imgActions` (the same "use/hand" icon as `ET_ITEM`;
+other eType-10 subtypes get row 1 "attack"), `src/Hud.cpp:354-360,385`. At ≤1 tile the tutorial
+hint `showHelp(3)` fires (`src/MovementController.cpp:98-105`).
+
+### 7.9 Containers vs. scripted "search objects"
+- **Entity container** = a sprite with tile 152 → solid, animated, unlinked on open, loot from
+  its tile script.
+- **Scripted search object** = no container entity at all; the tile event does the work. map00
+  EVT 148 @(20,28) is the reference case: `NEXTSTATE; EVENTOP disable; HIDE sprite=191;
+  HIDE sprite=192; PLAYSOUND 1054; GIVELOOT 52 credits`, where sprites 191/192 are tile 114 =
+  def `(6,0,23)` = plain `ET_ITEM` credits. The earlier note in §6 listing "search-object events
+  583/830/916" is refined here: **583 and 830 are crates** (sprites 13 and 133), only **916** is
+  a pure script.
+- **Usable decor** (`ET_DECOR`, parm 1 = `DECOR_PARAM_USE`, parm 2 = `USE_ONCE`,
+  `src/Enums.h:52-53`; e.g. tiles 125/133/147/150/153/154/173/179-183/201) is a third family:
+  the fire handler never selects decor as a target (except practice target 149,
+  `src/PlayingInputHandler.cpp:346-352`), everything happens in the tile script; the HUD "used"
+  test for parm 2 is sprite frame `== 0` (`src/Hud.cpp:326-335`), i.e. scripts flip the frame
+  with `EV_ENTITY_FRAME` instead of the crate's built-in animator.
 
 ## Port checklist (minimal viable loop)
 

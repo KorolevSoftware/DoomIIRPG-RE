@@ -13,8 +13,11 @@
 #include "domain/game/SpriteLerps.h"
 #include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
+#include "domain/game/WeaponTable.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
+#include "io/Tables.h"
+#include "text/Text.h"
 #include "ui/Hud.h"
 
 namespace newcore {
@@ -319,6 +322,111 @@ bool ScriptVM::isInputBlockedByScript() const {
 	return false;
 }
 
+// ---- GIVELOOT ----
+
+// find(6, cls, idx)->longName as the ingame-text title, exactly as the corpse
+// path resolves item names (new_src/domain/game/CorpseLoot.cpp:77-82).
+std::string ScriptVM::lootItemName(int cls, int idx) const {
+	const EntityDef* d = env_.defs != nullptr ? env_.defs->find(Enums::ET_ITEM, cls, idx) : nullptr;
+	if (d == nullptr || env_.loc == nullptr) return {};
+	return Localization::titleOf(env_.loc->get(kTextIngame, d->longName));
+}
+
+// Port of ScriptThread::composeLootDialog (src/ScriptThread.cpp:2121-2222).
+// The grant is immediate; the dialog only reports it. throwAwayLoot has no
+// counterpart in the rewrite (no discard threads), so only the b == false
+// side of every `if (!throwAwayLoot)` is ported.
+void ScriptVM::composeLootDialog(ScriptThread* t) {
+	const Localization& loc = *env_.loc;
+	Player& player = *env_.player;
+	Text large;
+
+	// Header (:2122-2130). composeTextField APPENDS the container's name into
+	// the buffer and string 129 (" Con-tents:|") follows it — it carries no
+	// %NN slot, so the name is not a text arg. Entity names are "Title|desc"
+	// fields; titleOf trims the description, as ItemPickup does.
+	if (env_.game->lootSource != -1) {
+		large.append(Localization::titleOf(loc.get(kTextIngame, env_.game->lootSource)));
+		large.append(loc.get(kTextMain, 129));
+		env_.game->lootSource = -1;
+	} else {
+		large.append(loc.get(kTextMain, 130));     // "You Got:|"
+	}
+	env_.game->showingLoot = true;                 // (:2131-2134); ST_DIALOG is set by startDialogText below
+
+	int numItems = 0;                              // legacy n, foundLoot amount
+	int credits = 0;                               // legacy n2
+	const int count = readUByte(t);
+	for (int i = 0; i < count; ++i) {
+		const int v = readUShort(t);
+		const int cls = (v >> 12) & 0xF;
+		if (cls == 6) {                            // flavour line, raw map string (:2141-2146)
+			large.append('\x88');
+			large.append(loc.get(kTextMap, v & 0xFFF));
+			large.append("|");
+			continue;
+		}
+		if (cls == 5) {                            // updateQuests (:2147-2149) not ported
+			std::fprintf(stderr, "[script] GIVELOOT quest=%d (updateQuests not ported)\n", v & 0xFFF);
+			continue;
+		}
+		const int idx = (v & 0xFC0) >> 6;
+		const int cnt = v & 0x3F;
+		++numItems;                                // counted before the credit folds (:2153)
+		if (cls == 0 && idx == 24) { credits += cnt; continue; }        // (:2155-2163)
+		if (cls == 0 && idx == 25) { credits += cnt * 100; continue; }
+		switch (cls) {
+		case 0:
+		case 3: {                                  // (:2168-2176)
+			player.give(cls, idx, cnt, false);
+			std::string line = loc.get(kTextMain, 90);
+			std::string args[3] = { "\x88", std::to_string(cnt), lootItemName(cls, idx) };
+			composeArgs(line, args, 3);
+			large.append(line);
+			break;
+		}
+		case 1: {                                  // weapon (:2177-2187)
+			player.give(1, idx, cnt, true);
+			if (env_.tables != nullptr && env_.tables->weaponDef(idx).ammoUsage != 0) {
+				player.give(2, env_.tables->weaponDef(idx).ammoType, 10, true);
+			}
+			std::string line = loc.get(kTextMain, 91);
+			std::string args[2] = { "\x88", lootItemName(1, idx) };
+			composeArgs(line, args, 2);
+			large.append(line);
+			break;
+		}
+		case 2: {                                  // ammo, skipped on Nightmare (:2189-2199)
+			if (env_.game->difficulty() == 4) break;
+			player.give(2, idx, cnt, false);
+			std::string line = loc.get(kTextMain, 90);
+			std::string args[3] = { "\x88", std::to_string(cnt), lootItemName(2, idx) };
+			composeArgs(line, args, 3);
+			large.append(line);
+			break;
+		}
+		default:
+			std::fprintf(stderr, "[script] GIVELOOT unknown class %d (entry %04X)\n", cls, v);
+			break;
+		}
+	}
+	if (credits != 0) {                            // (:2201-2209)
+		player.give(0, 24, credits, false);
+		std::string line = loc.get(kTextMain, 90);
+		std::string args[3] = { "\x88", std::to_string(credits),
+		                        Localization::titleOf(loc.get(kTextIngame, 157)) };
+		composeArgs(line, args, 3);
+		large.append(line);
+	}
+	std::fprintf(stderr, "[script] GIVELOOT entries=%d items=%d credits=%d\n", count, numItems, credits);
+
+	if (large.length() > 0) large.setLength(large.length() - 1);  // drop the trailing '|' (:2212)
+	env_.dialogs->startDialogText(t, large, 4, 0, true);          // (:2213)
+	// foundLoot(x, y, z, n) (:2223) is only the run-stat counter
+	// (src/Game.cpp:3541-3543); the position overload has no counterpart here.
+	env_.game->foundLoot(-1, numItems);
+}
+
 // ---- dispatch loop ----
 
 uint32_t ScriptVM::run(ScriptThread* t) {
@@ -555,7 +663,21 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int qtyByte = readUByte(t);
 			int8_t mode = readByte(t);
 			if (mode == 0) {
-				std::fprintf(stderr, "[script] GIVEITEM sprite-touch give unsupported\n");
+				// Sprite-touch give (src/ScriptThread.cpp:970-980): in this mode
+				// the two operand bytes are a big-endian SPRITE index, not a def
+				// id and a quantity.
+				int sprite = (defId << 8) | qtyByte;             // :971
+				Entity* ent = env_.game->db.findEntityBySprite(sprite);  // mapSprites[S_ENT + i], :972
+				if (ent == nullptr) {
+					// Legacy Error(..., 16) is fatal; we log and fail the opcode.
+					std::fprintf(stderr, "[script] GIVEITEM sprite=%d has no entity (Err16)\n", sprite);
+					n2 = 1;
+					break;
+				}
+				bool ok = env_.game->items.touched(ent);         // :976-979
+				std::fprintf(stderr, "[script] GIVEITEM sprite=%d def=%d -> %s\n",
+					sprite, ent->def ? ent->def->tileIndex : -1, ok ? "ok" : "FAIL");
+				if (!ok) n2 = 1;
 				break;
 			}
 			const EntityDef* def = env_.defs->lookup(defId);   // BY tileIndex (src/EntityDef.cpp:76-83)
@@ -1095,9 +1217,19 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		}
 
 		case Enums::EV_GIVELOOT: {
-			int count = readUByte(t);
-			for (int i = 0; i < count; ++i) readUShort(t);
-			std::fprintf(stderr, "[script] GIVELOOT entries=%d skipped (no loot UI)\n", count);
+			// src/ScriptThread.cpp:1135-1150. A loot dialog already on screen
+			// re-parks the thread WITHOUT reading the operands, so the opcode
+			// runs again from the top on the next resume (IP untouched by the
+			// early return, which also skips the ++IP at the loop tail).
+			if (env_.game->showingLoot) {
+				t->unpauseTime = 1;
+				return 2;
+			}
+			composeLootDialog(t);
+			env_.game->skipAdvanceTurn = true;                 // (:1143-1144)
+			env_.game->queueAdvanceTurn = false;
+			t->unpauseTime = -1;                               // external resume on dialog close (:1145)
+			n = 2;
 			break;
 		}
 
