@@ -1626,13 +1626,28 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 			leafDepth_.push_back(computeDepth(i));
 		}
 		// Sort descending by depth (larger = farther, drawn first).
-		for (size_t a = 0; a < leafSprites_.size(); ++a) {
-			for (size_t b = a + 1; b < leafSprites_.size(); ++b) {
-				if (leafDepth_[b] > leafDepth_[a]) {
-					std::swap(leafSprites_[a], leafSprites_[b]);
-					std::swap(leafDepth_[a], leafDepth_[b]);
-				}
+		// MUST STAY STABLE - do not replace with std::sort or a swap-based
+		// selection/bubble sort. The legacy insert condition is `n3 >= head`
+		// (src/Render.cpp:880-893) on a chain that is built by descending
+		// sprite index (prefix insertion, src/Render.cpp:2396-2397 with the
+		// i=0..N link loop at :2494) and walked head->tail (:1757-1759), which
+		// means EQUAL keys come out in ASCENDING SPRITE INDEX. We collect
+		// leafSprites_ in ascending index above, so stability alone reproduces
+		// that rule; it also keeps split-rescued sprites after the leaf's own
+		// ones on a tie, as legacy addNodeSprites does (:913-923). Insertion
+		// sort with a strict `<` shift condition never reorders equal keys and
+		// moves both parallel arrays in lockstep.
+		for (size_t a = 1; a < leafSprites_.size(); ++a) {
+			const int sprite = leafSprites_[a];
+			const int depth = leafDepth_[a];
+			size_t b = a;
+			while (b > 0 && leafDepth_[b - 1] < depth) {
+				leafSprites_[b] = leafSprites_[b - 1];
+				leafDepth_[b] = leafDepth_[b - 1];
+				--b;
 			}
+			leafSprites_[b] = sprite;
+			leafDepth_[b] = depth;
 		}
 		for (int i : leafSprites_) drawSprite(map, media, camera, i, charClass);
 	}
