@@ -42,6 +42,13 @@ bool GameLoop::run(AppContext& context) {
 		if (ev.key.keysym.scancode == SDL_SCANCODE_K) {
 			ctx.debugGiveKeycards(); // PHASE5 DEBUG (removable)
 		}
+		// DEBUG (rewrite-only, removable): B flips the player coordinate
+		// readout. B is one of the reserved-unmapped keys (AVK_BOTDISCARD,
+		// src/Input.cpp:95 — the rewrite has no bots), so nothing is taken
+		// away from the reference keymap (UiInputCollector.cpp:103-106).
+		if (ev.key.keysym.scancode == SDL_SCANCODE_B && ev.key.repeat == 0) {
+			ctx.debugToggleCoords();
+		}
 		const Action a = collector.keyAction(ev);
 		if (a != Action::None) {
 			ctx.queueAction(a);

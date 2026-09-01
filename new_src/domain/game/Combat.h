@@ -73,6 +73,9 @@ public:
 	int worldDist = 0, tileDist = 0;
 	int playerMissRepetition = 0, monsterMissRepetition = 0;
 	bool shotsFired = false;           // sight-wake suppression flag for Stage 2
+	// Degenerate-projectile state (src/Combat.h:99,105 exploded/missileAnim).
+	bool exploded = false;
+	int missileAnim = 0;
 	int tileDistances[kMaxTileDistances] = {};
 	std::vector<CombatEntity> monsterTemplates;   // 51 entries (src/Combat.cpp:37-39)
 	int loadMapID = 1;                 // miss-guard gate (b||mapID<8||tileDist>1); map00 => <8
@@ -90,6 +93,15 @@ public:
 
 	// Hitscan impact application (src/Combat.cpp:885-946 subset).
 	void explodeOnMonster();
+
+	// Projectile launch (src/Combat.cpp:1433-1600). Only the default: arm is
+	// implemented (ADR 0017): PROJTYPE -1 and 0 allocate no missile and set
+	// exploded = true, so updateProjectile applies the hit in the same frame.
+	void launchProjectile();
+
+	// Missile stepping + the exploded dispatch tail (src/Combat.cpp:1249-1431).
+	// Today only the tail exists; the missile loop arrives with group G5.
+	void updateProjectile();
 
 	static int getWeaponTileNum(int n);       // src/Combat.cpp:1766-1784
 	short getWeaponWeakness(int w, int sub, int parm) const;  // src/Combat.cpp:29-31

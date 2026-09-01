@@ -82,6 +82,25 @@ public:
 	// here, included only in the .cpp (no header cycle). Set after construction.
 	void setVM(ScriptVM* vm) { vm_ = vm; }
 
+	// ---- Damage / death dispatch (ADR 0018) ----
+
+	// Twins of the legacy entity methods, which switch on eType
+	// (src/Entity.cpp:280-393 / :424-521). Game is the only module that
+	// reaches every arm's owner, so the switch lives here; the monster arms
+	// stay in MonsterSystem.
+	bool entityPain(Entity* e, int damage);
+	void entityDied(Entity* e, bool giveXP);
+
+	// ET_ATTACK_INTERACTIVE arms (src/Entity.cpp:371-391 / :437-447). Props
+	// carry no HP: any landed hit destroys them outright.
+	bool painProp(Entity* e);
+	void diedProp(Entity* e);
+
+	// Toilet/sink -> water spout (src/ArmorRepairSystem.cpp:56-63, forwarded
+	// from src/Canvas.cpp:1615). Public because the future "pull it off the
+	// wall" action (src/PlayingInputHandler.cpp:405-431) shares it.
+	void turnEntityIntoWaterSpout(Entity* e);
+
 	// ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
 
 	// Cross-subsystem wiring, not a forwarder: kill-XP bridges live on
@@ -109,7 +128,8 @@ public:
 	// naming the container the loot came from, -1 = generic header.
 	int lootSource = -1;
 	bool showingLoot = false;       // a GIVELOOT dialog is on screen; cleared by DialogSystem::closeDialog (src/DialogSystem.cpp:526)
-	int numDestroyableObj = 0;      // map-completion stat (src/Game.cpp:448-450)
+	int numDestroyableObj = 0;      // map-completion stat: props spawned (src/Game.cpp:448-450)
+	int destroyedObj = 0;           // props destroyed so far (src/Game.cpp:3545-3547)
 
 	Combat combat;                  // peer subsystem (ADR 0008)
 	EntityDb db;                    // peer subsystem (spec §P2-GF); wired in loadEntities

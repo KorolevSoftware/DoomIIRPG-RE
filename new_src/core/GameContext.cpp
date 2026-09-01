@@ -474,6 +474,13 @@ void GameContext::debugGiveKeycards() {
 		sys_.player->inventory[19], sys_.player->inventory[20]);
 }
 
+void GameContext::debugToggleCoords() {
+	// DEBUG (rewrite-only, removable): the coordinate readout is ours, no
+	// legacy counterpart exists.
+	if (sys_.hud == nullptr) return;
+	sys_.hud->toggleDebugPosition();
+}
+
 // ---- HUD view model (spec 2026-08-27-ui-layer §4.1) ----
 
 namespace {
@@ -778,6 +785,14 @@ void GameContext::render(AppContext& app) {
 
 	// Messages overlay while cockpit/HUD stay hidden.
 	sys_.hud->drawMessages(g, *sys_.font);
+
+	// DEBUG (rewrite-only, not a port): player coordinate readout, B toggles
+	// it (GameLoop.cpp). view* is the interpolated actual position, so the
+	// numbers track the walk animation instead of snapping to the step target.
+	if (gameplayView) {
+		sys_.hud->drawDebugPosition(g, *sys_.font, sys_.player->viewX,
+			sys_.player->viewY, sys_.player->viewAngle);
+	}
 
 	// Dialog box overlay (legacy backPaint -> dialogState,
 	// src/Canvas.cpp:447-449), now split into the producer's model and the

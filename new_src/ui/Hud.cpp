@@ -60,6 +60,37 @@ void Hud::drawOverlay(Graphics2D& g, int cinX, int cinY, int cinW) {
 		Graphics2D::kAnchorTop | Graphics2D::kAnchorRight, 4);
 }
 
+// DEBUG POSITION OVERLAY — REWRITE-ONLY, NOT A PORT OF ANYTHING IN src/.
+// Do not go looking for a legacy original: the reference build has no such
+// readout. It only exists so acceptance testing can talk in tile coordinates.
+//
+// Sits at the bottom-left of the 3D band (rows 42..255): the top strip holds
+// the status bar / monster health, the top-center holds bubble text and
+// cinematic titles, the center message box starts at y=40, and the widgets
+// live below y=256 — that corner is the one nothing else claims.
+void Hud::drawDebugPosition(Graphics2D& g, const Font& font,
+	int viewX, int viewY, int viewAngle) {
+	if (!debugPosition_) return;
+
+	// Tile = 64 canvas units, exactly the >>6 every gameplay call site uses
+	// (e.g. PlayerActions.cpp:86); direction index is the game-logic one from
+	// flagForFacingDir, ((angle & 0x3FF) >> 7) -> 0..7 (PlayerActions.cpp:93).
+	// The angle itself is shown raw-masked in legacy units (1024 = 360 deg)
+	// because that is the number the code and the scripts speak in.
+	const int angle = viewAngle & 0x3FF;
+	Text line;
+	line.append("tile ").append(viewX >> 6).append(',').append(viewY >> 6);
+	line.append("  xy ").append(viewX).append(',').append(viewY);
+	line.append("  dir ").append(angle >> 7);
+	line.append("  ang ").append(angle);
+
+	const int x = 3;
+	const int y = 238;   // 16px line resting just above the bottom panel
+	const int w = line.getStringWidth() + 4;
+	g.fillRect(x - 2, y - 1, w, Font::kGlyphH + 1, 0, 0, 0, 0xB0);
+	g.drawString(font, line, x, y);
+}
+
 // Legacy feeds app->nextByte() (an LCG over the save buffer) into the shake
 // offsets (src/MovementController.cpp:381-383); a local LCG stands in here.
 static uint8_t shakeNextByte(uint32_t& s) {

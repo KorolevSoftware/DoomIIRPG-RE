@@ -90,6 +90,10 @@ public:
 	// PHASE5 DEBUG (removable): grants both keycards without the loot system.
 	void debugGiveKeycards();
 
+	// DEBUG (rewrite-only, removable): flips the player coordinate readout
+	// drawn by Hud::drawDebugPosition. Bound to B in GameLoop.cpp.
+	void debugToggleCoords();
+
 	// ---- scripted cinematics (cutscenes-camera.md §1-§3) ----
 	// The cutscene clock lives in its own module (spec
 	// 2026-08-26-decomposition §P1-G2); the VM reaches it through here.

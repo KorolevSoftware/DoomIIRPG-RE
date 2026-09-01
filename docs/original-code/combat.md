@@ -216,8 +216,10 @@ for the flash (currently a plain alpha blit), BRIGHTREDSHIFT damage tint.
   (`:173-216`).
 * Damage `CombatEntity::calcDamage` (`src/CombatEntity.cpp:300-378`): base
   STRMIN..STRMAX of `weapons[w*9+{0,1}]`; crit → ×2 STRMAX, far → STRMAX/2;
-  difficulty 4 −25% first; strength bonus gated by CR 0x20 (set when hitting a
-  MONSTER with non-chainsaw, `src/Combat.cpp:223-226`); weakness =
+  difficulty 4 −25% first; strength bonus applied only when CR 0x20 is **clear**
+  (`src/CombatEntity.cpp:326-332`, player gets `3*(strPct*dmg>>8)`), and 0x20 is set for every
+  **non-chainsaw** hit on a MONSTER (`src/Combat.cpp:223-226`) ⇒ the strength stat boosts
+  **only the chainsaw** vs monsters (§9); weakness =
   `(monsterWeakness[(sub·3+parm)·8+w/2] nibble + 1)<<5` then `damage = weak·base>>8`
   (`src/Combat.cpp:29-31`); final `−(def%·damage)>>8`. Monster→player splits armor:
   `armorDmg = min(((171·base>>8)+1)/2, armor); damage −= 2·armorDmg` (`:357-359`).
@@ -546,3 +548,275 @@ overriding the corpse.
   `usedChainsaw(false)` (`src/Player.cpp:777-779`).
 * Note: `src/Hud.cpp:975-985` `tileDistances[0]` is the **dialog bubble**
   vertical offset (`n += 10` within a tile, else `+= 20`), not a weapon range.
+
+## 9. Melee = the chainsaw only (added 2026-08-31; raw log
+`docs/research/2026-08-31-melee-weapons.md`)
+
+### 9.1 Identification
+* `WP_CHAINSAW = 1` (`src/Enums.h:137`) is the **only** bit of `WP_MELEEMASK = 2`
+  (`src/Enums.h:155`); tests go through `Entity::CheckWeaponMask(w, 2)` =
+  `(1 << w) & 2` (`src/Entity.h:52-54`) or the literal `weapon == 1`.
+* **No fists/punch weapon exists in the shipped build:** `WP_PUNCH_MASK = 0`
+  (`src/Enums.h:153`) makes `(1 << weapon & 0x0)` dead (`src/Combat.cpp:732`,
+  `src/PlayingInputHandler.cpp:381`), and `Combat::punchingMonster` is never set to a
+  non-zero value anywhere in `src/` (only `= 2` inside a `> 0` branch,
+  `src/Combat.cpp:201-202`). All `punchingMonster` / `punchMissed` code is unreachable.
+* Melee is **not** a table column. The 9-byte row has no melee flag; `PROJTYPE`(6) `= -1`
+  (`WP_PROJ_NONE`) for the chainsaw but also for weapons 4/6/23, and `WP_PROJ_MELEE = 1`
+  (`src/Enums.h:120`) is used only by monster weapons 15-18.
+* Chainsaw row of tables.bin table 2 (verified by direct parse; column names
+  `src/Combat.h:26-35`): `STRMIN 18, STRMAX 22, RANGEMIN 0, RANGEMAX 1, AMMOTYPE 0,
+  AMMOUSAGE 0, PROJTYPE −1, NUMSHOTS 1, SHOTHOLD 100`.
+
+### 9.2 No ammo, ever
+`AMMOTYPE 0 = AMMO_NONE` (`src/Enums.h:103`) and `AMMOUSAGE 0` make every gate a no-op:
+`Player::fireWeapon` (`src/Player.cpp:780-781`), `Combat::playerSeq`
+(`src/Combat.cpp:210-215`), `shouldFakeCombat` (`src/PlayingInputHandler.cpp:574-579`),
+starter-ammo grant at pickup (`src/Entity.cpp:256`, gated on AMMOUSAGE), and the deduction
+`ammo[ammoType] -= ammoUsage` (`src/Combat.cpp:349-352`) which becomes `ammo[0] -= 0`.
+The HUD likewise prints no digits for weapon 1 (§2). **The chainsaw needs no fuel.**
+
+### 9.3 Probe: 1 tile + PLAYERCLIP
+`src/PlayingInputHandler.cpp:197-221`: `n7 = 6` tiles normally, `n7 = 1` and
+`n5 |= 0x10` (bit 4 `ET_PLAYERCLIP`) for melee ⇒ mask `14013`. The commented
+`n5 |= 0x2000` at `:202-204` is a J2ME-only line (bit 13 is already in 13997).
+`n7` is a tile count because `view[]` is 14.14 and `n7*16384>>8 = n7*64` units.
+Separately, `ET_NONOBSTRUCTING_SPRITEWALL (13)` is remembered in `entity2` **only for melee**
+(`:247-252`) and then overrides the elected target unless it is a monster(2) or corpse(9)
+(`:362-364`) — the saw can cut decorative sprite-walls that guns pass through.
+`RANGEMAX 1` means a target beyond one tile fails `calcHit` with `crFlags 0x400`
+(msg 64, zero damage) even if some other path elected it.
+
+### 9.4 Damage application is immediate (PROJTYPE −1)
+`Combat::launchProjectile` has no case for −1 (or 0), so it falls into
+`default: missileAnim = 0; exploded = true; return;` (`src/Combat.cpp:1566-1570`); the very
+next statement of stage 0, `updateProjectile()` (`:355`), sees `exploded` and calls
+`explodeOnMonster()` → `Entity::pain(totalDamage, playerEnt)` in the **same frame**
+(`src/Combat.cpp:1421-1431`, `:905-910`, `src/Entity.cpp:284-345`).
+*Rewrite pitfall:* keying "hitscan" on `PROJTYPE == 0` alone leaves the chainsaw (−1) with no
+damage path at all.
+
+### 9.5 Chainsaw-specific rules
+| where | rule |
+|---|---|
+| `src/Combat.cpp:223-226` | `crFlags 0x20` **not** set for the chainsaw ⇒ `calcDamage` adds the player strength bonus `3*(strPct*dmg>>8)` only for the saw (`src/CombatEntity.cpp:326-332`) |
+| `src/CombatEntity.cpp:146-148` | on a landed hit `player->usedChainsaw(true)`; `src/Player.cpp:2636-2653` counts +1 (+1 more on crit), at ≥30 → `modifyStat(STAT_STRENGTH,2)` + msg 241, and `startShake(666,1,0)` every time |
+| `src/Player.cpp:777-779` | vs CORPSE / BARRICADE / FURNITURE the counter also ticks via `usedChainsaw(false)` before the attack |
+| `src/Combat.cpp:890-892` | a **missed** saw swing clears `render->shotsFired` (no noise wake-up) |
+| `src/Combat.cpp:936-944` | corpse target ⇒ gib (hide sprite, blood, `spawnDropItem`, sound 1037); only the saw elects corpses (§8.3) |
+| `src/PlayingInputHandler.cpp:238-239` + `src/Combat.cpp:876-882` | `ET_ATTACK_INTERACTIVE` FURNITURE (eSub 0) is targetable and damageable **only** by the chainsaw: table 4 = `{0, 0x2, 0xFFFFFFFB, 0xFFFFFFFB}`, and both shipped furniture defs (tiles 121/135) have `parm == 1` → mask `0x2` = bit 1 |
+| `src/MovementController.cpp:198-212` | `flagForWeapon` = **4096** for melee (8192 default, 16384 rocket launcher) → tile scripts can react to the saw specifically |
+| `src/Combat.cpp:301-303` | sound 1015 = `chainsaw.wav` (`src/Sounds.h:23`, id = 1000+index), played hit or miss |
+| `src/Combat.cpp:327` | `WP_NORECOIL = 9222 = 0x2406` (bits 1,2,9,13) ⇒ no `rockView` recoil |
+| `src/Enums.h:158` | `WP_MUZZLE_FLASH = 385` (weapons 0,7,8) ⇒ no flash |
+| `src/Combat.cpp:751-761,822-825` | jitter `+2/−1 px` while `n15 < 43690` (≈2/3 of the 1000 ms), then a 3× eased return with art **frame 1** |
+
+### 9.6 Weakness nibble
+`getWeaponWeakness(w, sub, parm)` = `(monsterWeakness[(sub*3+parm)*8 + w/2] >>
+((w&1)<<2) & 0xF) + 1 << 5` (`src/Combat.cpp:29-31`): the chainsaw (`w=1`) reads the **high**
+nibble of byte 0 of the row, the rifle the low nibble. Parsed table 11: `sub 0` ZOMBIE byte0
+`0xF7` → 512 = **×2.0**; `sub 4` SAW_GOBLIN `0x07` → 32 = **×0.125**; all other subtypes
+`0x77` → 256 = ×1.0 (`src/Enums.h:61-78`). Note the weakness/strength path exists only for
+`targetType == 2`; props and walls take a plain table roll
+`STRMIN + rnd%(STRMAX−STRMIN)` (−25% on difficulty 4) in `Combat::playerSeq:249-259`.
+
+### 9.7 One hit per press
+`NUMSHOTS 1` ⇒ `animLoopCount = 1` (`src/Combat.cpp:113`), so the stage-1 repeat branch
+`--animLoopCount > 0` (`:381-386`) never fires: exactly one damage application and one turn
+per `ACTION_FIRE`. There is no hold-to-saw mode.
+
+## 10. PROJTYPE: which weapons are real missiles and which are instant (added 2026-08-31; raw log `docs/research/2026-08-31-projtype-inventory.md`)
+
+`PROJTYPE` = column 6 of the 9-byte weapon row (`src/Combat.h:32`), read into
+`attackerWeaponProj = weapons[id*9 + 6]` (`src/Combat.cpp:102,121`) and dispatched by
+`Combat::launchProjectile` (`src/Combat.cpp:1433-1573`).
+
+### 10.1 Dispatch
+* `projType == 12` is handled **before** the switch: `soulCubeIsAttacking = true; launchSoulCube(); return;` (`src/Combat.cpp:1439-1443`).
+* `switch (attackerWeaponProj)` (`src/Combat.cpp:1479`) has cases **2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13** — each allocates a flying missile GameSprite and sets `missileAnim` (240, 243, 225/226, 244, 227, 242, 241, 171, 252, 248, `activeWeaponDef->tileIndex` respectively).
+* Everything else hits `default: { missileAnim = 0; exploded = true; return; }` — in shipped data that is exactly **−1 (`WP_PROJ_NONE`), 0 (`WP_PROJ_BULLET`), 1 (`WP_PROJ_MELEE`)**. `exploded = true` makes the same stage-0 call apply damage through `updateProjectile → explodeOnMonster / explodeOnPlayer` (`src/Combat.cpp:1421-1431`).
+* `WP_PROJ_INSTANT = 3` (`src/Enums.h:134`) is a misleading alias of `WP_PROJ_PLASMA = 3`; it does **not** mark the instant class.
+
+### 10.2 Shipped classification (table 2, 32 rows × 9 bytes)
+Player weapons (all 15 have an `ET_ITEM`/`IT_WEAPON` def, `tmp_entities.bin` defs 57-71 / tiles 1-15, `src/Entity.cpp:238-256`):
+
+| projType class | weapon ids |
+|---|---|
+| **instant** (`default:`) | 0 rifle (0 BULLET), 1 chainsaw (−1), 3 shooting sentry (0), 4 exploding sentry (−1), 5 red shooting sentry (0), 6 red exploding sentry (−1), 7 super shotgun (0), 8 chaingun (0), 9 scoped rifle (0) — **9 ids** |
+| **real missile** | 2 holy water (2 WATER), 10 plasma (3), 11 rockets (4), 12 BFG (5), 13 soul cube (12), 14 thrown item (13) — **6 ids** |
+
+Monster weapons: **instant** = 15 BITE, 16 CLAW, 17 PUNCH, 18 CHARGE (all projType **1 MELEE**), 23 M_FIRE (−1), 24 M_MACHINE_GUN (0), 25 M_CHAIN_GUN (0). **Missile** = 19 (6), 20 (7), 21 (8), 22 (9), 26 (4), 27 (10), 28 (5), 29 (8), 30 (11), 31 (5).
+
+Consequence for the rewrite: a `projType > 0 ⇒ unsupported` gate is **exact for player weapons** (rejects the 6 that truly need a missile pool, rejects nothing wrongly) but **wrong for monsters**: ids 15-18 have `projType == 1` yet are instant in the original.
+
+Full row dump (STRMIN, STRMAX, RANGEMIN, RANGEMAX, AMMOTYPE, AMMOUSAGE, PROJTYPE, NUMSHOTS, SHOTHOLD) is in the raw log. Note that STRMIN/STRMAX are stored as signed bytes and read with `& 0xFF` in `CombatEntity::calcDamage` (`src/CombatEntity.cpp:303-304`), so BFG = 200..220, soul cube = 250 (×2 at `:306-309`), red exploding sentry = 140..155.
+
+Table-2 parsing recipe (the only correct one): the 80-byte header of `tables.bin` holds 20 LE ints that are **end** offsets relative to the header, so table *i* starts at `80 + (i ? off[i-1] : 0)` and begins with an LE int payload size (`src/Resource.cpp:209-247`, `getNumTableBytes` at `:257-263`). Table index 2 = `TBL_COMBAT_WEAPONDATA` (`src/App.cpp:360,391`), payload 288 bytes = 32 × 9, matching `WP_MAX = 32`.
+
+### 10.3 Visuals on the instant path
+`default:` sets `missileAnim = 0`: bullets have **no tracer and no impact sprite** in the original. Feedback comes from the muzzle flash (`WP_MUZZLE_FLASH = 385` = weapons {0,7,8}, `src/Combat.cpp:826-834`), `rockView` recoil (`WP_NORECOIL = 9222` exempts {1,2,9,13}, `src/Combat.cpp:327`) and `explodeOnMonster` blood (`src/Combat.cpp:905-910`).
+
+**One exception:** monster melee ids 15/16/17/18 get a hit-splat anim from the `numActiveMissiles == 0` branch of `Combat::updateProjectile` (`src/Combat.cpp:1400-1420`): on `gotHit && (totalDamage > 0 || totalArmorDamage > 0) && exploded`, `missileAnim` = 245 (CLAW/16), 246 (BITE/15) or 247 (PUNCH/CHARGE), allocated at the attacker's screen position with `flags |= 0x800` and `S_RENDERMODE = 5`; anim 245 inherits bit `0x20000` from the attacker sprite. So "instant damage" alone is not a complete port of projType 1.
+
+## 11. Water spout conversion — `INTERACT_PICKUP` (eSubType 3) fixtures (added 2026-08-31; raw log `docs/research/2026-08-31-water-spout.md`)
+
+`ET_ATTACK_INTERACTIVE` / `INTERACT_PICKUP` (`Enums::INTERACT_PICKUP = 3`, `src/Enums.h:57`) is
+**not** a plain destructible: a toilet (tile 123) or a sink (tile 127) is a *liftable* fixture,
+and both the "grab it" and the "smash it" paths replace the entity by a **water spout**
+(tile 134, `TILENUM_WATER_SPOUT`, `src/Enums.h:745`), which is the holy-water refill station.
+
+Shipped defs (`entities.bin`, 190 records, layout `src/EntityDef.cpp:35-44`):
+
+| tile | eType | eSubType | parm | name |
+|---|---|---|---|---|
+| 123 toilet | 10 `ET_ATTACK_INTERACTIVE` | 3 `INTERACT_PICKUP` | 3 | 131 |
+| 127 sink | 10 | 3 | 3 | 132 |
+| 134 water spout | 14 `ET_DECOR_NOCLIP` | 7 `DECOR_WATER_SPOUT` (`src/Enums.h:49`) | 1 | 133 |
+
+### 11.1 `ArmorRepairSystem::turnEntityIntoWaterSpout` — the whole conversion
+`Canvas::turnEntityIntoWaterSpout` is a one-line forwarder (`src/Canvas.cpp:1615`) to
+`src/ArmorRepairSystem.cpp:56-63` (the function lives in that class for historical reasons only;
+nothing armor-related happens):
+
+```
+entity->def  = lookup(TILENUM_WATER_SPOUT);                   // 134 -> eType 14, eSub 7, parm 1
+entity->name = (short)(entity->def->name | 0x400);            // string set 1, id 133
+mapSpriteInfo[sprite] = (mapSpriteInfo[sprite] & 0xFFFFFF00) | 134;
+entity->info |= 0x400000;                                     // "state consumed" (save flag)
+```
+
+Exactly four effects, and note what is **absent**:
+* **no unlink / relink** — the entity keeps its tile link and its sprite slot. It stops blocking
+  purely because collision/trace masks are `1 << def->eType` sets (`src/Game.cpp:745`,
+  `src/MovementController.cpp:125-128`) and `ET_DECOR_NOCLIP (14)` is in none of the solid masks
+  (player move mask `13501` = `0x34BD`, `src/MovementController.cpp:326`).
+* **no `mapSpriteInfo |= 0x10000`** — the sprite stays visible.
+* **no Z / scale change** — Z and SCALEFACTOR keep the fixture's values (32 / 64 defaults from
+  `src/LoadingManager.cpp:497-498`).
+* **frame bits are preserved**: the mask is `0xFFFFFF00`, not `0xFFFF00FF`, so bits 8-15 survive.
+  For normal (non-Z) map sprites those bits are always 0 (only Z-sprites get a byte at
+  `src/LoadingManager.cpp:537`), so the inherited frame index is 0 — **but that is irrelevant**:
+  tile 134 has its own render branch that ignores the frame bits and animates from the clock,
+  `int n15 = app->time / 128; renderSprite(..., n3, (n15 & 0x1), ...); return;`
+  (`src/Render.cpp:1648-1653`). The spout IS animated — 2 frames, 128 ms each
+  (media 733/734, `mediaMappings[134..135] = 733,735`). The generic auto-animation bit
+  `0x80000` (`src/Render.cpp:1544-1546`) is indeed never set here and is not needed.
+  Corrected 2026-08-31; see `docs/original-code/rendering.md` §7.
+* `info |= 0x400000` is the persisted "already used" bit: `Entity::saveBinaryState`
+  (`src/Entity.cpp:1816`) and `getBinaryState` for `ET_DECOR_NOCLIP/DECOR_WATER_SPOUT`
+  (`src/Entity.cpp:1467-1471`) store it, and `restoreBinaryState` re-applies the conversion on
+  load (`src/Entity.cpp:1866-1871`).
+
+### 11.2 Path A — smashing it (`Entity::pain`)
+`src/Entity.cpp:379-391`, the `ET_ATTACK_INTERACTIVE` tail of `pain`:
+
+```
+else if (eSubType == Enums::INTERACT_PICKUP) {
+    app->particleSystem->spawnParticles(1, -1, sprite);
+    app->canvas->turnEntityIntoWaterSpout(this);
+    return b;                      // <- early return
+}
+app->game->removeEntity(this);     // skipped for eSubType 3
+this->info |= 0x400000;            // skipped (but set inside the conversion)
+app->render->mapSpriteInfo[sprite] |= 0x10000;   // skipped -> sprite stays visible
+```
+
+* Particle burst: type **1**, color **-1** (white), i.e. the narrow upward jet
+  (Z velocity 96..110, XY spread `±64>>2`, `src/ParticleSystem.cpp:284-291`) — the same effect the
+  thrown-toilet impact uses (`src/Combat.cpp:1342-1346`, projType 13 + sound 1135
+  `Weapon_Toilet_Smash.wav`).
+* Confirmed: `pain` returns **before** `removeEntity`, so the fixture is never hidden or unlinked;
+  the conversion alone does the work. `pain` itself plays no sound for this subtype (unlike
+  eSubType 1 → sound 1038 `glass.wav`, `src/Entity.cpp:378`).
+* `pain` is gated by `info & 0x20000` (`src/Entity.cpp:286`), set for every
+  `ET_ATTACK_INTERACTIVE` at spawn (`src/Entity.cpp:88-89`).
+
+### 11.3 Which weapons can smash it
+Damage eligibility for props: `Combat::calcHit` (`src/Combat.cpp:876-882`) requires
+`tableCombatMasks[def->parm] & (1 << player->ce->weapon)`. Table 4 =
+`{0, 0x2, 0xFFFFFFFB, 0xFFFFFFFB}`; toilet/sink have `parm == 3` → mask `0xFFFFFFFB`.
+
+**Any weapon except id 2 (`WP_HOLY_WATER_PISTOL`, `src/Enums.h:138`) can smash a toilet/sink** —
+this is NOT chainsaw-only (chainsaw-only is `parm == 1`, i.e. furniture tiles 121/135).
+Target election agrees: `src/PlayingInputHandler.cpp:238-239` accepts any `eType == 10` whose
+`eSubType != 0`, regardless of the equipped weapon (`(1 << eSubType & 0x1) == 0`), and the
+range check at `:380` uses the weapon's RANGEMAX. Bit 2 is cleared exactly so that the holy water
+pistol never destroys the water source (it refills from it instead, §11.5).
+There is **no** chainsaw-specific branch for eSubType 3; the chainsaw usage counter is explicitly
+*not* ticked for it (`src/Player.cpp:777-779` lists only CORPSE / BARRICADE / FURNITURE).
+
+### 11.4 No message, no XP, no counter
+`Combat::playerSeq` sets `targetKilled = true` for any non-monster target hit with damage
+(`src/Combat.cpp:349-351`) and then calls `curTarget->died(true, playerEnt)`
+(`src/Combat.cpp:383-386`) — but `pain` (which ran in the same stage, `src/Combat.cpp:933-936`)
+has **already replaced `def`** by tile 134. So inside `died` (`src/Entity.cpp:424-448`)
+`eType == 14`, the `ET_ATTACK_INTERACTIVE` branch is not taken and the fixture gets:
+* **no message 89** ("<name> destroyed"),
+* **no `addXP(5)`**,
+* **no `destroyedObject()`**,
+* only `info &= 0xFFFDFFFF` (`:434`, clears `0x20000`) → the spout is permanently immune to
+  further `pain`/`calcHit` — and `updateFacingEntity = true` (`:527`).
+
+The guard `eSubType != 3 && eSubType != 2` at `src/Entity.cpp:445` is therefore about
+**crates** in practice (their `pain` keeps the def), and it mirrors the spawn-time census
+`src/Game.cpp:448-450` which also excludes eSubType 2 and 3 from `numDestroyableObj` — so the
+"objects destroyed" statistic never counts toilets/sinks/crates on either side.
+The explosion path is identical in ordering: `pain` then `died` (`src/Combat.cpp:1189-1193`).
+
+### 11.5 Path B — pulling it off the wall, and the refill
+All of this lives in the **ACTION_FIRE** handler, not in a separate "use" action.
+
+Trace mask (`src/PlayingInputHandler.cpp:200-207`): `n5 = 13997`, and **only** when
+`weapon == 2` `n5 |= 0x4100` — bit 14 = `ET_DECOR_NOCLIP`. So an existing water spout is
+traceable/electable only while the holy water pistol is equipped; election requires an exactly
+adjacent tile: `eType == 14 && eSubType == 7 && dist == tileDistances[0]`
+(`src/PlayingInputHandler.cpp:354-359`).
+
+1. **Fixture still intact** (`src/PlayingInputHandler.cpp:405-431`), requires
+   `eType == 10 && eSubType == 3 && dist2 <= tileDistances[0] && player->ammo[8] == 0`
+   (`ammo[8]` = `AMMO_ITEM`, `src/Enums.h:112` — i.e. no carried object yet) and
+   `!player->isFamiliar`:
+   * `weapon == 2 && ammo[3] < 100` → **refill from the toilet itself**: msg 248,
+     `ammo[3] = 100` (`AMMO_HOLY_WATER`), `showHelp(14)`, sound 1046
+     `HolyWaterPistol_refill.wav`. No conversion.
+   * else if `STAT_STRENGTH < 11` → msg 238 ("too heavy"), nothing else.
+   * else → **pick it up**: `currentWeaponCopy = ce->weapon`,
+     `setPickUpWeapon(def->tileIndex)` (rewrites the `find(6,1,14)` def's tile/name/longName/
+     description in place, `src/Player.cpp` `setPickUpWeapon`), `give(2, AMMO_ITEM, 1, true)`,
+     `giveAmmoWeapon(14, true)` (`WP_ITEM`), then
+     `turnEntityIntoWaterSpout(entity)`, optional fake-combat/explode thread, sound **1134**
+     `Weapon_Toilet_Pull.wav`. The carried fixture is later thrown as weapon 14 (projType 13,
+     impact = same white particles + sound 1135).
+2. **Already a spout** (`src/PlayingInputHandler.cpp:433-444`): `eType == 14 && eSubType == 7 &&
+   dist2 <= tileDistances[0] && dist2 > 0 && weapon == 2` → `ammo[3] = 100`; msg 248 + help 14 +
+   sound 1046 if it was below 100, msg 249 if already full. This is the refill action the player
+   sees: equip the holy water pistol, stand next to the spout, press FIRE.
+
+### 11.6 Scripts see the conversion (`TILE_EMPTY`)
+`EV_TILE_EMPTY` (`src/ScriptThread.cpp:456-474`) walks `entityDb[x + 32*y]` and reports "empty"
+unless some entity has `eType != 12 && (1 << eType & 0x6240) == 0` — `0x6240` = eTypes
+6 ITEM, 9 CORPSE, 13 NONOBSTRUCTING_SPRITEWALL, **14 DECOR_NOCLIP**. A converted fixture therefore
+makes its tile report **empty**, which map scripts use as a "the player broke/took the toilet"
+trigger (see map00 below).
+
+### 11.7 map00 census (parsed per `src/LoadingManager.cpp:463-539`; 135 normal + 126 Z sprites)
+| sprite | tile | tile xy | info | note |
+|---|---|---|---|---|
+| 26 | 123 toilet | (12,10) | 0x0000007B | first restroom |
+| 27 | 123 toilet | (12,11) | 0x0000007B | |
+| 45 | 127 sink | (14,11) | 0x0000007F | |
+| 44 | **134 spout** | (14,10) | 0x00000086 | pre-placed, live from map load — the tutorial refill point |
+| 92 | 123 toilet | (21,27) | 0x0000007B | second restroom |
+| 93 | 127 sink | (21,28) | 0x0000007F | |
+| 94 | 127 sink | (21,29) | 0x0000007F | |
+| 95 | 123 toilet | (21,30) | 0x0000007B | |
+| 162,163 | **134 spout** | (19,30) Z | 0x00200086 | `0x200000` = never spawn; script props |
+
+No sprite carries `0x80000` — which does not make them static: tile 134 animates via its
+dedicated 128 ms branch (`src/Render.cpp:1648-1653`), see `docs/original-code/rendering.md` §7. No `tileEvents` entry sits on
+(12,10)/(12,11)/(14,11)/(14,10) — the first restroom is pure engine behavior. The second restroom is
+scripted from the PER_TURN static func (`staticFuncs[6] = 253`): at IP 316-342 and 348-374,
+`TILE_EMPTY tile(21,28)` / `tile(21,27)` → `HIDE sprite=94` / `HIDE sprite=95` +
+`LERPSPRITE sprite=162 dst=(21,29)` / `sprite=163 dst=(21,30)`, i.e. when the player converts one
+fixture the neighbouring one is swapped for a parked spout sprite (disassembly via
+`tools/disasm_map_scripts.py`, guards `v39`/`v40`).

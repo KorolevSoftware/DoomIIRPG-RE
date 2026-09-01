@@ -274,10 +274,12 @@ bool Player::fireWeapon(Combat& combat, Entity* target, int x, int y) {
 			return false;
 		}
 	}
-	// Projectile weapons are out of Stage-1 scope (research §6.3): refuse
-	// like the soul-cube guard rather than mis-firing instant hitscan damage.
+	// PROJTYPE -1 (WP_PROJ_NONE) and 0 (WP_PROJ_BULLET) share the degenerate
+	// launchProjectile default: arm (src/Combat.cpp:1566-1570, ADR 0017) and are
+	// fully supported. Positive types need real missiles (spec group G5): refuse
+	// them like the soul-cube guard instead of mis-firing instant damage.
 	const int proj = wdef.projType;
-	if (proj != 0) {
+	if (proj > 0) {
 		std::fprintf(stderr, "[combat] projectile weapon %d unsupported (proj=%d)\n",
 			weapon, proj);
 		return false;

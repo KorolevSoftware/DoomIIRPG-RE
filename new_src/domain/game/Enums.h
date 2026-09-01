@@ -172,9 +172,28 @@ static constexpr int TILENUM_SWITCH = 173;
 // src/Entity.cpp:81).
 static constexpr int DECOR_STATUE = 3;
 
-// Interactive-object subtype of a crate (src/Game.cpp:449 excludes 2 and 3 from
-// the destroyable count).
+// ET_ATTACK_INTERACTIVE subtypes (src/Enums.h:54-57). The crate one also gates
+// the destroyable count (src/Game.cpp:449 excludes 2 and 3).
+static constexpr int INTERACT_FURNITURE = 0;
+static constexpr int INTERACT_BARRICADE = 1;
 static constexpr int INTERACT_CRATE = 2;
+static constexpr int INTERACT_PICKUP = 3;
+
+// A smashed (or lifted) INTERACT_PICKUP fixture becomes this tile
+// (src/Enums.h:745, used by src/ArmorRepairSystem.cpp:59). Its def has
+// eType 14 ET_DECOR_NOCLIP / eSubType 7 DECOR_WATER_SPOUT, which is why the
+// converted entity stops blocking without any unlink.
+static constexpr int TILENUM_WATER_SPOUT = 134;
+
+// Animated tiles: the five load-time AUTO_ANIMATE injections
+// (src/Game.cpp:374-397) plus the tiles with a hard-coded render branch
+// (src/Render.cpp:1548,1622-1653). src/Enums.h:746,753,774,799,803,807.
+static constexpr int TILENUM_OBJ_FIRE = 130;
+static constexpr int TILENUM_OBJ_TORCHIERE = 136;
+static constexpr int TILENUM_EYE_PORTAL = 156;
+static constexpr int TILENUM_ANIM_FIRE = 234;
+static constexpr int TILENUM_AIR_VENT = 236;
+static constexpr int TILENUM_WATER_STREAM = 240;
 
 // Sprites in this tile range hide themselves right after spawning
 // (src/Game.cpp:455-457).

@@ -104,6 +104,15 @@ private:
 	                       int tileNum, int mediaId,         // texture resolved by caller
 	                       int flags,                        // info low bits (0x20000 etc.)
 	                       int scaleFactor);                 // byte<<10
+	// Emits the torchiere's additive light-glow quad (tile 193
+	// SFX_LIGHTGLOW1, frame 0) in RENDER_ADD50, BEFORE the lamp body — legacy
+	// tile-136 branch src/Render.cpp:1642-1647, which has no return and falls
+	// through to the body draw (docs/original-code/rendering.md §8.5). Leaves
+	// the batch state on ADD50; the caller restores its own mode. Must be
+	// called between begin()/end().
+	void drawTorchiereGlow(const MapData& map, const MediaLoader& media,
+	                       int x, int y, int zRenderUnits,   // same units as drawBillboardPart
+	                       int flags, int scaleFactor);
 	// Stacked leg/torso/head character renderer (legacy renderSpriteAnim,
 	// src/Render.cpp:3144-3488; NPCs + non-diverted monster families per
 	// ADR 0007, ATTACK deltas in spec 2026-08-26 §2). Must be called
@@ -114,11 +123,12 @@ private:
 	// media has no texel/palette or the upload failed; dedups against
 	// spriteTexByMedia_ internally.
 	bool ensureSpriteTexture(const MediaLoader& media, int tileNum, int mediaId);
-	// Applies the per-batch blend/fog state for a legacy renderMode
-	// (gles::SetupTexture switch, src/GLES.cpp:623-715): flushes the pending
-	// batch on change, switches glBlendFunc and toggles fog. 3 = ADD
-	// (GL_SRC_ALPHA/GL_ONE), 7 = SUB (GL_ZERO/GL_ONE_MINUS_SRC_COLOR); both
-	// disable fog (fogMode = 0). Must be called between begin()/end().
+	// Applies the per-batch blend/color/fog state for a legacy renderMode
+	// (gles::SetupTexture switch, src/GLES.cpp:615-715): flushes the pending
+	// batch on change, then switches glBlendFunc, the uColorMod modulation
+	// factor and the fog toggle from the kBlendModes table. Out-of-range and
+	// back-end-only modes fall back to RENDER_NORMAL with a one-shot log.
+	// Must be called between begin()/end().
 	void applyBatchState(int renderMode);
 	void flush();
 	bool walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ);
@@ -171,6 +181,8 @@ private:
 	float fogColor_[4] = { 0.f, 0.f, 0.f, 1.f };
 	GLint locFogEnabled_ = -1, locFogStart_ = -1, locFogEnd_ = -1, locFogColor_ = -1;
 	GLint locView_ = -1;
+	// Per-mode color modulation (legacy glColor4f + GL_MODULATE, src/GLES.cpp:620).
+	GLint locColorMod_ = -1;
 
 	// Game time (ms) for animated textures/sprites.
 	int timeMs_ = 0;

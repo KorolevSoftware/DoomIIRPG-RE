@@ -279,10 +279,7 @@ bool Combat::tick() {
 		if (hasAmmo && ammoPool < animLoopCount) {               // :322-324
 			animLoopCount = ammoPool;
 		}
-		// launchProjectile (:325): PROJTYPE 0 allocates no missile and marks
-		// exploded immediately (src/Combat.cpp:1572-1576), so updateProjectile
-		// calls explodeOnMonster in the same frame (:1421-1430) — inlined
-		// below. Projectile weapons are refused in Player::fireWeapon.
+		launchProjectile();                                      // :325
 		// rockView recoil skipped (camera-rock system absent) :326-332.
 		if (totalDamage == 0) {                                  // :333-345
 			if (targetType == Enums::ET_MONSTER) {
@@ -307,7 +304,7 @@ bool Combat::tick() {
 		}
 		nextStage = 1;                                           // :359
 		nextStageTime = animEndTime;                             // :360
-		explodeOnMonster();                                      // :361
+		updateProjectile();                                      // :361
 		if (totalDamage == 0 || hitType == 0) {                  // :363-365
 			// ++counters[7]: run-stats absent, log only.
 			std::fprintf(stderr, "[combat] miss counter++\n");
@@ -322,7 +319,7 @@ bool Combat::tick() {
 		if (targetKilled ||
 		    (targetType == Enums::ET_MONSTER &&
 		     targetMonster->ce.getStat(Enums::STAT_HEALTH) <= 0)) {
-			env_.game->monsters.diedMonster(curTarget, true);    // :382-386
+			env_.game->entityDied(curTarget, true);              // :382-386 (ADR 0018)
 			targetKilled = true;
 		} else if (--animLoopCount > 0 &&
 		           ((1 << targetType) & 4385) == 0 &&           // :387 n6 mask
@@ -387,8 +384,11 @@ void Combat::explodeOnMonster() {
 	// src/Combat.cpp:885-946 subset. The explodeThread/shouldFakeCombat hook
 	// is deferred (no doesScriptExist API, spec deviation 5).
 	shotsFired = true;                                   // :891
-	// chainsaw-miss suppression (:892-894): dead code without the chainsaw.
-	if (curTarget != nullptr && curTarget->monster != nullptr &&
+	if (checkWeaponMask(attackerWeaponId, 0x2) && hitType == 0) {
+		// A missed chainsaw swing makes no noise, so it must not wake the
+		// target either: legacy chains this as `else if` (:892-894).
+		shotsFired = false;
+	} else if (curTarget != nullptr && curTarget->monster != nullptr &&
 	    curTarget->def != nullptr &&
 	    curTarget->def->eType == Enums::ET_MONSTER &&
 	    (curTarget->info & Entity::kInfoOnActiveList) == 0) {
@@ -401,16 +401,45 @@ void Combat::explodeOnMonster() {
 	if (targetType == Enums::ET_MONSTER) {               // :904-931
 		if (totalDamage > 0) {
 			// checkMonsterFX skipped: status effects absent (:168-176,:906).
-			env_.game->monsters.painMonster(curTarget, totalDamage, attackerWeaponId); // :907
+			env_.game->entityPain(curTarget, totalDamage);       // :907 (ADR 0018)
 			// blood particles (:908-910), knockback (:911-921), splash radius
 			// (:922-924) and negative-damage healing cap (:926-931) skipped:
 			// systems absent.
 		}
 	} else if (targetType == Enums::ET_ATTACK_INTERACTIVE) {  // :933-937
-		std::fprintf(stderr, "[combat] ATTACK_INTERACTIVE pain branch deferred\n");
+		if (totalDamage > 0) env_.game->entityPain(curTarget, totalDamage);
 	} else if (targetType == Enums::ET_CORPSE) {             // :938-945 gib
 		std::fprintf(stderr, "[combat] corpse gib branch deferred (chainsaw-only)\n");
 	}
+}
+
+void Combat::launchProjectile() {
+	// src/Combat.cpp:1433-1600, default: arm only (ADR 0017). PROJTYPE -1 and 0
+	// have no case in the legacy switch either: they allocate no missile and
+	// detonate on the target in the same frame (src/Combat.cpp:1566-1570).
+	missileAnim = 0;
+	exploded = true;
+	if (attackerWeaponProj > 0) {
+		// Unreachable while Player::fireWeapon refuses proj > 0; kept so a
+		// future caller that bypasses that guard stays visible in the log.
+		std::fprintf(stderr, "[combat] projType %d not implemented, treated as instant\n",
+			attackerWeaponProj);
+	}
+}
+
+void Combat::updateProjectile() {
+	// src/Combat.cpp:1249-1431. The missile stepping head is group G5; only the
+	// exploded dispatch tail (:1421-1430) exists today.
+	if (!exploded) return;
+	// Legacy clears the flag inside each arm AFTER the explode call (:1424,:1428);
+	// clearing it up front is equivalent (neither arm re-reads it) and safe
+	// against re-entry.
+	exploded = false;
+	if (curTarget == nullptr) {                           // :1422-1424
+		std::fprintf(stderr, "[combat] explodeOnPlayer deferred\n");
+		return;
+	}
+	explodeOnMonster();                                  // :1426-1427
 }
 
 } // namespace newcore

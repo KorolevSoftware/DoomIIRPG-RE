@@ -407,3 +407,394 @@ Both paths render the world into the same canvas band: GL
 plus `viewportY = 3+1 = 4` → canvas rows 7…254 as well, and `Render::drawRGB`
 forces `viewportY = 0, viewportHeight = 320` for its border rect in that mode
 (`src/Render.cpp:2947-2951`).
+
+## 7. Sprite frame animation: the three independent mechanisms (added 2026-08-31)
+
+A map sprite's frame index lives in `mapSpriteInfo[n]` bits 8..15
+(`int n7 = (n2 & 0xFF00) >> 8`, `src/Render.cpp:1509`). There are exactly three
+ways a sprite ends up showing more than one frame.
+
+### 7.1 Generic auto-animation — bit `0x80000` (`SPRITE_FLAG_AUTO_ANIMATE`)
+
+`src/Render.cpp:1544-1546`:
+
+```cpp
+if ((n2 & 0x80000) != 0x0) {
+    n7 = (n + app->time / 100) % n7;
+}
+```
+
+So bit `0x80000` reinterprets bits 8..15 as a *frame count* (not a frame index),
+advances one frame per 100 ms, and phase-shifts by the sprite index `n`.
+`Enums.h:1234` names the bit. Note the implicit contract: if `0x80000` is set the
+frame-count field MUST be non-zero, otherwise this is a division by zero.
+
+### 7.2 Load-time injections in `Game::loadMapEntities` — the COMPLETE list
+
+The per-sprite loop `src/Game.cpp:374-397` is the only place in map loading that
+writes animation data. `n6` = tile number (`info & 0xFF`, +257 when `0x400000` is
+set, `:375-378`), `n7` = default frame count from the media table
+(`mediaMappings[n6+1] - mediaMappings[n6]`, `:379`).
+
+| Tile | Name | Frames written | Bits set | Extra |
+|---|---|---|---|---|
+| 234 | `TILENUM_ANIM_FIRE` | `n7 = 4` forced (`:380-382`), written by the 136/234/130 branch | `0x80000` (`:394-397`) | — |
+| 156 | `TILENUM_EYE_PORTAL` | `n7 = 2` forced | `0x80200` (`:383-387`) | frame field first cleared with `&= 0xFFFF00FF` |
+| 236 | `TILENUM_AIR_VENT` | `n7 = 3` forced | `0x80300` (`:388-392`) | `mapSprites[S_RENDERMODE + n5] = 3` (`:392`) |
+| 136 | `TILENUM_OBJ_TORCHIERE` | media count (=1 for 136) | `0x80000` (`:394-397`) | — |
+| 130 | `TILENUM_OBJ_FIRE` | media count (=4) | `0x80000` | — |
+
+That is all — five tiles, three `if` blocks. Nothing else in `loadMapEntities`
+touches bits 8..15 or `0x80000`; the only other frame-field write in the loop is
+`mapSpriteInfo |= 0x200` for tiles 1..12 (doors, `src/Game.cpp:405-407`), a
+static frame index, not an animation. Verified by enumerating every
+`mapSpriteInfo` reference in `src/Game.cpp` (lines 375-494 for the loader).
+
+Caveat on the `0x80200` / `0x80300` constants: the low byte `0x200` / `0x300`
+*is* the `n7 << 8` value, so the OR is redundant with `n7 << 8` — they encode
+"2 frames" and "3 frames" respectively.
+
+### 7.3 Hard-coded per-tile render branches (no `0x80000` involved)
+
+`Render::renderSpriteObject` special-cases tiles after the generic frame
+computation, and several of these compute their own frame from `app->time`:
+
+- **Tile 134 `TILENUM_WATER_SPOUT`** — `src/Render.cpp:1648-1653`:
+  ```cpp
+  if (n3 == Enums::TILENUM_WATER_SPOUT) {
+      int n15 = app->time / 128;
+      this->renderSprite(x, y, z, n3, (n15 & 0x1), n2, renderMode, scaleFactor, n10);
+      return;
+  }
+  ```
+  A 2-frame ping-pong at 128 ms per frame (~7.8 fps), global phase (no per-sprite
+  offset), and the `return` skips the generic `renderSprite` at `:1727`. The frame
+  bits of `mapSpriteInfo` are ignored entirely. `mediaMappings[134..135] = 733,
+  735` → exactly 2 media images, matching the `& 1`.
+- Tile 156 `EYE_PORTAL` — `:1622-1641`, frame 1 when visible, else frame 0 plus a
+  1536 ms XOR flicker on bits 17/18.
+- Tile 136 `TORCHIERE` — `:1642-1647`, adds a `SFX_LIGHTGLOW1` sprite whose flags
+  XOR bit 17 by `n7 & 1` (that is where the flicker comes from — the tile itself
+  has only 1 media image).
+- Tile 240 `WATER_STREAM` — `:1548-1551` → `renderStreamSprite`, which scrolls the
+  texture T coordinate by `app->time * 3 & 0x3FF` (`src/Render.cpp:1495`), i.e.
+  UV scrolling, not frames.
+- Destroyable-object shake (`eType 10 / eSubType 2`) advances the frame from
+  `entity->param` every 200 ms, capped at 3 (`src/Render.cpp:1607-1615`).
+- Monsters go through `renderSpriteAnim` (`:1620-1621`).
+
+Gate to remember: the whole special-case chain lives in the `else` of
+`if ((n2 & 0x400000) != 0x0)` (`src/Render.cpp:1618-1620`). `0x400000` in
+*mapSpriteInfo* means "extended tile, +257", so a tile-134 sprite can never have
+it, and the spout branch is always reached. (The entity-side `info |= 0x400000`
+set by the spout conversion is a different field — it is the "spout is on" flag
+read by `Entity.cpp:1466-1470`.)
+
+### 7.4 Consequence for the water spout (both origins animate)
+
+- **Pre-placed map spout** (map00 sprite 44 at (14,10), `info 0x00000086`): no
+  `0x80000`, frame field 0 — yet it animates, because tile 134 never uses the
+  generic path (`src/Render.cpp:1648-1653`).
+- **Converted toilet/sink** (`mapSpriteInfo = (info & 0xFFFFFF00) | 134`,
+  `src/ArmorRepairSystem.cpp:61`): identical on screen. Tiles 123/127 receive no
+  load-time injection (they are absent from the §7.2 list), so no `0x80000` is
+  inherited and the same 128 ms branch runs.
+
+This corrects `docs/original-code/combat.md` §11 / the 2026-08-31 water-spout
+report, which claimed the spout is a static sprite because `0x80000` is missing.
+
+## 8. Sprite blend modes and color modulation (added 2026-08-31)
+
+### 8.1 The enum
+
+`src/Render.h:18-31` — a closed 14-value space (`RENDER_MAX = 14`; 11 is unused):
+
+| val | name | notes |
+|---|---|---|
+| 0 | `RENDER_NORMAL` | default for everything |
+| 1 | `RENDER_BLEND25` | |
+| 2 | `RENDER_BLEND50` | |
+| 3 | `RENDER_ADD` | full additive |
+| 4 | `RENDER_ADD75` | additive, 75 % |
+| 5 | `RENDER_ADD50` | additive, 50 % |
+| 6 | `RENDER_ADD25` | additive, 25 % |
+| 7 | `RENDER_SUB` | |
+| 8 | `RENDER_UNK` | no GL case → `assert(0)` (`src/GLES.cpp:702-705`) |
+| 9 | `RENDER_PERF` | debug ("rasterize debug") mode |
+| 10 | `RENDER_NONE` | draws nothing |
+| 12 | `RENDER_BLEND75` | "New from IOS", 3D path unreachable |
+| 13 | `RENDER_BLENDSPECIALALPHA` | "New from IOS", 3D path unreachable |
+
+`renderMode` travels as `Render::renderSprite(..., renderMode, ...)` /
+`draw2DSprite(..., renderMode, ...)` → `Render::setupTexture(tile, frame,
+renderMode, renderFlags)` (`src/Render.cpp:442`, `:356`), which forwards it to
+**both** back-ends: `gles::SetupTexture` (`src/Render.cpp:2057`) and the
+TinyGL span/palette selection (`src/Render.cpp:2060-2070`, plus
+`Render::setupPalette` from inside `renderSprite`, `src/Render.cpp:504-507`).
+
+Two overrides happen inside `Render::setupTexture` **before** dispatch
+(`src/Render.cpp:2048-2053`):
+
+```cpp
+if ((app->canvas->state == Canvas::ST_AUTOMAP) || (this->renderMode & 0x10) == 0x0) {
+    renderMode = 10;                 // RENDER_NONE — automap / span rasterizer off
+} else if (this->renderMode & 0x20) {
+    renderMode = 9;                  // RENDER_PERF — RENDER_RASTERIZE_DEBUG
+}
+```
+
+(`Render::renderMode` here is the *debug pipeline mask* `RENDER_OFF/TRANSFORM/
+CLIP/PROJECT/SPAN/RASTERIZE_SPAN/RASTERIZE_DEBUG`, `src/Render.h:75-83`, default
+`RENDER_DEFAULT = 31` — an unrelated field with a confusingly similar name.)
+
+### 8.2 GL path: exact state per mode
+
+All of it lives in one switch in `gles::SetupTexture`, `src/GLES.cpp:615-706`,
+guarded by a state cache:
+
+```cpp
+if (renderMode != this->renderMode || flags != this->flags)
+{
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE); // [GEC] Default Combiner
+    this->renderMode = renderMode;
+    this->flags = flags;
+    switch (renderMode) { ... }
+```
+
+| mode | `glBlendFunc(src, dst)` | primary color | fog |
+|---|---|---|---|
+| 0 `NORMAL` | `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` | `1,1,1,1` — or `1.0,0.5,0.5,1.0` if `RENDER_FLAG_BRIGHTREDSHIFT` | on |
+| 1 `BLEND25` | `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` | `1,1,1,0.25` | on |
+| 2 `BLEND50` | `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` | `1,1,1,0.50` | on |
+| 3 `ADD` | `SRC_ALPHA, ONE` | `1,1,1,1` | **off** |
+| 4 `ADD75` | `SRC_ALPHA, ONE` | `0.75,0.75,0.75,1` | **off** |
+| 5 `ADD50` | `SRC_ALPHA, ONE` | `0.50,0.50,0.50,1` | **off** |
+| 6 `ADD25` | `SRC_ALPHA, ONE` | `0.25,0.25,0.25,1` | **off** |
+| 7 `SUB` | `ZERO, ONE_MINUS_SRC_COLOR` | `1,1,1,1` | **off** |
+| 9 `PERF` | `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` | `1,1,1,0.50` | on |
+| 10 `NONE` | `ZERO, ONE` | *not set* (leaks previous color) | **off** |
+| 12 `BLEND75` | `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` | `1,1,1,0.75` | on |
+| 13 `BLENDSPECIALALPHA` | `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` | `1,1,1,canvas->blendSpecialAlpha` | on |
+
+Line anchors (`case` labels in `src/GLES.cpp`): `NORMAL` `:625`, `BLEND25`
+`:636`, `BLEND50` `:642`, `ADD` `:648`, `ADD75` `:654`, `ADD50` `:660`, `ADD25`
+`:666`, `SUB` `:672`, `PERF` `:679`, `NONE` `:686`, `BLEND75` `:691`,
+`BLENDSPECIALALPHA` `:697`.
+
+Facts that matter for a port:
+
+* **The modulation factor is a single global `glColor4f` per batch**, combined
+  with the texel by the *fixed* `GL_MODULATE` texture env (re-asserted at
+  `src/GLES.cpp:620` on every state change — that is what undoes a previous
+  `GL_COMBINE` from `TexCombineShift`). Vertex colors are **not** used at all:
+  `glDisableClientState(GL_COLOR_ARRAY)` (`src/GLES.cpp:98`) and the vertex
+  struct pushed to `glDrawElements` only has `xyzw` + `st`
+  (`src/GLES.cpp:559-571`). So `Cframe = Ctex·Ccolor`, `Aframe = Atex·Acolor`.
+* Additive modes keep `GL_SRC_ALPHA` as the *source* factor (not `GL_ONE`; the
+  original `glBlendFunc(GL_ONE, GL_ONE)` is commented out at `:650`), so
+  `dst += Atex · (k · Ctex)` — a transparent-mask texel with `A = 0` still adds
+  nothing, and half-transparent edges add half. `k` is the 1/0.75/0.5/0.25 above.
+* `RENDER_SUB` in GL is **not** a true subtract: `(GL_ZERO,
+  GL_ONE_MINUS_SRC_COLOR)` yields `dst = dst·(1 − Csrc)`, a multiply-by-inverse.
+  The software rasterizer really subtracts (§8.3) — a deliberate divergence.
+* Fog is toggled *by mode*: `fogMode = 2` (fog on, `fogColor`) for all
+  alpha-blend modes, `0` (fog off) for `ADD*`, `SUB`, `NONE`
+  (`src/GLES.cpp:709-715`). Additive sprites are therefore never fogged.
+  `fogMode == 1` (`fogBlack`) is read at `:711` but never written — dead.
+* **There is no depth buffer.** `glDisable(GL_DEPTH_TEST)` in `gles::SetGLState`
+  (`src/GLES.cpp:89`) and `Main.cpp:116`; `grep` finds no `glDepthMask`,
+  `glDepthFunc` or `glEnable(GL_DEPTH_TEST)` anywhere in `src/`. Correctness rests
+  entirely on the ordering of §8.5. `glEnable(GL_BLEND)` is permanent
+  (`src/GLES.cpp:104`).
+* `RENDER_FLAG_*` color shifts are a **second, orthogonal** channel applied in
+  the same block (`src/GLES.cpp:717-757`): `PULSATE` (512) overrides the blend
+  func with `(SRC_ALPHA, ONE)` and animates `glColor4ub(v,v,v,v)` from
+  `app->time >> 2` (triangle wave, floor 31); `RED/GREEN/BLUE_SHIFT` either
+  multiply via `glColor4ub` (when `RENDER_FLAG_MULTYPLYSHIFT`, iOS behavior) or
+  *add* a constant through `GL_COMBINE`/`GL_ADD` with a `GL_CONSTANT` of
+  64/255 per channel (`gles::TexCombineShift`, `src/GLES.cpp:1258-1279`) — the
+  J2ME/BREW look. Because these hijack the texture env, mode + flags must be
+  cached together, which is exactly what `:615` does.
+* The GL path also has one hard tile override *before* the switch:
+  `if (n == Enums::TILENUM_SCORCH_MARK) renderMode = Render::RENDER_SUB;`
+  (`src/GLES.cpp:609-611`), tile 212.
+
+The 2D image path duplicates the numbering independently in
+`Image::setRenderMode` (`src/Image.cpp:158-210`): 0 = `GL_REPLACE` + optional
+alpha test, 1/2/12/13 = alpha 0.25/0.5/0.75/`blendSpecialAlpha`, 3 =
+`glBlendFunc(GL_SRC_COLOR, GL_ONE)` with `GL_REPLACE`, 8 = modulate by the
+current font color. Note 3 differs from the 3D path's `(SRC_ALPHA, ONE)`.
+
+### 8.3 TinyGL software path: same factors, baked into the palette
+
+Two independent pieces:
+
+1. **Span function tables**, built once in the `Render` constructor
+   (`src/Render.cpp:50-110`): `_spanTrans[mode]` for sprites/transparent tiles,
+   `_spanTexture[mode]` for opaque wall textures; selected at
+   `src/Render.cpp:2065-2074`. Notably `ADD/ADD75/ADD50/ADD25` all point at the
+   *same* additive span (`src/Render.cpp:66-73`), and `_spanTrans[BLEND25]`
+   aliases the plain transparent span (`:60`).
+2. **Palette pre-scaling** in `Render::setupPalette` (`src/Render.cpp:1885-2022`).
+   When no `RENDER_FLAG_*` shift is active and `renderMode != 0`
+   (`:1981-2021`), the fog palette is copied into `scratchPalette` with a
+   per-mode RGB565 scale:
+
+| mode | palette transform (`src/Render.cpp`) | factor |
+|---|---|---|
+| 1 `BLEND25` | `(c & 0xE79C) >> 2` `:1992-1996` | 25 % |
+| 3 `ADD` | `(c & 0xF7DE) >> 0` `:1997-2001` | 100 % (only drops 1 LSB/channel) |
+| 4 `ADD75` | `((c & 0xE79C) >> 1) + ((c & 0xC718) >> 2)` `:2012-2017` | 75 % |
+| 5 `ADD50` | `(c & 0xE79C) >> 1` `:2002-2006` | 50 % |
+| 6 `ADD25` | `(c & 0xC718) >> 2` `:2007-2011` | 25 % |
+| default (2, 7, 9, 10, …) | `(c & 0xE79C) >> 1` `:1986-1991` | 50 % |
+
+The masks clear the low bits of each 5/6/5 field so the shift cannot bleed
+across channels. The span then combines with the destination
+(`src/Span.cpp:15-42`):
+
+```cpp
+blend25_565(dst,src) = ((dst & 0xF7DE) >> 1) + ((src & 0xC718) >> 2);
+blend50_565(dst,src) = ((dst & 0xF7DE) >> 1) + ((src & 0xF7DE) >> 1);
+add565 (dst,src)     = per-channel dst+src, clamped to 31/63/31;
+sub565 (dst,src)     = per-channel dst-src, clamped to 0;
+```
+
+**Cross-check of the semantics:** `RENDER_ADD50` = additive span
+(`spanAddTransparent`, `src/Span.cpp:171-185`, `*pixels = add565(*pixels,
+palette[texel])`) over a palette halved by `(c & 0xE79C) >> 1` — literally "add
+half the texel value", identical in meaning to the GL
+`glColor4f(0.5,0.5,0.5,1)` + `(SRC_ALPHA, ONE)`. `RENDER_SUB` uses a true
+per-channel clamped subtract here (`src/Span.cpp:230-244`) against a 50 %
+palette, whereas GL does `dst·(1−Csrc)`.
+
+Software quirks worth knowing (they explain small GL/TinyGL differences):
+`BLEND50` gets *both* the 50 % palette and `blend50_565`, so it ends up
+`dst/2 + src/4`; `_spanTrans[BLEND25]` writes the 25 % palette opaquely (no
+destination blend) while `_spanTexture[BLEND25]` blends it again.
+
+### 8.4 Who assigns a render mode
+
+Per-sprite storage is `mapSprites[S_RENDERMODE + spriteIdx]`
+(`src/Render.h:143`, base offset `numSprites * 3`, `src/LoadingManager.cpp:442`).
+
+**By tile number, at map load** — `Render::postProcessSprites`
+(`src/Render.cpp:2472-2494`; `n3` is the tile id, `+257` when
+`mapSpriteInfo & 0x400000`):
+
+| tile | mode | tile name |
+|---|---|---|
+| 479 | 0 `NORMAL` | `TILENUM_FLAT_LAVA` (extended id) |
+| 208, 234, 130, 242 | 3 `ADD` | fog-gray, anim-fire, obj-fire, fireball |
+| 178 | 3 `ADD` | `TILENUM_GLASS` |
+| 236 | 3 `ADD` | `TILENUM_AIR_VENT` |
+| 212 | 7 `SUB` | `TILENUM_SCORCH_MARK` |
+| 161 | 2 `BLEND50` | `TILENUM_HELL_HANDS` |
+| 244 | 4 `ADD75` | `TILENUM_BFG_BALL` / `ENERGY_END` |
+| anything else | 0 `NORMAL` | |
+
+The custom-sprite (48) and drop-sprite (16) pools are initialized to mode 0
+(`src/Render.cpp:2505`, `:2519`). `Game::loadMapEntities` re-asserts mode 3 for
+tile 236 (`src/Game.cpp:392`). `Entity::spawn`-side monster/decor sprites get 0
+(`src/Entity.cpp:76`). `Game::gsprite_alloc` resets 0 (`src/Game.cpp:1315`).
+
+**By code, per spawned effect:**
+
+* `Game::gsprite_allocAnim` (`src/Game.cpp:1344-1362`): tile 241 `POOF` → 4,
+  tile 234 `ANIM_FIRE` → 3 (+ scale 48), tile 242 `FIRE_BALL` → 3.
+* `Combat::allocMissile` stores the caller's mode
+  (`src/Combat.cpp:1683`); the value comes from the projectile switch
+  (`src/Combat.cpp:1481-1569`): proj 2 → 3 (tile 240), 3 → 3 (243), 4 → 0
+  (225/226), 5 → 4 (244), 6 → 0 (227), 7 → 3 (242), 8 → 3 (241), 9 → 0 (171),
+  10 → 3 (252), 11 → 3 (248), 13 → 0 (weapon tile).
+* Impact/explosion anim (`src/Combat.cpp:1384`) with the mode from
+  `src/Combat.cpp:1292-1363`: 4 for anims 242/252/243/244/235, 3 for the
+  buff-9 fog variant (tile 208), 0 otherwise.
+* BFG (`attackerWeaponProj == 5`) death flash: tile 244, mode 4, scale 32
+  (`src/Combat.cpp:1164-1165`).
+* Melee hit sparks 245/246/247: mode 5 `ADD50` (`src/Combat.cpp:1415`).
+* Monster status effects **force mode 0** so the color shift is visible:
+  `monsterEffects & 2/8/1` → `BLUE/RED/GREEN_SHIFT` and `renderMode = 0`
+  (`src/Render.cpp:1587-1598`).
+* Screen-space sprites: burning-player overlay draws tile 234 with mode 3
+  (`src/Combat.cpp:617`); the extra muzzle flash for weapons in mask `0x181`
+  draws with mode 5 (`src/Combat.cpp:833`); the weapon itself is always mode 0
+  (`src/Combat.cpp:785`).
+* Wall geometry (not sprites) in `Render::drawNodeGeometry`
+  (`src/Render.cpp:950-963`): tile 161 `HELL_HANDS` → `BLEND50`; tiles 302
+  `FADE` / 212 `SCORCH_MARK` → `NORMAL` on GL but `RENDER_SUB` on TinyGL
+  ("`[GEC] TinyGL Only like J2ME/BREW`"); tiles 479/480 `FLAT_LAVA*` → `NORMAL`
+  with `CULL_NONE`.
+* Tile-based override in the GL back-end only: tile 212 → `RENDER_SUB`
+  (`src/GLES.cpp:609-611`).
+
+### 8.5 The torchiere glow (tile 136 → tile 193 in `ADD50`)
+
+`src/Render.cpp:1643-1646`, inside the `else` of `if ((n2 & 0x400000) != 0)`:
+
+```cpp
+else if (n3 == Enums::TILENUM_OBJ_TORCHIERE) {          // tile 136
+    int zheight = ((10 * scaleFactor) / 65536) << 4;
+    n2 ^= (n7 & 0x1) << 17;
+    this->renderSprite(x, y, z + zheight, Enums::TILENUM_SFX_LIGHTGLOW1, 0,
+                       n2, Render::RENDER_ADD50, scaleFactor, n10);
+}
+```
+
+* Glow tile is 193 `TILENUM_SFX_LIGHTGLOW1` (`src/Enums.h:796`), frame **0**
+  (single media image), blend mode hard-coded `RENDER_ADD50` (5) — it does **not**
+  read `S_RENDERMODE` (which is 0 for tile 136, since 136 is absent from the
+  §8.4 table).
+* Vertical offset: `zheight = ((10 * scaleFactor) / 65536) << 4`. `scaleFactor`
+  arrives as `mapSprites[S_SCALEFACTOR] << 10` (`src/Render.cpp:1512`), so for
+  the default scale 64 → `scaleFactor = 65536` → `zheight = 10 << 4 = 160` in the
+  `z << 4` units used by `renderSprite`, i.e. +10 map-Z units. Scale is passed
+  through unchanged → the glow quad is exactly the size of the body quad.
+* `n2 ^= (n7 & 1) << 17` flips bit `0x20000` = horizontal mirror
+  (`src/GLES.cpp:520-525`, inverted logic `flags ^ 0x60000`) on odd frames. The
+  mutated `n2` is reused for the body draw below, so both flicker in sync. Tile
+  136 receives `0x80000` auto-animate at load (`src/Game.cpp:394-397`), which is
+  what advances `n7`.
+* **Order:** the branch does *not* `return`, so execution falls through to the
+  generic `this->renderSprite(x, y, z, n3, n7, n2, renderMode, scaleFactor, n10)`
+  at `src/Render.cpp:1728`. The glow is drawn **first**, the lamp body **over**
+  it. Both quads belong to one sprite entry, hence one sort key — the pair is
+  never split by the depth sort.
+
+### 8.6 Tile 240 `TILENUM_WATER_STREAM` — short note
+
+`src/Render.cpp:1548-1551` diverts the tile to `Render::renderStreamSprite`
+(`src/Render.cpp:1412-1495`) and returns. It is not a billboard and not frame
+animation: a single 4-vertex quad is stretched between two *world* points — the
+sprite position and either the camera/target point (`destX/destY/destZ`, entity
+index 1, `:1426-1447`) or another entity's sprite (`:1452-1463`) — with `CULL_NONE`
+(`:1465`). The illusion of flow comes from UV scrolling: `n36 = n31 -
+(app->time * 3 & 0x3FF)` (`src/Render.cpp:1486`) with the V span tiled 3×
+(`n32 = (n28 << 10) / tHeight * 3`, `:1473`). Blend mode is whatever
+`S_RENDERMODE` holds (`:1420`): 0 for a map-placed stream (240 is not in the
+§8.4 table), and 3 `RENDER_ADD` when it is spawned as projectile type 2
+(`src/Combat.cpp:1481-1486`). Its sort key is forced to `0x80000000`
+(`src/Render.cpp:848-851`) so it is drawn last, on top of everything.
+(This supersedes the §7.3 citation of `:1495` for the T scroll — the correct
+line is `:1486`.)
+
+### 8.7 Draw order: the mode never affects sorting
+
+* `Render::renderBSP` walks the visible nodes **back to front**:
+  `for (int i = this->numVisibleNodes - 1; i >= 0; --i)` — geometry first
+  (`drawNodeGeometry`), then that node's sprites (`src/Render.cpp:1752-1763`).
+* Inside a node, `Render::addSprite` (`src/Render.cpp:822-892`) computes a
+  view-space depth key `n3 = (x·mvp[2] + y·mvp[6] + z·mvp[10] >> 14) + mvp[14]`
+  (`:837-845`), applies **tile-based** biases, and inserts into the
+  `S_VIEWNEXT` list in *descending* key order (`:882-891`) — farthest drawn
+  first. Biases (`:846-873`): extended tiles `+6`; tiles 240/245/246/247 →
+  `0x80000000` (always last); `mapSpriteInfo & 0xF000000` → `+5`; player/hidden
+  flags `+1`; monsters `−1`; tiles 240-244/255 `−3`; 137/138/139 `+2`; 152 `+5`;
+  239 `−3`; `0x10000000` → `0x7fffffff` (always first).
+* The key is derived from position and tile only — `S_RENDERMODE` is never
+  consulted. There is **no separate additive pass and no batching by mode**:
+  every sprite issues its own `SetupTexture` + draw, and the only optimization is
+  the `(renderMode, flags)` state cache at `src/GLES.cpp:615`.
+* The sole "reorder for looks" hacks are the mastermind/caldex delayed-sprite
+  buffers, which defer specific tiles to after the whole walk
+  (`src/Render.cpp:1518-1541`, drained at `:1764-1771`).

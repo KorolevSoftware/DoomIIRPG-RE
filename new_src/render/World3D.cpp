@@ -78,6 +78,7 @@ in vec2 vUV;
 in float vFogDepth;
 uniform sampler2D uTexture; // R8 index texture
 uniform sampler2D uPalette; // RGBA8 palette LUT (256x1)
+uniform vec4 uColorMod;     // legacy primary color of the blend mode (GL_MODULATE)
 uniform int uFogEnabled;
 uniform float uFogStart;
 uniform float uFogEnd;
@@ -86,6 +87,9 @@ out vec4 fragColor;
 void main() {
 	float index = texture(uTexture, vUV).r;
 	vec4 col = texture(uPalette, vec2(index, 0.5));
+	// Fixed-pipeline GL_MODULATE texture env (src/GLES.cpp:620): Cout = Ctex*Ccolor,
+	// Aout = Atex*Acolor. Runs BEFORE fog, like the fixed pipeline does.
+	col *= uColorMod;
 	if (uFogEnabled != 0) {
 		// Fog affects RGB only (GL fog leaves alpha untouched) so transparent
 		// billboard texels stay transparent instead of fogging into a box.
@@ -136,6 +140,66 @@ std::vector<uint8_t> decodeSpriteRLE(const std::vector<uint8_t>& raw, int width,
 	return out;
 }
 
+// One row per legacy Render::RENDER_* value: the whole gles::SetupTexture
+// renderMode switch (src/GLES.cpp:615-706) plus its fog decision
+// (src/GLES.cpp:709-715), see docs/original-code/rendering.md §8.2 and ADR 0019.
+struct BlendMode {
+	GLenum src, dst; // glBlendFunc
+	float mod[4];    // legacy glColor4f primary color, applied via GL_MODULATE
+	bool fog;        // legacy fogMode == 2
+};
+
+constexpr int kRenderMax = 14; // Render::RENDER_MAX, src/Render.h:31
+
+// The additive rows deliberately keep GL_SRC_ALPHA as the SOURCE factor: the
+// glBlendFunc(GL_ONE, GL_ONE) variant is commented out at src/GLES.cpp:650. So
+// dst += Atex*(k*Ctex) and the transparent key still cuts the sprite out instead
+// of filling its bounding box with an opaque blob.
+// Row 7 keeps the GL meaning dst = dst*(1 - Csrc); the software rasterizer's
+// true clamped subtract (src/Span.cpp:230-244) is a divergence of the original
+// itself and we are porting the GL path (ADR 0019).
+// Rows 8/11/13 are unreachable for a 3D sprite (src/GLES.cpp:697-705) — see
+// warnRenderModeOnce below.
+constexpr BlendMode kBlendModes[kRenderMax] = {
+	/* 0  NORMAL   */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 1.00f }, true  }, // src/GLES.cpp:625-635
+	/* 1  BLEND25  */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 0.25f }, true  }, // :636-641
+	/* 2  BLEND50  */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 0.50f }, true  }, // :642-647
+	/* 3  ADD      */ { GL_SRC_ALPHA, GL_ONE,                 { 1.00f, 1.00f, 1.00f, 1.00f }, false }, // :648-653
+	/* 4  ADD75    */ { GL_SRC_ALPHA, GL_ONE,                 { 0.75f, 0.75f, 0.75f, 1.00f }, false }, // :654-659
+	/* 5  ADD50    */ { GL_SRC_ALPHA, GL_ONE,                 { 0.50f, 0.50f, 0.50f, 1.00f }, false }, // :660-665
+	/* 6  ADD25    */ { GL_SRC_ALPHA, GL_ONE,                 { 0.25f, 0.25f, 0.25f, 1.00f }, false }, // :666-671
+	/* 7  SUB      */ { GL_ZERO,      GL_ONE_MINUS_SRC_COLOR, { 1.00f, 1.00f, 1.00f, 1.00f }, false }, // :672-678
+	/* 8  UNK      */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 1.00f }, true  }, // no case: assert(0) at :702-705
+	/* 9  PERF     */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 0.50f }, true  }, // :679-685
+	/* 10 NONE     */ { GL_ZERO,      GL_ONE,                 { 1.00f, 1.00f, 1.00f, 1.00f }, false }, // :686-690
+	/* 11 (unused) */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 1.00f }, true  }, // no case: assert(0) at :702-705
+	/* 12 BLEND75  */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 0.75f }, true  }, // :691-696
+	/* 13 SPECIALA */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 1.00f }, true  }, // :697-701, alpha pinned to 1
+};
+
+// Modes 8/11 have no case in the legacy switch (default: assert(0),
+// src/GLES.cpp:702-705) and 13 needs canvas->blendSpecialAlpha (:697-701), for
+// which the rewrite has no analog. None of them is reachable from a 3D sprite,
+// but a shipping frame must not crash: we draw the table row above and log each
+// distinct offending value once (spec 2026-09-01-blend-modes G1.4).
+void warnRenderModeOnce(int mode) {
+	static bool logged[kRenderMax + 1] = {}; // last slot: everything out of range
+	const int slot = (mode >= 0 && mode < kRenderMax) ? mode : kRenderMax;
+	if (logged[slot]) return;
+	logged[slot] = true;
+	if (slot == kRenderMax) {
+		fprintf(stderr, "World3D: unknown render mode %d out of range, using RENDER_NORMAL\n", mode);
+	} else {
+		fprintf(stderr, "World3D: unknown render mode %d has no legacy GL path, "
+			"drawing it as alpha blend\n", mode);
+	}
+	fflush(stderr);
+}
+
+bool renderModeNeedsWarning(int mode) {
+	return mode == 8 || mode == 11 || mode == 13;
+}
+
 // Legacy Canvas::viewStepValues: 8 direction vectors (x,y), 45° apart.
 constexpr int kViewStepValues[16] = { 64, 0, 64, -64, 0, -64, -64, -64, -64, 0, -64, 64, 0, 64, 64, 64 };
 
@@ -180,6 +244,12 @@ constexpr int kTileNumMonsterMancubusLast = 40;
 constexpr int kTileNumBossCyberdemon = 54;       // src/Enums.h:699
 constexpr int kTileNumBossMastermind = 57;       // src/Enums.h:701
 
+// Torchiere glow branch (src/Render.cpp:1642-1647). The glow art tile has no
+// counterpart in new_src/domain/game/Enums.h, and the ADD50 value is a
+// renderer-side constant, so both stay local like the tile ids above.
+constexpr int kTileNumSfxLightGlow1 = 193; // src/Enums.h:796 TILENUM_SFX_LIGHTGLOW1
+constexpr int kRenderAdd50 = 5;            // src/Render.h:24 Render::RENDER_ADD50
+
 bool isImpFamily(int n) {
 	return n >= kTileNumMonsterImpFirst && n <= kTileNumMonsterImpLast;
 }
@@ -214,6 +284,7 @@ bool World3D::initialize() {
 	locFogStart_ = shader_.uniform("uFogStart");
 	locFogEnd_ = shader_.uniform("uFogEnd");
 	locFogColor_ = shader_.uniform("uFogColor");
+	locColorMod_ = shader_.uniform("uColorMod");
 
 	glGenVertexArrays(1, &vao_);
 	glBindVertexArray(vao_);
@@ -386,6 +457,9 @@ void World3D::begin(const Camera3D& camera) {
 	shader_.setFloat("uFogStart", fogStart_);
 	shader_.setFloat("uFogEnd", fogEnd_);
 	shader_.setVec4("uFogColor", fogColor_[0], fogColor_[1], fogColor_[2], fogColor_[3]);
+	// Identity modulation, matching the currentRenderMode_ = 0 tracker below
+	// (kBlendModes[0].mod). Uniforms survive across frames in the program object.
+	shader_.setVec4("uColorMod", 1.f, 1.f, 1.f, 1.f);
 	glBindVertexArray(vao_);
 
 	vertices_.clear();
@@ -420,28 +494,27 @@ void World3D::flush() {
 	vertexCount_ = 0;
 }
 
-// Legacy gles::SetupTexture renderMode switch (src/GLES.cpp:623-715): the
-// blend equation and fog toggle change per sprite mode; a pending batch is
-// flushed first so its vertices draw under their own state.
+// Legacy gles::SetupTexture renderMode switch (src/GLES.cpp:615-715), now a
+// kBlendModes lookup: the blend equation, the color modulation factor and the
+// fog toggle change per sprite mode; a pending batch is flushed first so its
+// vertices draw under their own state and uniform.
 void World3D::applyBatchState(int renderMode) {
-	// ADD/SUB run with fog off (fogMode = 0, src/GLES.cpp:651,675); fog is
-	// only ever enabled globally when fogEnabled_ is set.
-	const bool fogOn = (renderMode != 3 && renderMode != 7) && fogEnabled_;
-	if (renderMode == currentRenderMode_ && fogOn == currentFogOn_) return;
-	flush();
-	switch (renderMode) {
-	case 3:  // RENDER_ADD: dst += src (black fire backing adds nothing)
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE);                     // src/GLES.cpp:649
-		break;
-	case 7:  // RENDER_SUB: scorch marks darken
-		glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_COLOR);          // src/GLES.cpp:673
-		break;
-	default: // RENDER_NORMAL / alpha blends
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		break;
+	int mode = renderMode;
+	if (mode < 0 || mode >= kRenderMax || renderModeNeedsWarning(mode)) {
+		warnRenderModeOnce(mode);
+		if (mode < 0 || mode >= kRenderMax) mode = 0; // RENDER_NORMAL
 	}
+	const BlendMode& bm = kBlendModes[mode];
+	// The ADD/SUB/NONE rows run with fog off (fogMode = 0, src/GLES.cpp:709-715);
+	// fog is only ever enabled globally when fogEnabled_ is set.
+	const bool fogOn = bm.fog && fogEnabled_;
+	// Compare the clamped mode so an out-of-range value cannot defeat the cache.
+	if (mode == currentRenderMode_ && fogOn == currentFogOn_) return;
+	flush();
+	glBlendFunc(bm.src, bm.dst);
+	shader_.setVec4("uColorMod", bm.mod[0], bm.mod[1], bm.mod[2], bm.mod[3]);
 	shader_.setInt("uFogEnabled", fogOn ? 1 : 0);
-	currentRenderMode_ = renderMode;
+	currentRenderMode_ = mode;
 	currentFogOn_ = fogOn;
 }
 
@@ -543,6 +616,10 @@ void World3D::drawSky(const Camera3D& camera) {
 	shader_.setMat4("uMVP", identity);
 	shader_.setInt("uTexture", 0);
 	shader_.setInt("uPalette", 1);
+	// drawSky does not go through begin(), and uniforms live in the program
+	// object across frames: without this reset a modulated sprite mode from the
+	// previous frame (e.g. ADD50) would darken the sky (ADR 0019 point 4).
+	shader_.setVec4("uColorMod", 1.f, 1.f, 1.f, 1.f);
 	glBindVertexArray(vao_);
 
 	glActiveTexture(GL_TEXTURE0);
@@ -716,7 +793,28 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	if ((info & 0x80000) && frame > 0) {
 		frame = (i + timeMs_ / 100) % frame;
 	}
-	if (tileNum == 240 /* WATER_STREAM */) return; // needs special handling
+	if (tileNum == Enums::TILENUM_WATER_STREAM) return; // needs special handling
+
+	// ---- Hard-coded per-tile frame branches (src/Render.cpp:1622-1653) ----
+	// They live in the else of the 0x400000 test (:1618); a +257 sprite can
+	// never land on tile 134/156, so the branch is always reached for them and
+	// the mapSpriteInfo frame bits are overridden here.
+	if (tileNum == Enums::TILENUM_WATER_SPOUT) {
+		// src/Render.cpp:1648-1653: own 2-frame animator, 128 ms per frame,
+		// global phase (no per-sprite offset), frame bits ignored.
+		frame = (timeMs_ / 128) & 0x1;
+	} else if (tileNum == Enums::TILENUM_EYE_PORTAL) {
+		// src/Render.cpp:1622-1641 — only the "portal not visible" path:
+		// checkPortalVisibility (src/Render.cpp:2698) and portalState/
+		// portalInView are not ported, so frame 1 (active portal) is never
+		// selected. The flicker XORs the two flip bits every 1536 ms, and
+		// :1638 drops AUTO_ANIMATE from the flags handed to renderSprite.
+		frame = 0;
+		const int flick = (timeMs_ / 1536) & 0x3;
+		info ^= (flick & 0x1) << 17;
+		info ^= ((flick & 0x2) >> 1) << 18;
+		info &= ~Enums::SPRITE_FLAG_AUTO_ANIMATE;
+	}
 
 	int x = map.mapSprites[i + 0 * n];
 	int y = map.mapSprites[i + 1 * n];
@@ -734,6 +832,10 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 			z += h;
 		}
 	}
+
+	// Free-standing portal eyes float up (src/Render.cpp:1639-1641); the mask
+	// is the four wall-direction bits, so wall-mounted ones stay put.
+	if (tileNum == Enums::TILENUM_EYE_PORTAL && (info & 0xF000000) == 0) z += 288;
 
 	// Resolve texture (mediaId = mediaMappings[tileNum] + frame).
 	const auto& m = media.mappings();
@@ -772,7 +874,32 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	// branch. Monsters/pickups have no such flags -> billboards.
 	const bool isWall = (info & (SpriteInfo::ORIENTED | Enums::SPRITE_FLAG_FLAT)) != 0;
 	if (!isWall) {
+		const bool isTorchiere = (tileNum == Enums::TILENUM_OBJ_TORCHIERE);
+		// src/Render.cpp:1645: the flicker XOR mutates n2 in place BEFORE both
+		// quads, so the body reuses the mutated flags. Kept in that position
+		// here. Tile 136 has a single frame, so frame is always 0 and the XOR is
+		// a no-op — in the original too.
+		if (isTorchiere) info ^= (frame & 0x1) << 17;
 		drawBillboardPart(map, media, x, y, z, tileNum, mediaId, info, scaleFactor);
+		// DELIBERATE DEVIATION FROM THE ORIGINAL, requested by the user on
+		// 2026-09-01 — NOT a port bug, please do not "fix" it back.
+		// The original draws the glow FIRST and the lamp body ON TOP of it: the
+		// torchiere branch src/Render.cpp:1643-1646 emits tile 193 in ADD50 at
+		// src/Render.cpp:1646 and has NO return, so control falls through to the
+		// shared body draw at src/Render.cpp:1728. There is no depth buffer, so
+		// draw order is the compositing order. The user prefers the glow over
+		// the lamp (it reads as lit from the inside).
+		// To restore legacy behaviour: move this whole if-block back above the
+		// drawBillboardPart call directly above it.
+		if (isTorchiere) {
+			drawTorchiereGlow(map, media, x, y, z, info, scaleFactor);
+			// The glow leaves ADD50 active (0.5 modulation, fog off). Restore
+			// this sprite's own mode so the next sprite or polygon cannot
+			// inherit it; applyBatchState flushes the glow quad under ADD50
+			// first. Texture state needs no restore — every draw path rebinds
+			// through its own currentTex_ check.
+			applyBatchState(renderMode);
+		}
 	} else {
 		// ---- Wall decal / plane (flags & (ORIENTED|FLAT)) != 0 ----
 		// Legacy renderSprite "Wall" branch: quad laid in the wall plane.
@@ -1060,6 +1187,42 @@ void World3D::drawBillboardPart(const MapData& map, const MediaLoader& media,
 	Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
 	if (vertices_.size() + 6 > kMaxVerts) flush();
 	vertices_.insert(vertices_.end(), tri, tri + 6);
+}
+
+// Torchiere light glow: one extra billboard of tile 193 (frame 0) in ADD50.
+// The original draws it BEFORE the lamp body (src/Render.cpp:1646, no return,
+// falls through to the body at src/Render.cpp:1728); we draw it after, on top
+// of the lamp, by user request 2026-09-01 — see the call site in drawSprite.
+// Port of src/Render.cpp:1643-1646; the mode is
+// hardcoded there, ignoring the sprite's own S_RENDERMODE (0 for tile 136).
+void World3D::drawTorchiereGlow(const MapData& map, const MediaLoader& media,
+	int x, int y, int zRenderUnits, int flags, int scaleFactor) {
+	// src/Render.cpp:1644 — +10 map units at the sprite's own scale, in the
+	// z<<4 render units used by the caller (160 at the default scale 65536).
+	const int zheight = ((10 * scaleFactor) / 65536) << 4;
+
+	const auto& m = media.mappings();
+	if (kTileNumSfxLightGlow1 >= (int)m.mappings.size()) return;
+	const int mediaId = m.mappings[kTileNumSfxLightGlow1]; // frame 0 is hardcoded at :1646
+	if (mediaId < 0) return;
+	// Tile 193 is not a map00 sprite, so uploadMapTextures never preloaded it;
+	// this is the lazy path (MediaLoader::finalize loads all 1024 media,
+	// new_src/io/Media.cpp:110-150).
+	if (!spriteTexByMedia_.count(mediaId) &&
+		!ensureSpriteTexture(media, kTileNumSfxLightGlow1, mediaId)) {
+		static bool logged = false;
+		if (!logged) {
+			logged = true;
+			fprintf(stderr, "World3D: torchiere glow media %d (tile %d) failed to upload\n",
+				mediaId, kTileNumSfxLightGlow1);
+			fflush(stderr);
+		}
+		return;
+	}
+
+	applyBatchState(kRenderAdd50);
+	drawBillboardPart(map, media, x, y, zRenderUnits + zheight,
+		kTileNumSfxLightGlow1, mediaId, flags, scaleFactor);
 }
 
 // Stacked leg/torso/head character renderer. Port of legacy
@@ -1418,6 +1581,21 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 				else if (tn >= 137 && tn <= 139) d += 2;           // :866-868
 				else if (tn == 152) d += 5;                        // crate, :869-871
 				else if (tn == 239) d -= 3;                        // :872-874
+				// DELIBERATE DEVIATION from the original (user request
+				// 2026-09-01): fire (tileNum 130) must draw OVER the scorch
+				// stain (tileNum 212). This is NOT a port bug fix - the
+				// original draws the scorch LAST, i.e. on top: the pair is
+				// teleported onto the same tile by the map00 cutscene
+				// (LERPSPRITE 25/159, 32/160, 31/161), so x, y and the
+				// height-snapped Z are bit-identical and the sort keys tie
+				// exactly; legacy addSprite resolves an equal key by
+				// ascending sprite index (src/Render.cpp:880-893, leaf chain
+				// built in descending index by src/Render.cpp:2396-2397,2494,
+				// walked head->tail by src/Render.cpp:1757-1759), and the
+				// scorch has the higher index. +2 makes the scorch "farther"
+				// so it is emitted first. To restore original behaviour,
+				// delete this one branch - nothing else depends on it.
+				else if (tn == 212) d += 2;
 			}
 		}
 		return d;

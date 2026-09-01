@@ -7,6 +7,7 @@
 #include "domain/game/Enums.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapBits.h"
+#include "io/Localization.h"
 
 namespace newcore {
 
@@ -38,19 +39,29 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	queueAdvanceTurn = false;
 
 	// Load-time AUTO_ANIMATE injection (src/Game.cpp:374-397): raw maps carry
-	// no animation bits — OBJ_FIRE 130 / TORCHIERE 136 / ANIM_FIRE 234 get
-	// 0x80000 plus the frame count in bits 8-15. Counts are the mediaMappings
-	// ranges, verified against tmp_newMappings.bin: 130 -> 726..730 = 4,
-	// 136 -> 736..737 = 1; ANIM_FIRE 234 is forced to 4 (src/Game.cpp:380-382).
+	// no animation bits — the five tiles below get 0x80000 plus the frame count
+	// in bits 8-15. Counts are the mediaMappings ranges, verified against
+	// tmp_newMappings.bin: 130 -> 726..730 = 4, 136 -> 736..737 = 1; ANIM_FIRE
+	// 234 is forced to 4 (:380-382), EYE_PORTAL 156 to 2 (:383-387) and
+	// AIR_VENT 236 to 3 (:388-392). The 0x200 / 0x300 in the legacy constants
+	// 0x80200 / 0x80300 are just the same n7 << 8 ORed twice, so the count is
+	// written once here. Legacy also sets S_RENDERMODE = 3 for 236 (:392) —
+	// the postProcessSprites port below writes the same value for that tile.
+	// Invariant (src/Render.cpp:1545): 0x80000 with a zero count divides by
+	// zero, so every branch here must produce frameCount >= 1.
 	for (int i = 0; i < map.numSprites; ++i) {
 		const int info = map.mapSpriteInfo[i];
 		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
 		int frameCount;
-		if (tileNum == 130 || tileNum == 234) frameCount = 4;
-		else if (tileNum == 136)              frameCount = 1;
+		if (tileNum == Enums::TILENUM_OBJ_FIRE ||
+		    tileNum == Enums::TILENUM_ANIM_FIRE)      frameCount = 4;
+		else if (tileNum == Enums::TILENUM_AIR_VENT)  frameCount = 3;
+		else if (tileNum == Enums::TILENUM_EYE_PORTAL) frameCount = 2;
+		else if (tileNum == Enums::TILENUM_OBJ_TORCHIERE) frameCount = 1;
 		else continue;
-		map.mapSpriteInfo[i] = (info & 0xFFFF00FF) | (frameCount << 8) | 0x80000;
+		map.mapSpriteInfo[i] = (info & 0xFFFF00FF) | (frameCount << 8) |
+		                       Enums::SPRITE_FLAG_AUTO_ANIMATE;
 	}
 
 	// Per-sprite render mode (src/Render.cpp:2459-2495 postProcessSprites):
@@ -76,6 +87,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	const EntityDef* const spriteWallDef = defs.find(Enums::ET_SPRITEWALL, 0);          // :371
 	const EntityDef* const spriteWallNoclipDef = defs.find(Enums::ET_NONOBSTRUCTING_SPRITEWALL, 0);
 	numDestroyableObj = 0;                        // src/Game.cpp:448-450
+	destroyedObj = 0;                             // src/Game.cpp:679-680 (unloadMap)
 	int census[Enums::ET_MAX] = { 0 };
 	int numLinked = 0;
 	int numDeflessWalls = 0;
@@ -311,6 +323,136 @@ void Game::openCrate(Entity* e) {
 	db.unlinkEntity(e);                        // (:390)
 	facingDirty = true;                        // deviation: drop the crate name from the HUD this turn
 	std::fprintf(stderr, "[use] crate opened sprite=%d\n", e->getSprite());
+}
+
+// ---- Damage / death dispatch (ADR 0018) ----
+
+// Entity::pain (src/Entity.cpp:280-393) reduced to its dispatch: the
+// (info & 0x20000) pre-guard (:285-287) plus the eType switch. The legacy
+// return value is the boss staticFunc result, false everywhere else.
+bool Game::entityPain(Entity* e, int damage) {
+	if (e == nullptr || e->def == nullptr) return false;
+	if ((e->info & Entity::kInfoActive) == 0) return false;   // :285-287
+	switch (e->def->eType) {
+	case Enums::ET_MONSTER:                                   // :288-369
+		return monsters.painMonster(e, damage, combat.attackerWeaponId);
+	case Enums::ET_ATTACK_INTERACTIVE:                        // :371-391
+		return painProp(e);
+	default:
+		return false;                                         // legacy has no other arm
+	}
+}
+
+// Entity::died (src/Entity.cpp:424-521) reduced to its dispatch: the pre-guard
+// of :431-433 plus the eType switch.
+//
+// Legacy clears `info &= ~0x20000` once, before the switch (:434), for every
+// eType. Here the clear is repeated in EVERY arm instead of being hoisted,
+// because MonsterSystem::diedMonster re-checks that bit and early-returns
+// (MonsterSystem.cpp:196) — clearing it up front would silently kill the
+// monster death path. So the arms that have no body (default, and the ET_CORPSE
+// stub of group G4) must still do the clear, or their entity would stay
+// damageable forever (calcHitEntity's active gate, Combat.cpp:367-369).
+//
+// The monster->flags & 0x4 half of :431 is not ported (diedMonster never had
+// it — adding it would change monster deaths).
+void Game::entityDied(Entity* e, bool giveXP) {
+	if (e == nullptr || e->def == nullptr) return;
+	if ((e->info & Entity::kInfoActive) == 0) return;         // :431-433
+	switch (e->def->eType) {
+	case Enums::ET_MONSTER:                                   // :459-521
+		monsters.diedMonster(e, giveXP);                      // clears kInfoActive itself (:434)
+		break;
+	case Enums::ET_ATTACK_INTERACTIVE:                        // :437-447
+		diedProp(e);                                          // clears kInfoActive itself (:434)
+		break;
+	case Enums::ET_CORPSE:                                    // :448-458 (group G4)
+		e->info &= ~Entity::kInfoActive;                      // :434
+		std::fprintf(stderr, "[combat] corpse died arm deferred sprite=%d\n", e->getSprite());
+		break;
+	default:
+		e->info &= ~Entity::kInfoActive;                      // :434, legacy has no other arm
+		break;
+	}
+}
+
+// ET_ATTACK_INTERACTIVE arm of Entity::pain (src/Entity.cpp:371-391). Props
+// have no health: the hit destroys them here, and Combat's stage-1 tail then
+// calls entityDied for the message/XP. Particles (:375,:381,:384) and sound
+// 1038 (:376) have no subsystem yet.
+bool Game::painProp(Entity* e) {
+	const int sprite = e->getSprite();
+	if (map_ == nullptr || sprite < 0 || sprite >= map_->numSprites) return false;
+	const int sub = e->def->eSubType;
+	if (sub == Enums::INTERACT_BARRICADE) {                   // :373-378
+		// Broken frame 1 in the frame byte; the entity survives but stops
+		// blocking, so the player can walk through the wreck.
+		map_->mapSpriteInfo[sprite] = (map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x100;
+		db.unlinkEntity(e);                                   // :377
+		std::fprintf(stderr, "[combat] barricade broken sprite=%d\n", sprite);
+	} else {
+		if (sub == Enums::INTERACT_PICKUP) {                  // :383-386
+			// Particle burst type 1 / color -1 (white upward jet, :384) has no
+			// subsystem yet.
+			turnEntityIntoWaterSpout(e);                      // :385
+			// Legacy takes updateFacingEntity from died (:527); the rewrite's
+			// entityDied default arm (which this entity now reaches, eType 14)
+			// has no such latch, so the HUD name swap is armed here.
+			facingDirty = true;
+			return false;                                     // :386 early return: no removeEntity, no hide bit
+		}
+		db.removeEntity(e);                                   // :388; also sets 0x10000 (:390)
+		e->info |= Entity::kInfoDirty;                        // :389
+		std::fprintf(stderr, "[combat] prop destroyed sprite=%d sub=%d\n", sprite, sub);
+	}
+	facingDirty = true;                // rewrite latch: the target is gone from the HUD
+	return false;
+}
+
+// ET_ATTACK_INTERACTIVE arm of Entity::died (src/Entity.cpp:437-447): name the
+// prop in message 89, 5 XP, and drop it from the map-completion counter.
+void Game::diedProp(Entity* e) {
+	e->info &= ~Entity::kInfoActive;                          // :434
+	const Localization* loc = combat.env().loc;
+	if (loc != nullptr) {
+		// Legacy composes Entity::name = def->name | 0x400, i.e. the ingame
+		// text of def->name (PlayerActions.cpp:168-174 uses the same rule).
+		std::string args[1] = { Localization::titleOf(loc->get(kTextIngame, e->def->name)) };
+		combat.centerMessage(89, args, 1);                    // :438-442
+	}
+	Player* player = combat.env().player;
+	if (player != nullptr) player->addXP(5);                  // :444
+	if (e->def->eSubType != Enums::INTERACT_PICKUP &&
+	    e->def->eSubType != Enums::INTERACT_CRATE) {
+		++destroyedObj;                                       // destroyedObject(sprite) (:445-446)
+	}
+	std::fprintf(stderr, "[combat] prop died sprite=%d destroyed=%d/%d\n",
+		e->getSprite(), destroyedObj, numDestroyableObj);
+}
+
+// src/ArmorRepairSystem.cpp:56-63 (nothing armor-related happens there; the
+// class is just where the original parked it). Exactly the legacy four
+// statements, minus the entity `name` copy: the rewrite's Entity has no name
+// field, every reader goes through def->name, and the new def already carries
+// the spout's name 133 (docs/original-code/combat.md §11.1).
+//
+// What is deliberately absent: no unlink/relink (the entity keeps its tile
+// link and sprite slot), no hide bit 0x10000, no Z/scale change. Blocking ends
+// on its own because the new eType 14 ET_DECOR_NOCLIP is in none of the solid
+// masks. Note the sprite-info mask is 0xFFFFFF00, not the frame mask
+// 0xFFFF00FF used above: the tile number is the low byte and frame bits 8-15
+// survive.
+void Game::turnEntityIntoWaterSpout(Entity* e) {
+	if (e == nullptr || map_ == nullptr || defs_ == nullptr) return;
+	const int sprite = e->getSprite();
+	if (sprite < 0 || sprite >= map_->numSprites) return;
+	const EntityDef* def = defs_->lookup(Enums::TILENUM_WATER_SPOUT);
+	if (def == nullptr) return;
+	e->def = def;                                             // :59
+	map_->mapSpriteInfo[sprite] =
+		(map_->mapSpriteInfo[sprite] & 0xFFFFFF00) | Enums::TILENUM_WATER_SPOUT; // :61
+	e->info |= Entity::kInfoDirty;                             // :62 (0x400000)
+	std::fprintf(stderr, "[combat] water spout sprite=%d\n", sprite);
 }
 
 // ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----

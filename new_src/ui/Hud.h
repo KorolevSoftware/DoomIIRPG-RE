@@ -101,6 +101,19 @@ public:
 	void setCinTitle(const std::string& text, int durationMs);
 	void clearCinematicText();
 
+	// ---- DEBUG POSITION OVERLAY — REWRITE-ONLY, NOT A PORT ----
+	// There is no counterpart in src/: this exists purely to make acceptance
+	// testing possible (we name tiles like (12,17) and the player needs to see
+	// where he stands). Toggled with B (GameLoop.cpp), on by default.
+	// Coordinates arrive as plain ints so ui/ keeps its no-domain include rule.
+	// viewX/viewY are the INTERPOLATED (actual) canvas position, angle the raw
+	// accumulated view angle; the tile shift and the &0x3FF>>7 direction index
+	// are applied here.
+	void drawDebugPosition(Graphics2D& g, const Font& font,
+		int viewX, int viewY, int viewAngle);
+	void toggleDebugPosition() { debugPosition_ = !debugPosition_; }
+	bool debugPosition() const { return debugPosition_; }
+
 	void update(int timeMs);
 	// msgCount = 0 (menu open / ST_CAMERA entry, src/Canvas.cpp:1208).
 	void clearMessages() { messages_.clear(); }
@@ -195,6 +208,10 @@ private:
 	std::string cinTitleText_;
 	int cinTitleTime_ = 0;
 	int cinTitleDuration_ = 0;
+
+	// Debug position overlay (rewrite-only, see drawDebugPosition): starts on
+	// because the user asked to see the coordinates by default.
+	bool debugPosition_ = true;
 
 	// Cockpit overlay toggle (initially false like the legacy memset,
 	// src/Hud.cpp:24-26).
