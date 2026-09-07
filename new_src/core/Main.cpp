@@ -15,6 +15,7 @@
 #include "io/Tables.h"
 #include "io/ZipArchive.h"
 #include "render/api/RenderBackend.h"
+#include "render/api/TextureStore.h"
 #include "render/World3D.h"
 #include "text/Font.h"
 #include "text/Text.h"
@@ -285,6 +286,15 @@ int main(int argc, char* argv[]) {
 	} else if (!tables.skyTexelB.empty() && !tables.skyPaletteB.empty()) {
 		world.uploadSky(tables.skyTexelB, tables.skyPaletteB);
 	}
+	// Texture memory after the font, the UI sheets and the map media: the one
+	// number that shows what a backend's storage choice costs (spec §4.3 —
+	// GL keeps indices + LUT, SDL expands to 32 bits).
+	{
+		const size_t texBytes = app.renderer().textures().textureBytes();
+		std::fprintf(stdout, "renderer: %s, textures: %zu bytes (%.1f MB)\n",
+			app.renderer().name(), texBytes, (double)texBytes / (1024.0 * 1024.0));
+	}
+
 	// Fog: disabled for now. Legacy takes fog values from the map/save
 	// (world.setFog(ARGB, fogMin, fogRange); alpha==0 disables). Re-enable
 	// with map-provided values when the loading pipeline supplies them.

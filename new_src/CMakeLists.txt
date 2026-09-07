@@ -16,7 +16,7 @@ file(GLOB_RECURSE SOURCE_FILES
 
 # render/api  -> dr_render_core (backend-neutral, no GL, no SDL, no game deps)
 # render/gl   -> dr_render_gl
-# render/sdl  -> dr_render_sdl (added with its first source, spec group G5)
+# render/sdl  -> dr_render_sdl
 # Everything else stays in the executable, which may not compile the backend
 # sources twice.
 list(FILTER SOURCE_FILES EXCLUDE REGEX "/render/(api|gl|sdl)/")
@@ -37,10 +37,16 @@ if(APPLE)
 endif()
 target_link_libraries(dr_render_gl PRIVATE SDL2::SDL2)   # platform/Window.h only
 
+file(GLOB RENDER_SDL_SOURCES "render/sdl/*.cpp")
+file(GLOB RENDER_SDL_HEADERS "render/sdl/*.h")
+add_library(dr_render_sdl STATIC ${RENDER_SDL_SOURCES} ${RENDER_SDL_HEADERS})
+target_link_libraries(dr_render_sdl PUBLIC dr_render_core SDL2::SDL2)
+
 add_executable(DoomIIRPG ${HEADER_FILES} ${SOURCE_FILES})
 
 target_link_libraries(DoomIIRPG
 	dr_render_gl
+	dr_render_sdl
 	SDL2::SDL2
 	ZLIB::ZLIB
 	OpenGL::GL
@@ -55,7 +61,7 @@ set_target_properties(DoomIIRPG PROPERTIES
 )
 
 # Same language level and dialect flags for every target.
-foreach(tgt DoomIIRPG dr_render_core dr_render_gl)
+foreach(tgt DoomIIRPG dr_render_core dr_render_gl dr_render_sdl)
 	set_target_properties(${tgt} PROPERTIES
 		CXX_STANDARD 17
 		CXX_STANDARD_REQUIRED ON

@@ -6,6 +6,7 @@
 #include "render/api/RenderBackend.h"
 // The only translation unit allowed to name concrete backends (spec §4.3).
 #include "render/gl/GlRenderBackend.h"
+#include "render/sdl/SdlRenderBackend.h"
 
 namespace newcore {
 
@@ -31,14 +32,15 @@ bool parseBackendKind(const char* text, BackendKind& out) {
 }
 
 bool backendKindAvailable(BackendKind kind) {
-	// render/sdl/ arrives with spec group G5; until then only GL exists.
-	return kind == BackendKind::OpenGL;
+	// Both implementations are built (spec groups G2-G5); the SDL one has no
+	// 3D world yet (G6), which is a picture difference, not availability.
+	return kind == BackendKind::OpenGL || kind == BackendKind::SdlRender;
 }
 
 BackendKind resolveBackendKind(BackendKind requested) {
 	if (backendKindAvailable(requested)) return requested;
 	std::fprintf(stderr,
-		"renderer: backend '%s' is not built yet (spec group G5); falling back to 'gl'\n",
+		"renderer: backend '%s' is not built in this binary; falling back to 'gl'\n",
 		backendKindName(requested));
 	return BackendKind::OpenGL;
 }
@@ -48,7 +50,7 @@ std::unique_ptr<RenderBackend> createRenderBackend(BackendKind kind) {
 	case BackendKind::OpenGL:
 		return std::make_unique<GlRenderBackend>();
 	case BackendKind::SdlRender:
-		return nullptr;
+		return std::make_unique<SdlRenderBackend>();
 	}
 	return nullptr;
 }
