@@ -4,11 +4,12 @@
 #include <cstdint>
 #include <vector>
 
-#include "render/gl/Texture.h"
+#include "render/api/Texture.h"
 
 namespace newcore {
 
-class SpriteBatch;
+class Draw2D;
+class TextureStore;
 
 // Renders the game's fixed-width font (Font.bmp). Each glyph is 12x16 and the
 // sheet is laid out as a 16-column grid. Text layout (anchors, per-char color,
@@ -32,8 +33,8 @@ public:
 	Font& operator=(const Font&) = delete;
 
 	// Uploads the indexed font bitmap.
-	bool upload(const std::vector<uint8_t>& indices, int w, int h,
-		const std::vector<uint16_t>& palette);
+	bool upload(TextureStore& store, const std::vector<uint8_t>& indices,
+		int w, int h, const std::vector<uint16_t>& palette);
 
 	bool valid() const { return tex_.valid(); }
 	const Texture& texture() const { return tex_; }
@@ -43,7 +44,7 @@ public:
 	static void getCharIndices(char c, int* index1, int* index2);
 
 	// Draws one glyph at (x,y) in canvas coords. rotateMode 0..8.
-	void drawChar(SpriteBatch& batch, char c, int x, int y, int rotateMode,
+	void drawChar(Draw2D& dev, char c, int x, int y, int rotateMode,
 		uint8_t r = 255, uint8_t g = 255, uint8_t b = 255, uint8_t a = 255) const;
 
 private:

@@ -7,98 +7,12 @@
 #include "domain/game/Enums.h"
 #include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
+#include "render/api/RenderModes.h"
+#include "render/api/Scene3D.h"
 
 namespace newcore {
 
 namespace {
-
-// Saves an indexed texture (indices + RGB565 palette) as a 24-bit BMP so it
-// can be inspected on disk before upload. Transparent color 0xF81F is written
-// as magenta so the viewer can see where transparency would apply.
-void saveIndexedBmp(const char* path, const std::vector<uint8_t>& indices, int w, int h,
-	const std::vector<uint16_t>& palette) {
-	if (w <= 0 || h <= 0) return;
-	int rowSize = ((w * 3) + 3) & ~3;
-	int imageSize = rowSize * h;
-	int dataOff = 54;
-
-	FILE* f = fopen(path, "wb");
-	if (!f) return;
-	uint8_t header[54] = { 0 };
-	header[0] = 'B'; header[1] = 'M';
-	uint32_t fileSize = dataOff + imageSize;
-	std::memcpy(header + 2, &fileSize, 4);
-	std::memcpy(header + 10, &dataOff, 4);
-	uint32_t hdrSize = 40; std::memcpy(header + 14, &hdrSize, 4);
-	int32_t w32 = w; std::memcpy(header + 18, &w32, 4);
-	int32_t h32 = h; std::memcpy(header + 22, &h32, 4);
-	uint16_t planes = 1; std::memcpy(header + 26, &planes, 2);
-	uint16_t bpp = 24; std::memcpy(header + 28, &bpp, 2);
-	fwrite(header, 1, 54, f);
-
-	// BMP rows are bottom-up.
-	std::vector<uint8_t> row(rowSize, 0);
-	for (int y = h - 1; y >= 0; --y) {
-		for (int x = 0; x < w; ++x) {
-			uint8_t idx = indices[y * w + x];
-			uint16_t c = (idx < palette.size()) ? palette[idx] : 0;
-			uint8_t r5 = (c >> 11) & 0x1F, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
-			uint8_t r = (r5 << 3) | (r5 >> 2);
-			uint8_t g = (g6 << 2) | (g6 >> 4);
-			uint8_t b = (b5 << 3) | (b5 >> 2);
-			if (c == 0xF81F) { r = 0xFF; g = 0x00; b = 0xFF; } // magenta = transparent
-			row[x * 3 + 0] = b;
-			row[x * 3 + 1] = g;
-			row[x * 3 + 2] = r;
-		}
-		fwrite(row.data(), 1, rowSize, f);
-	}
-	fclose(f);
-}
-
-const char* kWorldVertex = R"(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec2 aUV;
-uniform mat4 uMVP;
-uniform mat4 uView; // view matrix for eye-space depth (fog)
-out vec2 vUV;
-out float vFogDepth; // eye-space depth (positive forward)
-void main() {
-	vUV = aUV;
-	vec4 eye = uView * vec4(aPos, 1.0);
-	vFogDepth = -eye.z;
-	gl_Position = uMVP * vec4(aPos, 1.0);
-}
-)";
-
-const char* kWorldFragment = R"(
-#version 330 core
-in vec2 vUV;
-in float vFogDepth;
-uniform sampler2D uTexture; // R8 index texture
-uniform sampler2D uPalette; // RGBA8 palette LUT (256x1)
-uniform vec4 uColorMod;     // legacy primary color of the blend mode (GL_MODULATE)
-uniform int uFogEnabled;
-uniform float uFogStart;
-uniform float uFogEnd;
-uniform vec4 uFogColor;
-out vec4 fragColor;
-void main() {
-	float index = texture(uTexture, vUV).r;
-	vec4 col = texture(uPalette, vec2(index, 0.5));
-	// Fixed-pipeline GL_MODULATE texture env (src/GLES.cpp:620): Cout = Ctex*Ccolor,
-	// Aout = Atex*Acolor. Runs BEFORE fog, like the fixed pipeline does.
-	col *= uColorMod;
-	if (uFogEnabled != 0) {
-		// Fog affects RGB only (GL fog leaves alpha untouched) so transparent
-		// billboard texels stay transparent instead of fogging into a box.
-		float f = clamp((uFogEnd - vFogDepth) / max(uFogEnd - uFogStart, 1e-6), 0.0, 1.0);
-		col.rgb = mix(uFogColor.rgb, col.rgb, f);
-	}
-	fragColor = col;
-}
-)";
 
 // Column-RLE decode for sprite texels (Size != width*height). Faithful port of
 // python tools/extract_textures.py decode_sprite. Bounds are the 4 mediaBounds
@@ -138,66 +52,6 @@ std::vector<uint8_t> decodeSpriteRLE(const std::vector<uint8_t>& raw, int width,
 		}
 	}
 	return out;
-}
-
-// One row per legacy Render::RENDER_* value: the whole gles::SetupTexture
-// renderMode switch (src/GLES.cpp:615-706) plus its fog decision
-// (src/GLES.cpp:709-715), see docs/original-code/rendering.md §8.2 and ADR 0019.
-struct BlendMode {
-	GLenum src, dst; // glBlendFunc
-	float mod[4];    // legacy glColor4f primary color, applied via GL_MODULATE
-	bool fog;        // legacy fogMode == 2
-};
-
-constexpr int kRenderMax = 14; // Render::RENDER_MAX, src/Render.h:31
-
-// The additive rows deliberately keep GL_SRC_ALPHA as the SOURCE factor: the
-// glBlendFunc(GL_ONE, GL_ONE) variant is commented out at src/GLES.cpp:650. So
-// dst += Atex*(k*Ctex) and the transparent key still cuts the sprite out instead
-// of filling its bounding box with an opaque blob.
-// Row 7 keeps the GL meaning dst = dst*(1 - Csrc); the software rasterizer's
-// true clamped subtract (src/Span.cpp:230-244) is a divergence of the original
-// itself and we are porting the GL path (ADR 0019).
-// Rows 8/11/13 are unreachable for a 3D sprite (src/GLES.cpp:697-705) — see
-// warnRenderModeOnce below.
-constexpr BlendMode kBlendModes[kRenderMax] = {
-	/* 0  NORMAL   */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 1.00f }, true  }, // src/GLES.cpp:625-635
-	/* 1  BLEND25  */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 0.25f }, true  }, // :636-641
-	/* 2  BLEND50  */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 0.50f }, true  }, // :642-647
-	/* 3  ADD      */ { GL_SRC_ALPHA, GL_ONE,                 { 1.00f, 1.00f, 1.00f, 1.00f }, false }, // :648-653
-	/* 4  ADD75    */ { GL_SRC_ALPHA, GL_ONE,                 { 0.75f, 0.75f, 0.75f, 1.00f }, false }, // :654-659
-	/* 5  ADD50    */ { GL_SRC_ALPHA, GL_ONE,                 { 0.50f, 0.50f, 0.50f, 1.00f }, false }, // :660-665
-	/* 6  ADD25    */ { GL_SRC_ALPHA, GL_ONE,                 { 0.25f, 0.25f, 0.25f, 1.00f }, false }, // :666-671
-	/* 7  SUB      */ { GL_ZERO,      GL_ONE_MINUS_SRC_COLOR, { 1.00f, 1.00f, 1.00f, 1.00f }, false }, // :672-678
-	/* 8  UNK      */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 1.00f }, true  }, // no case: assert(0) at :702-705
-	/* 9  PERF     */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 0.50f }, true  }, // :679-685
-	/* 10 NONE     */ { GL_ZERO,      GL_ONE,                 { 1.00f, 1.00f, 1.00f, 1.00f }, false }, // :686-690
-	/* 11 (unused) */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 1.00f }, true  }, // no case: assert(0) at :702-705
-	/* 12 BLEND75  */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 0.75f }, true  }, // :691-696
-	/* 13 SPECIALA */ { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, { 1.00f, 1.00f, 1.00f, 1.00f }, true  }, // :697-701, alpha pinned to 1
-};
-
-// Modes 8/11 have no case in the legacy switch (default: assert(0),
-// src/GLES.cpp:702-705) and 13 needs canvas->blendSpecialAlpha (:697-701), for
-// which the rewrite has no analog. None of them is reachable from a 3D sprite,
-// but a shipping frame must not crash: we draw the table row above and log each
-// distinct offending value once (spec 2026-09-01-blend-modes G1.4).
-void warnRenderModeOnce(int mode) {
-	static bool logged[kRenderMax + 1] = {}; // last slot: everything out of range
-	const int slot = (mode >= 0 && mode < kRenderMax) ? mode : kRenderMax;
-	if (logged[slot]) return;
-	logged[slot] = true;
-	if (slot == kRenderMax) {
-		fprintf(stderr, "World3D: unknown render mode %d out of range, using RENDER_NORMAL\n", mode);
-	} else {
-		fprintf(stderr, "World3D: unknown render mode %d has no legacy GL path, "
-			"drawing it as alpha blend\n", mode);
-	}
-	fflush(stderr);
-}
-
-bool renderModeNeedsWarning(int mode) {
-	return mode == 8 || mode == 11 || mode == 13;
 }
 
 // Legacy Canvas::viewStepValues: 8 direction vectors (x,y), 45° apart.
@@ -245,10 +99,9 @@ constexpr int kTileNumBossCyberdemon = 54;       // src/Enums.h:699
 constexpr int kTileNumBossMastermind = 57;       // src/Enums.h:701
 
 // Torchiere glow branch (src/Render.cpp:1642-1647). The glow art tile has no
-// counterpart in new_src/domain/game/Enums.h, and the ADD50 value is a
-// renderer-side constant, so both stay local like the tile ids above.
+// counterpart in new_src/domain/game/Enums.h, so it stays local like the tile
+// ids above; its ADD50 render mode comes from render/api/RenderModes.h.
 constexpr int kTileNumSfxLightGlow1 = 193; // src/Enums.h:796 TILENUM_SFX_LIGHTGLOW1
-constexpr int kRenderAdd50 = 5;            // src/Render.h:24 Render::RENDER_ADD50
 
 bool isImpFamily(int n) {
 	return n >= kTileNumMonsterImpFirst && n <= kTileNumMonsterImpLast;
@@ -267,39 +120,11 @@ bool hasGunFlareFamily(int n) {
 }
 
 World3D::World3D() = default;
-World3D::~World3D() {
-	if (vao_) glDeleteVertexArrays(1, &vao_);
-	if (vbo_) glDeleteBuffers(1, &vbo_);
-}
+World3D::~World3D() = default;
 
-bool World3D::initialize() {
-	std::string err;
-	if (!shader_.compile(kWorldVertex, kWorldFragment, &err)) {
-		fprintf(stderr, "World3D shader: %s\n", err.c_str());
-		return false;
-	}
-	locMVP_ = shader_.uniform("uMVP");
-	locView_ = shader_.uniform("uView");
-	locFogEnabled_ = shader_.uniform("uFogEnabled");
-	locFogStart_ = shader_.uniform("uFogStart");
-	locFogEnd_ = shader_.uniform("uFogEnd");
-	locFogColor_ = shader_.uniform("uFogColor");
-	locColorMod_ = shader_.uniform("uColorMod");
-
-	glGenVertexArrays(1, &vao_);
-	glBindVertexArray(vao_);
-	glGenBuffers(1, &vbo_);
-	glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-	glBufferData(GL_ARRAY_BUFFER, kMaxVerts * sizeof(Vertex), nullptr, GL_DYNAMIC_DRAW);
-
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)12);
-
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindVertexArray(0);
-
+bool World3D::initialize(Scene3D& scene, TextureStore& store) {
+	scene_ = &scene;
+	store_ = &store;
 	initialized_ = true;
 	return true;
 }
@@ -307,6 +132,7 @@ bool World3D::initialize() {
 // Legacy gles fog setup (GLES.cpp:178-190). fogColor packed ARGB; alpha==0
 // disables fog (buildFogTables:1857-1861). fogScale = 1/8000.
 void World3D::setFog(int fogColorARGB, int fogMin, int fogRange) {
+	if (scene_ == nullptr) return;
 	int a = (fogColorARGB >> 24) & 0xFF;
 	int r = (fogColorARGB >> 16) & 0xFF;
 	int g = (fogColorARGB >> 8) & 0xFF;
@@ -314,18 +140,20 @@ void World3D::setFog(int fogColorARGB, int fogMin, int fogRange) {
 	const float fogScale = 1.f / 8000.f;
 
 	if (a == 0) {
-		fogEnabled_ = false;
+		const float off[4] = { 0.f, 0.f, 0.f, 0.f };
+		scene_->setFog(false, 0.f, 0.f, off);
 		return;
 	}
-	fogEnabled_ = true;
 	float alpha = (float)a / 255.f;
-	fogColor_[0] = (float)b / 255.f; // legacy swaps R/B
-	fogColor_[1] = (float)g / 255.f;
-	fogColor_[2] = (float)r / 255.f;
-	fogColor_[3] = alpha;
-	fogStart_ = (float)fogMin * fogScale;
-	fogEnd_ = ((float)fogRange / alpha + (float)fogMin) * fogScale;
-	if (fogEnd_ > 0.499f) { fogStart_ = 9999.f; fogEnd_ = 10000.f; }
+	float fogColor[4];
+	fogColor[0] = (float)b / 255.f; // legacy swaps R/B
+	fogColor[1] = (float)g / 255.f;
+	fogColor[2] = (float)r / 255.f;
+	fogColor[3] = alpha;
+	float fogStart = (float)fogMin * fogScale;
+	float fogEnd = ((float)fogRange / alpha + (float)fogMin) * fogScale;
+	if (fogEnd > 0.499f) { fogStart = 9999.f; fogEnd = 10000.f; }
+	scene_->setFog(true, fogStart, fogEnd, fogColor);
 }
 
 void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	media_ = &media;
@@ -360,7 +188,7 @@ void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	
 		// (magenta 250,0,250) to fully transparent alpha — for world geometry
 		// too, not just sprites. That is how wall/floor textures get their
 		// transparent openings (windows, doorways).
-		if (t.uploadIndexed(tex.data, tex.width, tex.height, pal.colors, true, true)) {
+		if (t.uploadIndexed(*store_, tex.data, tex.width, tex.height, pal.colors, true, true)) {
 			textureByTile_[tile] = std::move(t);
 		}
 	}
@@ -431,7 +259,7 @@ bool World3D::ensureSpriteTexture(const MediaLoader& media, int tileNum, int med
 		indices = decodeSpriteRLE(tex.data, tex.width, tex.height, bounds);
 	}
 	Texture t;
-	bool upOk = t.uploadIndexed(indices, tex.width, tex.height, pal.colors, true, true);
+	bool upOk = t.uploadIndexed(*store_, indices, tex.width, tex.height, pal.colors, true, true);
 	if (upOk) {
 		spriteTexByMedia_[mediaId] = std::move(t);
 		spriteIsRle_[mediaId] = isRle;
@@ -441,81 +269,11 @@ bool World3D::ensureSpriteTexture(const MediaLoader& media, int tileNum, int med
 
 void World3D::begin(const Camera3D& camera) {
 	cam_ = &camera;
-	// Original GL path (GLES::SetGLState) disables depth test and relies on
-	// painter's algorithm (BSP order + sprite depth sort). Keep depth off.
-	glDisable(GL_DEPTH_TEST);
-	glDisable(GL_CULL_FACE);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	shader_.use();
-	shader_.setMat4("uMVP", camera.mvp());
-	shader_.setMat4("uView", camera.viewFloat());
-	shader_.setInt("uTexture", 0);
-	shader_.setInt("uPalette", 1);
-	shader_.setInt("uFogEnabled", fogEnabled_ ? 1 : 0);
-	shader_.setFloat("uFogStart", fogStart_);
-	shader_.setFloat("uFogEnd", fogEnd_);
-	shader_.setVec4("uFogColor", fogColor_[0], fogColor_[1], fogColor_[2], fogColor_[3]);
-	// Identity modulation, matching the currentRenderMode_ = 0 tracker below
-	// (kBlendModes[0].mod). Uniforms survive across frames in the program object.
-	shader_.setVec4("uColorMod", 1.f, 1.f, 1.f, 1.f);
-	glBindVertexArray(vao_);
-
-	vertices_.clear();
-	vertexCount_ = 0;
-	currentTex_ = 0;
-	currentPal_ = 0;
-	// begin() set standard alpha blending + fog above; sync the trackers
-	// (applyBatchState early-outs while they match).
-	currentRenderMode_ = 0;
-	currentFogOn_ = fogEnabled_;
-	begun_ = true;
+	scene_->beginScene(SceneView{ camera.mvp(), camera.viewFloat() });
 }
 
 void World3D::end() {
-	flush();
-	glBindVertexArray(0);
-	// Restore the standard blend equation so code outside begin()/end()
-	// never sees an ADD/SUB leftover (src/GLES.cpp:626).
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glDisable(GL_BLEND);
-	currentRenderMode_ = -1;
-	begun_ = false;
-}
-
-void World3D::flush() {
-	if (vertices_.empty()) return;
-
-	glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-	glBufferData(GL_ARRAY_BUFFER, vertices_.size() * sizeof(Vertex), vertices_.data(), GL_DYNAMIC_DRAW);
-	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices_.size());
-	vertices_.clear();
-	vertexCount_ = 0;
-}
-
-// Legacy gles::SetupTexture renderMode switch (src/GLES.cpp:615-715), now a
-// kBlendModes lookup: the blend equation, the color modulation factor and the
-// fog toggle change per sprite mode; a pending batch is flushed first so its
-// vertices draw under their own state and uniform.
-void World3D::applyBatchState(int renderMode) {
-	int mode = renderMode;
-	if (mode < 0 || mode >= kRenderMax || renderModeNeedsWarning(mode)) {
-		warnRenderModeOnce(mode);
-		if (mode < 0 || mode >= kRenderMax) mode = 0; // RENDER_NORMAL
-	}
-	const BlendMode& bm = kBlendModes[mode];
-	// The ADD/SUB/NONE rows run with fog off (fogMode = 0, src/GLES.cpp:709-715);
-	// fog is only ever enabled globally when fogEnabled_ is set.
-	const bool fogOn = bm.fog && fogEnabled_;
-	// Compare the clamped mode so an out-of-range value cannot defeat the cache.
-	if (mode == currentRenderMode_ && fogOn == currentFogOn_) return;
-	flush();
-	glBlendFunc(bm.src, bm.dst);
-	shader_.setVec4("uColorMod", bm.mod[0], bm.mod[1], bm.mod[2], bm.mod[3]);
-	shader_.setInt("uFogEnabled", fogOn ? 1 : 0);
-	currentRenderMode_ = mode;
-	currentFogOn_ = fogOn;
+	scene_->endScene();
 }
 
 void World3D::drawPoly(const MapData& map, int polyIdx) {
@@ -524,34 +282,19 @@ void World3D::drawPoly(const MapData& map, int polyIdx) {
 
 	// Geometry always composites with standard alpha + global fog; a previous
 	// sprite batch may have left ADD/SUB state active (drawBSP interleaves).
-	applyBatchState(0);
+	scene_->setRenderMode(kRenderNormal);
 
 	auto it = textureByTile_.find(p.textureId);
-	GLuint tex = 0, pal = 0;
 	if (it != textureByTile_.end()) {
-		tex = it->second.id();
-		pal = it->second.paletteId();
+		scene_->setTexture(it->second.id());
 	} else {
 		// Fallback: solid white quad.
 		if (!white_.valid()) {
 			std::vector<uint8_t> idx(1, 0);
 			std::vector<uint16_t> pal1(256, 0xFFFF);
-			white_.uploadIndexed(idx, 1, 1, pal1, false, false);
+			white_.uploadIndexed(*store_, idx, 1, 1, pal1, false, false);
 		}
-		tex = white_.id();
-		pal = white_.paletteId();
-	}
-
-	// If the texture changed, flush the accumulated batch first: the batch is
-	// drawn as one glDrawArrays, so all vertices in it must share one texture.
-	if (currentTex_ != tex || currentPal_ != pal) {
-		flush();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, tex);
-		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(GL_TEXTURE_2D, pal);
-		currentTex_ = tex;
-		currentPal_ = pal;
+		scene_->setTexture(white_.id());
 	}
 
 	// Animated flat textures (legacy drawNodeGeometry:968-977): lava scrolls
@@ -569,7 +312,7 @@ void World3D::drawPoly(const MapData& map, int polyIdx) {
 		const auto& v0 = p.verts[0];
 		const auto& v1 = p.verts[i];
 		const auto& v2 = p.verts[i + 1];
-		Vertex tri[3] = {
+		WorldVertex tri[3] = {
 			{ (float)v0.x * (1.f/16384.f), (float)v0.y * (1.f/16384.f), (float)v0.z * (1.f/16384.f),
 			  (float)(v0.s + lavaS) * (1.f/1024.f),  (float)(v0.t + lavaT) * (1.f/1024.f) },
 			{ (float)v1.x * (1.f/16384.f), (float)v1.y * (1.f/16384.f), (float)v1.z * (1.f/16384.f),
@@ -577,9 +320,7 @@ void World3D::drawPoly(const MapData& map, int polyIdx) {
 			{ (float)v2.x * (1.f/16384.f), (float)v2.y * (1.f/16384.f), (float)v2.z * (1.f/16384.f),
 			  (float)(v2.s + lavaS) * (1.f/1024.f),  (float)(v2.t + lavaT) * (1.f/1024.f) },
 		};
-		if (vertices_.size() + 3 > kMaxVerts) flush();
-		vertices_.insert(vertices_.end(), tri, tri + 3);
-		vertexCount_ += 3;
+		scene_->submitTriangles(tri, 3);
 	}
 }
 
@@ -594,7 +335,7 @@ void World3D::drawWorld(const MapData& map, const Camera3D& camera) {
 
 void World3D::uploadSky(const std::vector<uint8_t>& texel, const std::vector<uint16_t>& palette) {
 	if (!initialized_ || texel.size() < 256 * 256 || palette.size() < 256) return;
-	if (sky_.uploadIndexed(texel, 256, 256, palette, true, true)) {
+	if (sky_.uploadIndexed(*store_, texel, 256, 256, palette, true, true)) {
 		fprintf(stderr, "World3D: sky texture uploaded (256x256)\n");
 		fflush(stderr);
 	}
@@ -603,54 +344,10 @@ void World3D::uploadSky(const std::vector<uint8_t>& texel, const std::vector<uin
 void World3D::drawSky(const Camera3D& camera) {
 	if (!initialized_ || !sky_.valid()) return;
 
-	glDisable(GL_DEPTH_TEST);
-	glDisable(GL_CULL_FACE);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	shader_.use();
-	// Identity MVP: sky quad is drawn directly in clip space.
-	float identity[16] = {
-		1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1,
-	};
-	shader_.setMat4("uMVP", identity);
-	shader_.setInt("uTexture", 0);
-	shader_.setInt("uPalette", 1);
-	// drawSky does not go through begin(), and uniforms live in the program
-	// object across frames: without this reset a modulated sprite mode from the
-	// previous frame (e.g. ADD50) would darken the sky (ADR 0019 point 4).
-	shader_.setVec4("uColorMod", 1.f, 1.f, 1.f, 1.f);
-	glBindVertexArray(vao_);
-
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, sky_.id());
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, sky_.paletteId());
-
-	// Legacy DrawSkyMap quad in NDC (xyzw after divide): corners ±1.
-	// st = (ndc.x*0.5, ndc.y*-0.5 + 0.5) then st[0] -= viewYaw/256.
-	const float yawShift = (float)camera.viewYaw() / 256.f;
-	struct SkyV { float x, y, z, u, v; };
-	SkyV q[4] = {
-		{ -1.f, -1.f, 0.f, -0.5f - yawShift, 1.f },
-		{  1.f, -1.f, 0.f,  0.5f - yawShift, 1.f },
-		{  1.f,  1.f, 0.f,  0.5f - yawShift, 0.f },
-		{ -1.f,  1.f, 0.f, -0.5f - yawShift, 0.f },
-	};
-	Vertex tri[6] = {
-		{ q[0].x, q[0].y, q[0].z, q[0].u, q[0].v },
-		{ q[1].x, q[1].y, q[1].z, q[1].u, q[1].v },
-		{ q[2].x, q[2].y, q[2].z, q[2].u, q[2].v },
-		{ q[0].x, q[0].y, q[0].z, q[0].u, q[0].v },
-		{ q[2].x, q[2].y, q[2].z, q[2].u, q[2].v },
-		{ q[3].x, q[3].y, q[3].z, q[3].u, q[3].v },
-	};
-	glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(tri), tri, GL_DYNAMIC_DRAW);
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-
-	glBindVertexArray(0);
-	glDisable(GL_BLEND);
+	// The NDC quad and its UV recipe are device-space constructs and live in
+	// the backend; the yaw shift (legacy DrawSkyMap st[0] -= viewYaw/256) is
+	// the only game-side input.
+	scene_->drawSky(sky_.id(), (float)camera.viewYaw() / 256.f);
 }
 
 void World3D::drawSprites(const MapData& map, const MediaLoader& media, const Camera3D& camera) {
@@ -759,7 +456,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	// Blend/fog state for this sprite's legacy renderMode (S_RENDERMODE),
 	// applied BEFORE any emission so characters inherit a sane state too.
 	const int renderMode = map.mapSprites[i + 3 * n];
-	applyBatchState(renderMode);
+	scene_->setRenderMode(clampRenderMode(renderMode));
 
 	// Stacked-character path (ADR 0005/0007): tested BEFORE the AUTO_ANIMATE
 	// frame override so bits 8-15 can never be double-consumed (spec §1).
@@ -854,19 +551,9 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	auto it = spriteTexByMedia_.find(mediaId);
 	if (it == spriteTexByMedia_.end()) return;
 
-	// Flush on texture change (wall branch binds here; billboard quads bind
-	// inside drawBillboardPart — idempotent when unchanged).
-	GLuint tex = it->second.id();
-	GLuint pal = it->second.paletteId();
-	if (currentTex_ != tex || currentPal_ != pal) {
-		flush();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, tex);
-		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(GL_TEXTURE_2D, pal);
-		currentTex_ = tex;
-		currentPal_ = pal;
-	}
+	// Set the texture (wall branch binds here; billboard quads bind inside
+	// drawBillboardPart — the device flushes on change, no-op when unchanged).
+	scene_->setTexture(it->second.id());
 
 	const float k1 = 1.f / 16384.f;
 	// Billboards: sprites WITHOUT wall/plane flags (ORIENTED|FLAT == 0). Wall
@@ -895,10 +582,10 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 			drawTorchiereGlow(map, media, x, y, z, info, scaleFactor);
 			// The glow leaves ADD50 active (0.5 modulation, fog off). Restore
 			// this sprite's own mode so the next sprite or polygon cannot
-			// inherit it; applyBatchState flushes the glow quad under ADD50
-			// first. Texture state needs no restore — every draw path rebinds
-			// through its own currentTex_ check.
-			applyBatchState(renderMode);
+			// inherit it; the mode change flushes the glow quad under ADD50
+			// first. Texture state needs no restore — every draw path sets its
+			// own texture on the device.
+			scene_->setRenderMode(clampRenderMode(renderMode));
 		}
 	} else {
 		// ---- Wall decal / plane (flags & (ORIENTED|FLAT)) != 0 ----
@@ -992,7 +679,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 			int zLocal = z;
 			int t15Local = t15;
 			for (int j = 0; j < 2; ++j) {
-				Vertex quad[4];
+				WorldVertex quad[4];
 				for (int k = 0; k < 4; ++k) {
 					int n38 = (k & 2) >> 1;              // row
 					int n39 = (k & 1) ^ n38 ^ 1;         // col (1 = right)
@@ -1006,9 +693,8 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 					float t = (float)(t15Local + n38 * n35) * (1.f / 1024.f);
 					quad[k] = { px * k1, py * k1, pz * k1, s, t };
 				}
-				Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
-				if (vertices_.size() + 6 > kMaxVerts) flush();
-				vertices_.insert(vertices_.end(), tri, tri + 6);
+				WorldVertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
+				scene_->submitTriangles(tri, 6);
 				zLocal += n36;     // src/Render.cpp:618
 				t15Local += n35;   // src/Render.cpp:619
 			}
@@ -1016,7 +702,7 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 			// FLAT plane quad (src/Render.cpp:639-661): horizontal quad using
 			// BOTH viewStepValues axes; swapXY=false irrelevant here (C8).
 			// Lava scroll omitted (out of scope).
-			Vertex quad[4];
+			WorldVertex quad[4];
 			for (int k = 0; k < 4; ++k) {
 				int n46 = (k & 2) >> 1;
 				int n47 = (k & 1) ^ n46 ^ 1;
@@ -1033,13 +719,12 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 				float t = (float)(t15 + n46 * t16) * (1.f / 1024.f);
 				quad[k] = { px * k1, py * k1, pz * k1, s, t };
 			}
-			Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
-			if (vertices_.size() + 6 > kMaxVerts) flush();
-			vertices_.insert(vertices_.end(), tri, tri + 6);
+			WorldVertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
+			scene_->submitTriangles(tri, 6);
 		} else {
 			// Wall single quad: along viewStepValues[n29] (wall surface
 			// direction), carrying the lerped n30/n31/s13/s14/t15/t16 values.
-			Vertex quad[4];
+			WorldVertex quad[4];
 			for (int l = 0; l < 4; ++l) {
 				int n42 = (l & 2) >> 1;
 				int n43 = (l & 1) ^ n42 ^ 1;
@@ -1051,9 +736,8 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 				float t = (float)(t15 + n42 * t16) * (1.f / 1024.f);
 				quad[l] = { px * k1, py * k1, pz * k1, s, t };
 			}
-			Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
-			if (vertices_.size() + 6 > kMaxVerts) flush();
-			vertices_.insert(vertices_.end(), tri, tri + 6);
+			WorldVertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
+			scene_->submitTriangles(tri, 6);
 		}
 	}
 }
@@ -1107,18 +791,9 @@ void World3D::drawBillboardPart(const MapData& map, const MediaLoader& media,
 		n20 = (1036 * scaleFactor) / 0x10000;
 	}
 
-	// Flush on texture change (no-op when the caller pre-bound this texture).
-	GLuint tex = it->second.id();
-	GLuint pal = it->second.paletteId();
-	if (currentTex_ != tex || currentPal_ != pal) {
-		flush();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, tex);
-		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(GL_TEXTURE_2D, pal);
-		currentTex_ = tex;
-		currentPal_ = pal;
-	}
+	// The device flushes on texture change (no-op when the caller pre-set this
+	// texture).
+	scene_->setTexture(it->second.id());
 
 	const float k1 = 1.f / 16384.f;
 	const int* st = cam_ ? cam_->viewInt() : nullptr;
@@ -1156,7 +831,7 @@ void World3D::drawBillboardPart(const MapData& map, const MediaLoader& media,
 		wx[ci] = px; wy[ci] = py; wz[ci] = pz;
 	}
 
-	Vertex quad[4];
+	WorldVertex quad[4];
 	for (int ci = 0; ci < 4; ++ci) {
 		int n21 = (ci & 2) >> 1;
 		int n22 = (ci & 1) ^ n21 ^ 1;
@@ -1184,9 +859,8 @@ void World3D::drawBillboardPart(const MapData& map, const MediaLoader& media,
 		quad[ci] = { wx[ci] * k1, wy[ci] * k1, wz[ci] * k1, s, t };
 	}
 	// Fan triangles 0,1,2 and 0,2,3 (matches quad_indexes).
-	Vertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
-	if (vertices_.size() + 6 > kMaxVerts) flush();
-	vertices_.insert(vertices_.end(), tri, tri + 6);
+	WorldVertex tri[6] = { quad[0], quad[1], quad[2], quad[0], quad[2], quad[3] };
+	scene_->submitTriangles(tri, 6);
 }
 
 // Torchiere light glow: one extra billboard of tile 193 (frame 0) in ADD50.
@@ -1220,7 +894,7 @@ void World3D::drawTorchiereGlow(const MapData& map, const MediaLoader& media,
 		return;
 	}
 
-	applyBatchState(kRenderAdd50);
+	scene_->setRenderMode(kRenderAdd50);
 	drawBillboardPart(map, media, x, y, zRenderUnits + zheight,
 		kTileNumSfxLightGlow1, mediaId, flags, scaleFactor);
 }

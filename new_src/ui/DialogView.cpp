@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #include "render/Graphics2D.h"
-#include "render/gl/Texture.h"
+#include "render/api/Texture.h"
 #include "text/Text.h"
 #include "ui/Ui.h"
 #include "ui/UiAssets.h"

@@ -10,6 +10,7 @@
 namespace newcore {
 
 class Game;
+class Graphics2D;
 class Hud;
 class MapData;
 class MediaLoader;
@@ -32,6 +33,7 @@ public:
 		Game* game = nullptr;
 		Player* player = nullptr;
 		Hud* hud = nullptr;                   // shake
+		Graphics2D* g2d = nullptr;            // fallback fill when the world is missing
 		const Tables* tables = nullptr;       // sin table
 		const int64_t* upTimeMs = nullptr;    // world anim clock
 	};

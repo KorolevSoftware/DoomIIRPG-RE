@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "io/Media.h"
+#include "render/api/RenderModes.h"
 #include "render/Camera3D.h"
 #include "render/Graphics2D.h"
 #include "render/World3D.h"
@@ -104,8 +105,15 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel&
 
 	// Muzzle flash FIRST so the gun art draws on top (:826-834): tile 1
 	// frame 3 at (+flashX+40, +flashY+40), 88x88 (scaleFactor 0x8000).
-	// renderMode 5 = RENDER_ADD50: additive blend with colour (.5,.5,.5,1)
-	// (src/GLES.cpp:660-664, src/Combat.cpp:833).
+	// renderMode 5 = RENDER_ADD50: additive blend PLUS the modulation colour
+	// (.5,.5,.5,1) (src/GLES.cpp:660-664, src/Combat.cpp:833), independently
+	// confirmed by the half-dimmed ADD50 palette of the software rasterizer
+	// (src/Render.cpp:2002-2006). So the flash is half-bright in the original,
+	// and so it is here: the tint below stays 255 and the halving comes from
+	// the ADD50 row's `mod`, which the 2D device now applies (GlDraw2D::flush,
+	// 2026-09-07). Before that the same 0.5 was hand-rolled as a tint of 128
+	// here; the on-screen result is identical, so do NOT "restore" the 128 —
+	// combined with `mod` it would quarter the flash.
 	// Magnification from the projection actually in use this frame.
 	const int* proj = cam.projectionInt();
 	const float magX = (float)proj[0] / 12800.f;
@@ -115,10 +123,10 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel&
 	if (m.muzzleFlash) {   // both legacy gates applied by the producer (:741,:826)
 		const Texture* ftex = env_.world->spriteTexture(*env_.media, m.flashTile, 3);
 		if (ftex != nullptr) {
-			g.setBlendMode(1);
-			drawWeaponQuad(g, *ftex, x + m.flashX + 40, y + m.flashY + 40, 88, 128,
+			g.setBlendMode(kRenderAdd50);
+			drawWeaponQuad(g, *ftex, x + m.flashX + 40, y + m.flashY + 40, 88, 255,
 				magX, magY);
-			g.setBlendMode(0);
+			g.setBlendMode(kRenderNormal);
 		}
 	}
 

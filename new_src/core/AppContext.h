@@ -5,12 +5,13 @@
 #include <string>
 #include <vector>
 
+#include "render/Graphics2D.h"
+
 namespace newcore {
 
 class Window;
 class ZipArchive;
 class RenderBackend;
-class Graphics2D;
 class InputSystem;
 class GameContext;
 
@@ -32,6 +33,10 @@ public:
 	RenderBackend& renderer();
 	InputSystem& input();
 
+	// The 2D drawing façade. Backend-neutral game code (it needs text/Font),
+	// so the composition root owns it, not the backend (ADR 0020).
+	Graphics2D& g2d() { return g2d_; }
+
 	// Non-owning pointer to the game-state machine constructed in main()
 	// (consumed by GameLoop::run).
 	void setGameContext(GameContext* ctx) { gameContext_ = ctx; }
@@ -47,6 +52,7 @@ private:
 	std::unique_ptr<Window> window_;
 	std::unique_ptr<ZipArchive> archive_;
 	std::unique_ptr<RenderBackend> renderer_;
+	Graphics2D g2d_;
 	std::unique_ptr<InputSystem> input_;
 	GameContext* gameContext_ = nullptr;
 };

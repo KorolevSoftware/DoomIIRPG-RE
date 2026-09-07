@@ -1,19 +1,23 @@
-#include "render/gl/Texture.h"
+#include "render/gl/GlTexture.h"
+
+#include <cstdio>
+
+#include "render/api/PixelConvert.h"
 
 namespace newcore {
 
-Texture::~Texture() {
+GlTexture::~GlTexture() {
 	destroy();
 }
 
-Texture::Texture(Texture&& other) noexcept
+GlTexture::GlTexture(GlTexture&& other) noexcept
 	: tex_(other.tex_), palette_(other.palette_), format_(other.format_),
 	  width_(other.width_), height_(other.height_) {
 	other.tex_ = 0;
 	other.palette_ = 0;
 }
 
-Texture& Texture::operator=(Texture&& other) noexcept {
+GlTexture& GlTexture::operator=(GlTexture&& other) noexcept {
 	if (this != &other) {
 		destroy();
 		tex_ = other.tex_;
@@ -27,7 +31,7 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 	return *this;
 }
 
-void Texture::destroy() {
+void GlTexture::destroy() {
 	if (tex_) glDeleteTextures(1, &tex_);
 	if (palette_) glDeleteTextures(1, &palette_);
 	tex_ = 0;
@@ -35,18 +39,8 @@ void Texture::destroy() {
 	width_ = height_ = 0;
 }
 
-void Texture::bind(GLenum unit) const {
-	glActiveTexture(unit);
-	glBindTexture(GL_TEXTURE_2D, tex_);
-}
-
-void Texture::bindPalette(GLenum unit) const {
-	glActiveTexture(unit);
-	glBindTexture(GL_TEXTURE_2D, palette_);
-}
-
-bool Texture::uploadIndices(const std::vector<uint8_t>& indices, int w, int h, bool repeat) {
-	if (w <= 0 || h <= 0 || indices.size() < (size_t)w * h) return false;
+bool GlTexture::uploadIndices(const uint8_t* indices, int w, int h, bool repeat) {
+	if (w <= 0 || h <= 0 || indices == nullptr) return false;
 
 	destroy();
 	format_ = Format::Indexed;
@@ -61,33 +55,18 @@ bool Texture::uploadIndices(const std::vector<uint8_t>& indices, int w, int h, b
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, indices.data());
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, indices);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	return true;
 }
 
-bool Texture::uploadPalette(const std::vector<uint16_t>& rgb565, bool transparent) {
-	if (rgb565.size() < 256) return false;
+bool GlTexture::uploadPalette(const uint16_t* rgb565, int count, bool transparent) {
+	if (rgb565 == nullptr || count <= 0) return false;
 
-	// Convert RGB565 palette -> RGBA8 for the LUT texture.
-	std::vector<uint8_t> rgba(256 * 4);
-	for (int i = 0; i < 256; ++i) {
-		uint16_t c = rgb565[i];
-		uint8_t r5 = (uint8_t)((c >> 11) & 0x1F);
-		uint8_t g6 = (uint8_t)((c >> 5) & 0x3F);
-		uint8_t b5 = (uint8_t)(c & 0x1F);
-		rgba[i * 4 + 0] = (uint8_t)((r5 << 3) | (r5 >> 2));
-		rgba[i * 4 + 1] = (uint8_t)((g6 << 2) | (g6 >> 4));
-		rgba[i * 4 + 2] = (uint8_t)((b5 << 3) | (b5 >> 2));
-		if (transparent && c == 0xF81F) {
-			rgba[i * 4 + 0] = 0;
-			rgba[i * 4 + 1] = 0;
-			rgba[i * 4 + 2] = 0;
-			rgba[i * 4 + 3] = 0;
-		} else {
-			rgba[i * 4 + 3] = 0xFF;
-		}
-	}
+	// Convert RGB565 palette -> RGBA8 for the LUT texture; entries beyond
+	// `count` are padded with the transparent key.
+	uint8_t rgba[256 * 4];
+	expandPalette565(rgb565, count, transparent, rgba);
 
 	glGenTextures(1, &palette_);
 	glBindTexture(GL_TEXTURE_2D, palette_);
@@ -96,23 +75,23 @@ bool Texture::uploadPalette(const std::vector<uint16_t>& rgb565, bool transparen
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	return true;
 }
 
-bool Texture::uploadIndexed(const std::vector<uint8_t>& indices, int w, int h,
-	const std::vector<uint16_t>& palette, bool transparent, bool repeat) {
+bool GlTexture::uploadIndexed(const uint8_t* indices, int w, int h,
+	const uint16_t* palette, int paletteCount, bool transparent, bool repeat) {
 	if (!uploadIndices(indices, w, h, repeat)) return false;
-	if (!uploadPalette(palette, transparent)) {
+	if (!uploadPalette(palette, paletteCount, transparent)) {
 		destroy();
 		return false;
 	}
 	return true;
 }
 
-bool Texture::uploadRgba(const std::vector<uint8_t>& rgba, int w, int h) {
-	if (w <= 0 || h <= 0 || rgba.size() < (size_t)w * h * 4) return false;
+bool GlTexture::uploadRgba(const uint8_t* rgba, int w, int h) {
+	if (w <= 0 || h <= 0 || rgba == nullptr) return false;
 
 	destroy();
 	format_ = Format::Rgba;
@@ -125,7 +104,7 @@ bool Texture::uploadRgba(const std::vector<uint8_t>& rgba, int w, int h) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	{
 		GLenum err = glGetError();

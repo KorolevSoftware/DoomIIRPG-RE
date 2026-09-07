@@ -5,9 +5,11 @@
 #include <functional>
 #include <vector>
 
-#include "render/gl/Texture.h"
+#include "render/api/Texture.h"
 
 namespace newcore {
+
+class TextureStore;
 
 // Owner of every UI sheet. Moved out of Hud::startup so ui/ no longer needs
 // core/AppContext.h (spec 2026-08-27-ui-layer §0, §2.1): the resource reader
@@ -20,7 +22,7 @@ public:
 	UiAssets() = default;
 
 	// Loads all sheets; returns false if any one failed (each failure logs).
-	bool load(const ResourceReader& read);
+	bool load(TextureStore& store, const ResourceReader& read);
 
 	Texture panelTop, panelBottom;
 	// HUD bottom-bar switch arrows, 32x32 (docs/original-code/ui.md §1);

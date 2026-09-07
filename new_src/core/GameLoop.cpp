@@ -7,8 +7,7 @@
 #include "core/UiInputCollector.h"
 #include "platform/InputSystem.h"
 #include "platform/Window.h"
-#include "render/RenderBackend.h"
-#include "render/gl/GlCommon.h"
+#include "render/api/RenderBackend.h"
 
 #include <SDL.h>
 

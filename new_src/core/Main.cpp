@@ -14,7 +14,7 @@
 #include "io/Resources.h"
 #include "io/Tables.h"
 #include "io/ZipArchive.h"
-#include "render/RenderBackend.h"
+#include "render/api/RenderBackend.h"
 #include "render/World3D.h"
 #include "text/Font.h"
 #include "text/Text.h"
@@ -214,7 +214,8 @@ int main(int argc, char* argv[]) {
 		if (img) {
 			std::fprintf(stdout, "Font.bmp OK: %dx%d bpp=%d pal=%zu\n",
 				img->width(), img->height(), img->depth(), img->palette().size());
-			font.upload(img->indices(), img->width(), img->height(), img->palette());
+			font.upload(app.renderer().textures(), img->indices(), img->width(),
+				img->height(), img->palette());
 		} else {
 			std::fprintf(stderr, "Font.bmp FAILED\n");
 		}
@@ -236,13 +237,14 @@ int main(int argc, char* argv[]) {
 	// per-frame façade, handed to GameContext which drives the views (GROUP 4:
 	// the HUD bottom bar).
 	UiAssets uiAssets;
-	uiAssets.load([&app](const char* name, std::vector<uint8_t>& out) {
-		return app.readResource(name, out);
-	});
+	uiAssets.load(app.renderer().textures(),
+		[&app](const char* name, std::vector<uint8_t>& out) {
+			return app.readResource(name, out);
+		});
 
 	UiState uiState;
 	Ui ui;
-	ui.init({ &app.renderer().g2d(), &font, &uiAssets, &uiState });
+	ui.init({ &app.g2d(), &font, &uiAssets, &uiState });
 
 	Hud hud;
 	hud.setAssets(&uiAssets);
@@ -250,7 +252,7 @@ int main(int argc, char* argv[]) {
 	// 3D world renderer: builds GPU textures for the map's media and draws
 	// the decoded polygons with a perspective camera (legacy GL-path port).
 	World3D world;
-	world.initialize();
+	world.initialize(app.renderer().scene3d(), app.renderer().textures());
 	world.uploadMapTextures(g_map, g_media);
 
 	// Sky: legacy chooses palette/texel by skyIndex = ((mapNameID-1)/5%2)*2.
@@ -289,8 +291,8 @@ int main(int argc, char* argv[]) {
 	game.items.init({          // Env: db, defs, map, player, hud, loc, tables, vm, game (§G2.3)
 		&game.db, &g_entityDefs, &g_map, &player, &hud, &loc, &tables, &vm, &game });
 	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges
-	ctx.init({                 // Init: map, defs, tables, loc, font, media, game, player, vm, hud, world, dialogs, ui, menus
-		&g_map, &g_entityDefs, &tables, &loc, &font, &g_media,
+	ctx.init({                 // Init: map, defs, tables, loc, font, g2d, media, game, player, vm, hud, world, dialogs, ui, menus
+		&g_map, &g_entityDefs, &tables, &loc, &font, &app.g2d(), &g_media,
 		&game, &player, &vm, &hud, &world, &dialogs, &ui, &menus });
 	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
 		&ctx, &vm, &game, &loc, &hud, &font, &tables });

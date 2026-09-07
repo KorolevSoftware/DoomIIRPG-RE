@@ -5,38 +5,34 @@
 #include <map>
 #include <vector>
 
-#include "render/gl/GlCommon.h"
-#include "render/gl/Shader.h"
-#include "render/gl/Texture.h"
+#include "render/api/Texture.h"
 #include "render/Camera3D.h"
 #include "io/Media.h"
 
 namespace newcore {
 
 class MapData;
+class Scene3D;
+class TextureStore;
 
 // Renders the decoded world geometry (MapData.polygons) with a perspective
-// camera on the modern GL 3.3 backend. Faithful port of the legacy GL path:
-// vertices in world units (VERT_COORDS_TO_FLOAT = /16384), UVs in 2.14
-// texel units (TEXT_COORDS_TO_FLOAT = /1024, tiled via GL_REPEAT), indexed
-// textures through an RGBA8 palette LUT. Lighting/fog optional.
+// camera. Backend-neutral geometry/ordering module (ADR 0020): it produces the
+// painter-ordered triangle stream and hands it to a Scene3D device. Faithful
+// port of the legacy GL path: vertices in world units
+// (VERT_COORDS_TO_FLOAT = /16384), UVs in 2.14 texel units
+// (TEXT_COORDS_TO_FLOAT = /1024, tiled), indexed textures through a palette.
 class World3D {
 public:
-	struct Vertex {
-		float x, y, z; // world coords (already VERT_COORDS_TO_FLOAT scaled)
-		float u, v;    // texel coords (TEXT_COORDS_TO_FLOAT scaled)
-	};
-
-	static constexpr int kMaxVerts = 65536;
-
 	World3D();
 	~World3D();
 
 	World3D(const World3D&) = delete;
 	World3D& operator=(const World3D&) = delete;
 
-	// Compiles the world shader. Must be called once (needs GL context).
-	bool initialize();
+	// Latches the device every triangle goes to and the store every texture of
+	// the world is created in. Must be called once, after the backend is
+	// initialized.
+	bool initialize(Scene3D& scene, TextureStore& store);
 
 	// Builds GPU textures for all media ids referenced by map.polygons
 	// (via media.mappings()[textureId] -> mediaId -> texel/palette). Reuses
@@ -80,8 +76,9 @@ public:
 	// Renders a single polygon list (used for per-node BSP traversal later).
 	void drawPolys(const MapData& map, const std::vector<int>& polyIdx, const Camera3D& camera);
 
-	// Sets fog. Legacy GL_FOG linear in eye space: fogStart = fogMin * (1/8000),
-	// fogEnd = (fogRange/fogColor.a + fogMin) * (1/8000). alpha==0 disables fog.
+	// Sets fog on the device. Legacy GL_FOG linear in eye space:
+	// fogStart = fogMin * (1/8000), fogEnd = (fogRange/fogColor.a + fogMin) *
+	// (1/8000). alpha==0 disables fog. Requires initialize().
 	void setFog(int fogColorARGB, int fogMin, int fogRange);
 
 	// Sets the game time (ms) used for animated textures/sprites (lava UV
@@ -123,35 +120,22 @@ private:
 	// media has no texel/palette or the upload failed; dedups against
 	// spriteTexByMedia_ internally.
 	bool ensureSpriteTexture(const MediaLoader& media, int tileNum, int mediaId);
-	// Applies the per-batch blend/color/fog state for a legacy renderMode
-	// (gles::SetupTexture switch, src/GLES.cpp:615-715): flushes the pending
-	// batch on change, then switches glBlendFunc, the uColorMod modulation
-	// factor and the fog toggle from the kBlendModes table. Out-of-range and
-	// back-end-only modes fall back to RENDER_NORMAL with a one-shot log.
-	// Must be called between begin()/end().
-	void applyBatchState(int renderMode);
-	void flush();
 	bool walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ);
 	void addSplitSprite(const MapData& map, size_t firstVisibleLeaf, int sprite);
 	int nodeClassifyPoint(const MapData& map, int n, int x, int y, int z);
 	int getNodeForPoint(const MapData& map, int x, int y, int z, int info);
 
-	Shader shader_;
+	// The device every triangle of the world goes to and the store every
+	// texture below lives in (both latched by initialize).
+	Scene3D* scene_ = nullptr;
+	TextureStore* store_ = nullptr;
 
-	GLuint vao_ = 0;
-	GLuint vbo_ = 0;
-	GLsizei vertexCount_ = 0;
-
-	std::vector<Vertex> vertices_;
-	GLint locMVP_ = -1;
-
-	// Palette LUT textures (RGBA8) bound as uPalette for each texture.
-	// The index texture is the texel R8; both come from Texture objects.
+	// Fallback texture for polygons whose tile has no media, plus the world
+	// wall/floor/ceiling textures keyed by tile number.
 	Texture white_;
 	std::map<int, Texture> textureByTile_;
 
 	bool initialized_ = false;
-	bool begun_ = false;
 
 	const MediaLoader* media_ = nullptr;
 	const MapData* map_ = nullptr;
@@ -174,28 +158,8 @@ private:
 	std::vector<int> splitPairs_;                    // flat [leaf,sprite]*kMaxSplitSprites pairs
 	std::vector<int> leafSprites_, leafDepth_;       // per-leaf sorted draw lists (hoisted locals)
 
-	// Fog state (uniforms set in begin()).
-	bool fogEnabled_ = false;
-	float fogStart_ = 0.f;
-	float fogEnd_ = 0.f;
-	float fogColor_[4] = { 0.f, 0.f, 0.f, 1.f };
-	GLint locFogEnabled_ = -1, locFogStart_ = -1, locFogEnd_ = -1, locFogColor_ = -1;
-	GLint locView_ = -1;
-	// Per-mode color modulation (legacy glColor4f + GL_MODULATE, src/GLES.cpp:620).
-	GLint locColorMod_ = -1;
-
 	// Game time (ms) for animated textures/sprites.
 	int timeMs_ = 0;
-
-	// Current bound texture (index + palette) so drawPoly can flush on change.
-	GLuint currentTex_ = 0;
-	GLuint currentPal_ = 0;
-
-	// Active legacy renderMode of the batch (gles renderMode tracker,
-	// src/GLES.cpp:615-622) and whether fog uniforms are currently on; both
-	// are re-initialized in begin() and switched via applyBatchState().
-	int currentRenderMode_ = -1;
-	bool currentFogOn_ = false;
 
 	// Sprite textures keyed by mediaId (RLE-decoded where needed).
 	std::map<int, Texture> spriteTexByMedia_;

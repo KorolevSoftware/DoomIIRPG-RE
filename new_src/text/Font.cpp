@@ -1,12 +1,12 @@
 #include "text/Font.h"
 
-#include "render/gl/SpriteBatch.h"
+#include "render/api/Draw2D.h"
 
 namespace newcore {
 
-bool Font::upload(const std::vector<uint8_t>& indices, int w, int h,
-	const std::vector<uint16_t>& palette) {
-	return tex_.uploadIndexed(indices, w, h, palette, true);
+bool Font::upload(TextureStore& store, const std::vector<uint8_t>& indices,
+	int w, int h, const std::vector<uint16_t>& palette) {
+	return tex_.uploadIndexed(store, indices, w, h, palette, true);
 }
 
 void Font::getCharIndices(char c, int* index1, int* index2) {
@@ -76,7 +76,7 @@ void Font::getCharIndices(char c, int* index1, int* index2) {
 	*index2 = i2;
 }
 
-void Font::drawChar(SpriteBatch& batch, char c, int x, int y, int rotateMode,
+void Font::drawChar(Draw2D& dev, char c, int x, int y, int rotateMode,
 	uint8_t r, uint8_t g, uint8_t b, uint8_t a) const {
 	if (!tex_.valid()) return;
 
@@ -90,12 +90,15 @@ void Font::drawChar(SpriteBatch& batch, char c, int x, int y, int rotateMode,
 		index2 = 0;
 	}
 
+	const ColorF color{ r / 255.f, g / 255.f, b / 255.f, a / 255.f };
+	const DstRect dst{ x, y, kGlyphW, kGlyphH };
+
 	// Glyph at column (index & 15), row (index >> 4) of the 16-col grid.
-	batch.draw(tex_, (index1 & 15) * kGlyphW, index1 & 240, kGlyphW, kGlyphH,
-		x, y, kGlyphW, kGlyphH, rotateMode, r / 255.f, g / 255.f, b / 255.f, a / 255.f);
+	dev.drawQuad(tex_.id(), SrcRect{ (index1 & 15) * kGlyphW, index1 & 240, kGlyphW, kGlyphH },
+		dst, rotateMode, color);
 	if (index2 != 0) {
-		batch.draw(tex_, (index2 & 15) * kGlyphW, index2 & 240, kGlyphW, kGlyphH,
-			x, y, kGlyphW, kGlyphH, rotateMode, r / 255.f, g / 255.f, b / 255.f, a / 255.f);
+		dev.drawQuad(tex_.id(), SrcRect{ (index2 & 15) * kGlyphW, index2 & 240, kGlyphW, kGlyphH },
+			dst, rotateMode, color);
 	}
 }
 

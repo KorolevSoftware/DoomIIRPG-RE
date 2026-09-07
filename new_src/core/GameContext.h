@@ -50,6 +50,9 @@ public:
 		const Tables* tables = nullptr;
 		const Localization* loc = nullptr;
 		const Font* font = nullptr;
+		// The 2D façade owned by AppContext (ADR 0020); the world pass needs
+		// it for its missing-world fallback fill.
+		Graphics2D* g2d = nullptr;
 		MediaLoader* media = nullptr;
 		Game* game = nullptr;
 		Player* player = nullptr;

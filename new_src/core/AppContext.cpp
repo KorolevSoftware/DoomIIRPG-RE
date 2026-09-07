@@ -5,7 +5,10 @@
 #include "platform/FileSystem.h"
 #include "platform/InputSystem.h"
 #include "platform/Window.h"
-#include "render/RenderBackend.h"
+#include "render/api/RenderBackend.h"
+// The only place outside render/gl/ that names a concrete backend; spec group
+// G4 replaces it with core/RenderBackendFactory.
+#include "render/gl/GlRenderBackend.h"
 
 #include <cstdio>
 
@@ -28,11 +31,12 @@ bool AppContext::initialize(const char* dataArchive) {
 		return false;
 	}
 
-	renderer_ = std::make_unique<RenderBackend>();
+	renderer_ = std::make_unique<GlRenderBackend>();
 	if (!renderer_->initialize(*window_)) {
 		std::fprintf(stderr, "Failed to initialize renderer.\n");
 		return false;
 	}
+	g2d_.setDevice(&renderer_->draw2d());
 
 	input_ = std::make_unique<InputSystem>();
 
@@ -65,7 +69,12 @@ bool AppContext::run() {
 void AppContext::shutdown() {
 	archive_.reset();
 	input_.reset();
-	renderer_.reset();
+	// The renderer -- and with it the TextureStore -- deliberately outlives
+	// shutdown(): the Texture handles owned by game code in main() (font, UI
+	// sheets, World3D) are destroyed AFTER this call and must still find their
+	// store alive. The backend dies with the AppContext singleton. Their GL
+	// objects are then deleted without a context, exactly as before the store
+	// existed (the window is gone by then either way).
 	window_.reset();
 }
 

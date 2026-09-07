@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "render/gl/Texture.h"
+#include "render/api/Texture.h"
 
 namespace newcore {
 

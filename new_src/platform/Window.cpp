@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <cstdio>
 
+#include "render/api/CanvasViewport.h"
 #include "render/gl/GlCommon.h"
 
 namespace newcore {
@@ -157,15 +158,14 @@ void Window::applyVideoSettings() {
 }
 
 void Window::computeViewport(int& x, int& y, int& w, int& h) const {
-	float scale = static_cast<float>(drawableWidth_) / static_cast<float>(kCanvasWidth);
-	int candH = static_cast<int>(kCanvasHeight * scale);
-	if (candH > drawableHeight_) {
-		scale = static_cast<float>(drawableHeight_) / static_cast<float>(kCanvasHeight);
-	}
-	w = static_cast<int>(kCanvasWidth * scale);
-	h = static_cast<int>(kCanvasHeight * scale);
-	x = (drawableWidth_ - w) / 2;
-	y = (drawableHeight_ - h) / 2;
+	// The letterbox math lives once, in the backend-neutral core (spec
+	// 2026-09-02-render-backend-split §4.4).
+	CanvasViewport vp;
+	vp.setFromDrawable(drawableWidth_, drawableHeight_);
+	x = vp.x;
+	y = vp.y;
+	w = vp.w;
+	h = vp.h;
 }
 
 void Window::windowToDrawable(int wx, int wy, int& px, int& py) const {

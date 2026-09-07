@@ -84,11 +84,43 @@ Namespace for everything: `newcore`._
 | `SceneRenderer` | **(planned, ADR 0010, P1-G6)** the world pass: viewport band, camera setup (player view or cinematic `MayaPose`), screen shake, per-sprite sort-bias/character classification, `drawSky`+`drawBSP`; owns `Camera3D`. |
 | `World3D` | **(planned, ADR 0019 / spec `specs/2026-09-01-blend-modes.md`)** the full 14-row `RENDER_*` blend table (blend func + `uColorMod` modulation uniform + per-mode fog) behind `applyBatchState`'s flush-compare-assign cache, the tile-136 torchiere glow (extra tile-193 `ADD50` quad drawn before the lamp body, `drawTorchiereGlow`), the tile-212 `SUB` back-end override and the per-tile geometry mode in `drawPoly`. GL 3.3 world renderer: palette-LUT textures (:202+), sky (:399-454), polys (:329+), BSP walkNode painter's algorithm with per-leaf sprites (:788-881), billboard/wall/flat/slip-door sprites + RLE (:100+, :507-746), eye-space fog (:180-200), time animation (:78), per-sprite sort-bias hook on `drawBSP`. Stacked characters (ADR 0005): NPC branches + monster-family ATTACK deltas (ADR 0007, spec `specs/2026-08-26-monsters-stack-flicker.md`); floater/special-boss families still excluded. |
 
+### render/api/
+**(planned, ADR 0020 / spec `specs/2026-09-02-render-backend-split.md`)** target
+`dr_render_core`: the backend-neutral render library. No GL, no SDL, no game deps.
+
+| File | Responsibility |
+|---|---|
+| `TextureId.h` | Opaque `TextureId` (0 = invalid) + creation-time `TextureFlags{TransparentKey, Tiled}`. |
+| `TextureStore.h` | Texture creation interface: `createIndexed(indices, w, h, palette565, count, flags)`, `createRgba`, `destroy`, `query`, `textureBytes`. Indexed data stays the currency because every shipped image is palette-indexed (`docs/original-code/image-formats.md` §0). |
+| `Texture.h/.cpp` | Move-only RAII handle every caller keeps (`uploadIndexed(store, ...)`); caches w/h for the anchored blits. Replaces `render/gl/Texture.h` for `ui/`, `text/`, `render/World3D`. |
+| `Draw2D.h` | 2D device: `drawQuad`, `fillQuad`, `setRenderMode`, `setClipCanvas`/`clearClip`, `flush`. Derived from the actual `Graphics2D`/`Ui`/`Font` call inventory. |
+| `Scene3D.h` | 3D device: `beginScene(SceneView{mvp, view})`, `setTexture`, `setRenderMode`, `submitTriangles(WorldVertex*, n)`, `setFog`, `drawSky(tex, uOffset)`, `endScene`. No shaders, no matrices as uniforms, no depth buffer. |
+| `RenderBackend.h/.cpp` | Abstract frame/device owner (same method names as the old concrete class) + `requestCapture(path)`, `draw2d()`, `scene3d()`, `textures()`, `name()`. |
+| `RenderModes.h/.cpp` | The 14-row legacy `RENDER_*` table in neutral `BlendFactor` enums + `clampRenderMode`/`renderModeNeedsWarning` (moved out of `World3D.cpp:145-201`, ADR 0019). |
+| `PixelConvert.h/.cpp` | RGB565 -> RGBA8 bit replication, palette expansion with the `0xF81F` key, indexed -> RGBA expansion (shared by the GL LUT and the SDL store). |
+| `QuadUV.h/.cpp` | Legacy `rotateMode` 0..8 -> quad UV permutation, extracted from `SpriteBatch::draw` so backends cannot drift. |
+| `CanvasViewport.h/.cpp` | Letterbox rect + canvas<->drawable mapping (moved from `Window::computeViewport` / `RenderBackend::drawableToCanvas`), shared so input mapping is bit-identical across backends. |
+| `BmpWriter.h/.cpp` | 24-bit BMP dump for F12 frame capture (replaces the unreferenced `saveIndexedBmp` debug helper). |
+
+### render/sdl/
+**(planned, ADR 0021)** target `dr_render_sdl`: `SdlTextureStore` (measured 2026-09-02:
+SDL2 rejects `INDEX8` on every driver, so it expands once via an INDEX8 surface into a
+runtime-negotiated 32-bit format — ~40 MB for the whole world texture set; SDL3 supports
+`INDEX8` + `SDL_SetTexturePalette` natively and would keep the 9.7 MB indexed pipeline,
+which is why the interface never speaks RGBA — see spec §4.2.0-§4.2.3 for the fork and
+the required palette-swap measurement), `SdlDraw2D` (everything through
+`SDL_RenderGeometry` + a 1x1 white texture for fills, canvas-space clip rect),
+`SdlScene3D` (CPU vertex pipeline: near clip, NDC -> canvas viewport, object-space UV
+tile split because SDL textures are CLAMP_TO_EDGE, batching by texture+mode,
+per-vertex fog + haze pass), `SdlBlendModes` (14 rows -> `SDL_BlendMode`, custom mode
+for `RENDER_SUB`, `RENDER_NONE` = skip), `SdlRenderBackend`.
+
 ### render/gl/
 | File | Responsibility |
 |---|---|
 | `GlCommon.h` | Platform GL header selection (:4-11). |
 | `Shader` | RAII program wrapper, uniform setters incl. mat4. |
+| `GlDraw2D` | **(planned, ADR 0020, G2)** the renamed `SpriteBatch` implementing `Draw2D`; `GlTextureStore` owns the `GlTexture` slots behind `TextureId`; `GlScene3D` gets the world shader/VAO/VBO/fog/sky moved out of `World3D.cpp`; `GlRenderBackend` is the old concrete `RenderBackend`. Target `dr_render_gl`. |
 | `SpriteBatch` | Batched quad renderer (4096 max, :18-19); three programs: indexed-palette, RGBA, flat color (:64-66). **(planned, ADR 0012, G1)** canvas-space scissor (`setLetterbox`/`setScissorCanvas`/`clearScissor`) following the `setBlendMode` compare-flush-assign precedent (:145-149); GL y measured from the bottom. |
 | `Texture` | Move-only texture: indexed R8 + RGBA8 palette LUT with 0xF81F kill, optional GL_REPEAT (:33), plain RGBA8 (:37). |
 
@@ -134,7 +166,8 @@ first, then door use.
 
 - CMake 3.22, target `DoomIIRPG`, C++17, sources via **GLOB_RECURSE** (reconfigure on add/remove).
 - Link: SDL2, ZLIB, OpenGL (+ Apple OpenGL.framework). No GLEW/GLAD.
-- All shaders are inline string literals (World3D.cpp:57-95, SpriteBatch.cpp:9-59).
+- All shaders are inline string literals (World3D.cpp:57-95, SpriteBatch.cpp:9-59) and stay **inside the backend** after the split (ADR 0020).
+- **(planned, spec `specs/2026-09-02-render-backend-split.md`)** four targets: `dr_render_core` (interfaces + neutral helpers), `dr_render_gl`, `dr_render_sdl`, `DoomIIRPG` (glob filtered with `list(FILTER ... EXCLUDE REGEX "/render/(api|gl|sdl)/")`); backend chosen at startup by `--backend=gl|sdl`.
 - zlib only for zip raw-deflate (`inflateInit2 -15`, ZipArchive.cpp:128-140).
 - BMP/font hand-rolled; no SDL_image/SDL_ttf.
 
@@ -172,6 +205,9 @@ _See [adr/](adr/):_
 - [0017 — The projectile system is introduced degenerate-first (`launchProjectile`/`updateProjectile` from day one)](adr/0017-projectile-model-degenerate-first.md) (2026-08-31)
 - [0018 — `Entity::pain`/`Entity::died` become one dispatcher pair on `Game`](adr/0018-entity-pain-died-dispatch.md) (2026-08-31)
 - [0019 — Blend modes are one table; color modulation is a per-draw `uColorMod` uniform](adr/0019-blend-mode-table-and-color-mod-uniform.md) (2026-09-01)
+- [0020 — The graphics backend is a library behind two need-shaped interfaces (`Draw2D`/`Scene3D`)](adr/0020-render-backend-two-interfaces.md) (2026-09-02)
+- [0021 — SDL_Render is a full second backend, 3D view included (affine mapping accepted)](adr/0021-sdl-render-second-backend-with-3d.md) (2026-09-02)
+- [0022 — Fog is a backend-dependent effect (per-pixel on GL, per-vertex on SDL)](adr/0022-fog-is-backend-dependent.md) (2026-09-02)
 
 ## Specs
 
@@ -190,3 +226,5 @@ _See [adr/](adr/):_
 - [2026-08-28 — In-game menu (`ST_MENU`): `menus.bin` loader, `MenuSession`, `MenuView`, the menu scrollbar and the cursor glyph (GROUP 8 of the UI layer)](specs/2026-08-28-menu.md)
 - [2026-08-29 — World item pickup: item entity spawn, `Game::touchTile`, `ItemPickup::touched/touchedItem`, `Player::give` legacy semantics](specs/2026-08-29-world-item-pickup.md)
 - [2026-08-30 — Shelf pickup (`EV_GIVEITEM` mode 0), full blocking-sprite spawn, crates (open/animate/unlink), `EV_GIVELOOT`](specs/2026-08-30-blocking-crates-shelf-pickup.md)
+- [2026-09-01 — Blend-mode table, `uColorMod` modulation, torchiere glow](specs/2026-09-01-blend-modes.md)
+- [2026-09-02 — Render backend split: `dr_render_core` + GL and SDL_Render implementations (`Draw2D`/`Scene3D`, backend flag, frame capture)](specs/2026-09-02-render-backend-split.md)

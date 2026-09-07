@@ -10,7 +10,7 @@
 #include "io/Media.h"
 #include "io/Tables.h"
 #include "render/Graphics2D.h"
-#include "render/RenderBackend.h"
+#include "render/api/RenderBackend.h"
 #include "render/World3D.h"
 #include "ui/Hud.h"
 
@@ -155,8 +155,8 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 		env_.world->drawBSP(*env_.map, *env_.media, camera_, spriteSortBias_.data(),
 		                    spriteCharClass_.data());
 		renderer.restoreCanvasViewport(window);
-	} else {
-		renderer.g2d().fillRect(0, 0, 480, 320, 32, 32, 64);
+	} else if (env_.g2d != nullptr) {
+		env_.g2d->fillRect(0, 0, 480, 320, 32, 32, 64);
 	}
 }
 

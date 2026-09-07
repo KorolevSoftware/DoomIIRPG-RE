@@ -16,7 +16,7 @@
 #include "io/Localization.h"
 #include "io/Tables.h"
 #include "render/Graphics2D.h"
-#include "render/RenderBackend.h"
+#include "render/api/RenderBackend.h"
 #include "text/Font.h"
 #include "ui/DialogView.h"
 #include "ui/Hud.h"
@@ -75,6 +75,7 @@ void GameContext::init(const Init& sys) {
 	sceneEnv.game = sys_.game;
 	sceneEnv.player = sys_.player;
 	sceneEnv.hud = sys_.hud;
+	sceneEnv.g2d = sys_.g2d;
 	sceneEnv.tables = sys_.tables;
 	sceneEnv.upTimeMs = &upTimeMs;
 	scene_.init(sceneEnv);                     // takes over camera_.setSinTable (spec §P1-G6)
@@ -689,7 +690,7 @@ void GameContext::applyUiAction(UiAction a, int index) {
 void GameContext::render(AppContext& app) {
 	RenderBackend& renderer = app.renderer();
 	renderer.beginFrame(app.window());
-	Graphics2D& g = renderer.g2d();
+	Graphics2D& g = app.g2d();
 
 	// UI pass frame window (spec §8): every view runs on the render thread
 	// between the backend's beginFrame and endFrame. beginFrame latches the

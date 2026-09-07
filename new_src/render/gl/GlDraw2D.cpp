@@ -1,7 +1,12 @@
-#include "render/gl/SpriteBatch.h"
+#include "render/gl/GlDraw2D.h"
 
 #include <cmath>
 #include <cstring>
+
+#include "render/api/QuadUV.h"
+#include "render/api/RenderModes.h"
+#include "render/gl/GlTexture.h"
+#include "render/gl/GlTextureStore.h"
 
 namespace newcore {
 
@@ -25,14 +30,19 @@ void main() {
 }
 )";
 
+// uColorMod is the render mode row's `mod` — the legacy glColor4f primary color
+// the fixed-function pipeline modulated every texel with (src/GLES.cpp:615-706).
+// It multiplies the caller's own tint (vColor), exactly as GL_MODULATE combined
+// the primary color with the texture in the legacy path.
 const char* kFragmentRgba = R"(
 #version 330 core
 in vec2 vUV;
 in vec4 vColor;
 uniform sampler2D uTexture;
+uniform vec4 uColorMod;
 out vec4 fragColor;
 void main() {
-	fragColor = texture(uTexture, vUV) * vColor;
+	fragColor = texture(uTexture, vUV) * vColor * uColorMod;
 }
 )";
 
@@ -42,10 +52,11 @@ in vec2 vUV;
 in vec4 vColor;
 uniform sampler2D uTexture;   // R8 index texture
 uniform sampler2D uPalette;   // RGBA8 palette LUT (256x1)
+uniform vec4 uColorMod;
 out vec4 fragColor;
 void main() {
 	float index = texture(uTexture, vUV).r;
-	fragColor = texture(uPalette, vec2(index, 0.5)) * vColor;
+	fragColor = texture(uPalette, vec2(index, 0.5)) * vColor * uColorMod;
 }
 )";
 
@@ -53,27 +64,42 @@ const char* kFragmentColor = R"(
 #version 330 core
 in vec2 vUV;
 in vec4 vColor;
+uniform vec4 uColorMod;
 out vec4 fragColor;
 void main() {
-	fragColor = vColor;
+	fragColor = vColor * uColorMod;
 }
 )";
 
+// The neutral BlendFactor of the shared RENDER_* table
+// (render/api/RenderModes.h) -> the GL enum glBlendFunc wants.
+GLenum glBlendFactor(BlendFactor f) {
+	switch (f) {
+		case BlendFactor::Zero:             return GL_ZERO;
+		case BlendFactor::One:              return GL_ONE;
+		case BlendFactor::SrcAlpha:         return GL_SRC_ALPHA;
+		case BlendFactor::OneMinusSrcAlpha: return GL_ONE_MINUS_SRC_ALPHA;
+		case BlendFactor::OneMinusSrcColor: return GL_ONE_MINUS_SRC_COLOR;
+	}
+	return GL_ONE;
+}
+
 } // namespace
 
-SpriteBatch::SpriteBatch() {
+GlDraw2D::GlDraw2D() {
 	vertices_.reserve(kMaxVertices);
 }
 
-SpriteBatch::~SpriteBatch() {
+GlDraw2D::~GlDraw2D() {
 	if (whiteTex_) glDeleteTextures(1, &whiteTex_);
 	if (vao_) glDeleteVertexArrays(1, &vao_);
 	if (vbo_) glDeleteBuffers(1, &vbo_);
 }
 
-bool SpriteBatch::initialize(int canvasWidth, int canvasHeight) {
+bool GlDraw2D::initialize(int canvasWidth, int canvasHeight, const GlTextureStore& store) {
 	canvasWidth_ = canvasWidth;
 	canvasHeight_ = canvasHeight;
+	store_ = &store;
 
 	std::string err;
 	if (!indexedShader_.compile(kVertex2D, kFragmentIndexed, &err)) {
@@ -117,17 +143,14 @@ bool SpriteBatch::initialize(int canvasWidth, int canvasHeight) {
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
 
-	initialized_ = true;
 	return true;
 }
 
-void SpriteBatch::begin() {
+void GlDraw2D::begin() {
 	vertices_.clear();
-	vertexCount_ = 0;
 	boundTex_ = nullptr;
-	currentTex_ = nullptr;
 	boundIndexed_ = false;
-	blendMode_ = 0;
+	renderMode_ = kRenderNormal;
 	begun_ = true;
 	// No frame may inherit a clip from the previous one.
 	scissorActive_ = false;
@@ -140,7 +163,7 @@ void SpriteBatch::begin() {
 	glBindVertexArray(vao_);
 }
 
-void SpriteBatch::end() {
+void GlDraw2D::end() {
 	flush();
 	// Drop any clip a screen left behind, so the next frame starts clean.
 	scissorActive_ = false;
@@ -149,13 +172,14 @@ void SpriteBatch::end() {
 	begun_ = false;
 }
 
-void SpriteBatch::setBlendMode(int mode) {
-	if (mode == blendMode_) return;
+void GlDraw2D::setRenderMode(int renderMode) {
+	const int mode = clampRenderMode(renderMode);
+	if (mode == renderMode_) return;
 	flush();
-	blendMode_ = mode;
+	renderMode_ = mode;
 }
 
-void SpriteBatch::setLetterbox(int x, int y, int w, int h) {
+void GlDraw2D::setLetterbox(int x, int y, int w, int h) {
 	if (letterbox_[0] == x && letterbox_[1] == y &&
 		letterbox_[2] == w && letterbox_[3] == h) return;
 	// Only matters for a live scissor: the pending quads were meant to be
@@ -168,10 +192,10 @@ void SpriteBatch::setLetterbox(int x, int y, int w, int h) {
 	if (scissorActive_) applyScissor();
 }
 
-void SpriteBatch::setScissorCanvas(int x, int y, int w, int h) {
+void GlDraw2D::setClipCanvas(int x, int y, int w, int h) {
 	if (scissorActive_ && scissorRect_[0] == x && scissorRect_[1] == y &&
 		scissorRect_[2] == w && scissorRect_[3] == h) return;
-	// Same shape as setBlendMode above: quads rasterize at flush time, so the
+	// Same shape as setRenderMode above: quads rasterize at flush time, so the
 	// already-batched ones must land under the previous clip.
 	flush();
 	scissorRect_[0] = x;
@@ -182,14 +206,14 @@ void SpriteBatch::setScissorCanvas(int x, int y, int w, int h) {
 	applyScissor();
 }
 
-void SpriteBatch::clearScissor() {
+void GlDraw2D::clearClip() {
 	if (!scissorActive_) return;
 	flush();
 	scissorActive_ = false;
 	glDisable(GL_SCISSOR_TEST);
 }
 
-void SpriteBatch::applyScissor() {
+void GlDraw2D::applyScissor() {
 	const int x = scissorRect_[0];
 	const int y = scissorRect_[1];
 	const int w = scissorRect_[2];
@@ -205,7 +229,7 @@ void SpriteBatch::applyScissor() {
 	const float sx = (float)letterbox_[2] / (float)canvasWidth_;
 	const float sy = (float)letterbox_[3] / (float)canvasHeight_;
 	// GL y grows upwards, canvas y downwards: same flip as the sub-viewport
-	// expression at new_src/render/RenderBackend.cpp:50.
+	// expression in CanvasViewport::canvasSubRect.
 	const int gx = letterbox_[0] + (int)lroundf(x * sx);
 	const int gy = letterbox_[1] + (int)lroundf((canvasHeight_ - (y + h)) * sy);
 	int gw = (int)lroundf(w * sx);
@@ -215,15 +239,14 @@ void SpriteBatch::applyScissor() {
 	glScissor(gx, gy, gw, gh);
 }
 
-void SpriteBatch::emitQuad(const Vertex* v) {
+void GlDraw2D::emitQuad(const Vertex* v) {
 	if ((int)vertices_.size() + 6 > kMaxVertices) flush();
 	// Two triangles: (0,1,2) and (0,2,3) for quad TL,TR,BR,BL.
 	Vertex tri[6] = { v[0], v[1], v[2], v[0], v[2], v[3] };
 	vertices_.insert(vertices_.end(), tri, tri + 6);
-	vertexCount_ += 6;
 }
 
-void SpriteBatch::flush() {
+void GlDraw2D::flush() {
 	if (vertices_.empty()) return;
 
 	// Rebind our VAO: another renderer (World3D) may have left its own VAO
@@ -232,11 +255,18 @@ void SpriteBatch::flush() {
 	glBindBuffer(GL_ARRAY_BUFFER, vbo_);
 	glBufferData(GL_ARRAY_BUFFER, vertices_.size() * sizeof(Vertex), vertices_.data(), GL_DYNAMIC_DRAW);
 
+	// Both the blend FUNCTION and the row's `mod` are applied; `fog` has no
+	// meaning in the 2D path. Without `mod` the modes that differ from
+	// RENDER_NORMAL only in the modulation color (BLEND25/50/75, ADD25/75)
+	// would be silent no-ops.
+	const RenderModeRow& row = kRenderModes[renderMode_];
+
 	if (boundIndexed_) {
 		indexedShader_.use();
 		indexedShader_.setVec2("uCanvasSize", (float)canvasWidth_, (float)canvasHeight_);
 		indexedShader_.setInt("uTexture", 0);
 		indexedShader_.setInt("uPalette", 1);
+		indexedShader_.setVec4("uColorMod", row.mod[0], row.mod[1], row.mod[2], row.mod[3]);
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, boundTex_ ? boundTex_->id() : whiteTex_);
 		glActiveTexture(GL_TEXTURE1);
@@ -245,18 +275,20 @@ void SpriteBatch::flush() {
 		rgbaShader_.use();
 		rgbaShader_.setVec2("uCanvasSize", (float)canvasWidth_, (float)canvasHeight_);
 		rgbaShader_.setInt("uTexture", 0);
+		rgbaShader_.setVec4("uColorMod", row.mod[0], row.mod[1], row.mod[2], row.mod[3]);
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, boundTex_->id());
 	} else {
 		colorShader_.use();
 		colorShader_.setVec2("uCanvasSize", (float)canvasWidth_, (float)canvasHeight_);
+		colorShader_.setVec4("uColorMod", row.mod[0], row.mod[1], row.mod[2], row.mod[3]);
 	}
 
 	// Re-assert blend per flush: World3D leaves GL_BLEND disabled after its
 	// draws, and quads recorded before endFrame rasterize HERE (beginFrame's
 	// glEnable is long gone), which rendered kill-color pixels opaque.
 	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, blendMode_ == 1 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+	glBlendFunc(glBlendFactor(row.src), glBlendFactor(row.dst));
 
 	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices_.size());
 
@@ -272,103 +304,67 @@ void SpriteBatch::flush() {
 	glBindTexture(GL_TEXTURE_2D, 0);
 
 	vertices_.clear();
-	vertexCount_ = 0;
 	boundTex_ = nullptr;
 	boundIndexed_ = false;
 }
 
-void SpriteBatch::draw(const Texture& tex, int srcX, int srcY, int srcW, int srcH,
-	int dstX, int dstY, int dstW, int dstH, int rotateMode,
-	float r, float g, float b, float a) {
-	if (!begun_ || !tex.valid()) return;
+void GlDraw2D::drawQuad(TextureId texId, const SrcRect& src, const DstRect& dst,
+	int rotateMode, const ColorF& color) {
+	const GlTexture* tex = store_ ? store_->lookup(texId) : nullptr;
+	if (!begun_ || tex == nullptr || !tex->valid()) return;
 
-	bool indexed = (tex.format() == Texture::Format::Indexed);
-	if (boundTex_ != &tex || boundIndexed_ != indexed) {
+	bool indexed = (tex->format() == GlTexture::Format::Indexed);
+	if (boundTex_ != tex || boundIndexed_ != indexed) {
 		flush();
-		boundTex_ = &tex;
+		boundTex_ = tex;
 		boundIndexed_ = indexed;
 	}
-	currentTex_ = &tex;
 
-	float texW = (float)tex.width();
-	float texH = (float)tex.height();
+	float texW = (float)tex->width();
+	float texH = (float)tex->height();
 	if (texW <= 0 || texH <= 0) return;
 
-	float u0 = (float)srcX / texW;
-	float v0 = (float)srcY / texH;
-	float u1 = (float)(srcX + srcW) / texW;
-	float v1 = (float)(srcY + srcH) / texH;
+	float u0 = (float)src.x / texW;
+	float v0 = (float)src.y / texH;
+	float u1 = (float)(src.x + src.w) / texW;
+	float v1 = (float)(src.y + src.h) / texH;
 
-	float hw = (float)dstW * 0.5f;
-	float hh = (float)dstH * 0.5f;
-	float cx = (float)dstX + hw;
-	float cy = (float)dstY + hh;
+	float hw = (float)dst.w * 0.5f;
+	float hh = (float)dst.h * 0.5f;
+	float cx = (float)dst.x + hw;
+	float cy = (float)dst.y + hh;
 
-	float uv[8] = { u0, v0, u1, v0, u1, v1, u0, v1 };
-
-	// Destination corner offsets (TL,TR,BR,BL) relative to the center.
-	// Each mode replicates legacy Image::DrawTexture glRotatef/glScalef
-	// around the quad center (the geometry rotates, so axes swap).
-	float pos[8];
-	switch (rotateMode) {
-		case 1: // glRotatef(90)
-			pos[0] = hh; pos[1] = -hw; pos[2] = hh; pos[3] = hw;
-			pos[4] = -hh; pos[5] = hw; pos[6] = -hh; pos[7] = -hw; break;
-		case 2: // glRotatef(180)
-			pos[0] = hw; pos[1] = hh; pos[2] = -hw; pos[3] = hh;
-			pos[4] = -hw; pos[5] = -hh; pos[6] = hw; pos[7] = -hh; break;
-		case 3: // glRotatef(270)
-			pos[0] = -hh; pos[1] = hw; pos[2] = -hh; pos[3] = -hw;
-			pos[4] = hh; pos[5] = -hw; pos[6] = hh; pos[7] = hw; break;
-		case 4: // glScalef(-1,1)
-			pos[0] = hw; pos[1] = -hh; pos[2] = -hw; pos[3] = -hh;
-			pos[4] = -hw; pos[5] = hh; pos[6] = hw; pos[7] = hh; break;
-		case 5: // glRotatef(90); glScalef(-1,1)
-			pos[0] = hh; pos[1] = hw; pos[2] = hh; pos[3] = -hw;
-			pos[4] = -hh; pos[5] = -hw; pos[6] = -hh; pos[7] = hw; break;
-		case 6: // glRotatef(180); glScalef(-1,1)  == mirror Y
-			pos[0] = -hw; pos[1] = hh; pos[2] = hw; pos[3] = hh;
-			pos[4] = hw; pos[5] = -hh; pos[6] = -hw; pos[7] = -hh; break;
-		case 7: // glRotatef(270); glScalef(-1,1)
-			pos[0] = -hh; pos[1] = -hw; pos[2] = -hh; pos[3] = hw;
-			pos[4] = hh; pos[5] = hw; pos[6] = hh; pos[7] = -hw; break;
-		case 8: // glScalef(1,-1)  == mirror Y
-			pos[0] = -hw; pos[1] = hh; pos[2] = hw; pos[3] = hh;
-			pos[4] = hw; pos[5] = -hh; pos[6] = -hw; pos[7] = -hh; break;
-		case 0:
-		default:
-			pos[0] = -hw; pos[1] = -hh; pos[2] = hw; pos[3] = -hh;
-			pos[4] = hw; pos[5] = hh; pos[6] = -hw; pos[7] = hh; break;
-	}
+	// Destination corner offsets (TL,TR,BR,BL) relative to the center, plus the
+	// matching UVs: shared with every other backend (render/api/QuadUV.h).
+	float pos[4][2];
+	float uv[4][2];
+	quadCorners(rotateMode, hw, hh, u0, v0, u1, v1, pos, uv);
 
 	Vertex v[4];
 	for (int i = 0; i < 4; ++i) {
-		v[i].x = cx + pos[i * 2];
-		v[i].y = cy + pos[i * 2 + 1];
-		v[i].u = uv[i * 2];
-		v[i].v = uv[i * 2 + 1];
-		v[i].r = r; v[i].g = g; v[i].b = b; v[i].a = a;
+		v[i].x = cx + pos[i][0];
+		v[i].y = cy + pos[i][1];
+		v[i].u = uv[i][0];
+		v[i].v = uv[i][1];
+		v[i].r = color.r; v[i].g = color.g; v[i].b = color.b; v[i].a = color.a;
 	}
 	emitQuad(v);
 }
 
-void SpriteBatch::fillRect(int x, int y, int w, int h,
-	float r, float g, float b, float a) {
-	if (!begun_ || w <= 0 || h <= 0) return;
+void GlDraw2D::fillQuad(const DstRect& dst, const ColorF& c) {
+	if (!begun_ || dst.w <= 0 || dst.h <= 0) return;
 
 	if (boundTex_) flush();
 
+	const float x = (float)dst.x;
+	const float y = (float)dst.y;
 	Vertex v[4] = {
-		{ (float)x, (float)y, 0, 0, r, g, b, a },
-		{ (float)(x + w), (float)y, 0, 0, r, g, b, a },
-		{ (float)(x + w), (float)(y + h), 0, 0, r, g, b, a },
-		{ (float)x, (float)(y + h), 0, 0, r, g, b, a },
+		{ x, y, 0, 0, c.r, c.g, c.b, c.a },
+		{ x + dst.w, y, 0, 0, c.r, c.g, c.b, c.a },
+		{ x + dst.w, y + dst.h, 0, 0, c.r, c.g, c.b, c.a },
+		{ x, y + dst.h, 0, 0, c.r, c.g, c.b, c.a },
 	};
 	emitQuad(v);
-}
-
-void SpriteBatch::clear(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b) {
-	fillRect(x, y, w, h, r / 255.f, g / 255.f, b / 255.f, 1.f);
 }
 
 } // namespace newcore

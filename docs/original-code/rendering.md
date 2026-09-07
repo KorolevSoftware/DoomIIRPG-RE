@@ -587,7 +587,7 @@ Facts that matter for a port:
   with the texel by the *fixed* `GL_MODULATE` texture env (re-asserted at
   `src/GLES.cpp:620` on every state change — that is what undoes a previous
   `GL_COMBINE` from `TexCombineShift`). Vertex colors are **not** used at all:
-  `glDisableClientState(GL_COLOR_ARRAY)` (`src/GLES.cpp:98`) and the vertex
+  `glDisableClientState(GL_COLOR_ARRAY)` (`src/GLES.cpp:99`) and the vertex
   struct pushed to `glDrawElements` only has `xyzw` + `st`
   (`src/GLES.cpp:559-571`). So `Cframe = Ctex·Ccolor`, `Aframe = Atex·Acolor`.
 * Additive modes keep `GL_SRC_ALPHA` as the *source* factor (not `GL_ONE`; the
@@ -605,7 +605,7 @@ Facts that matter for a port:
   (`src/GLES.cpp:89`) and `Main.cpp:116`; `grep` finds no `glDepthMask`,
   `glDepthFunc` or `glEnable(GL_DEPTH_TEST)` anywhere in `src/`. Correctness rests
   entirely on the ordering of §8.5. `glEnable(GL_BLEND)` is permanent
-  (`src/GLES.cpp:104`).
+  (`src/GLES.cpp:105`).
 * `RENDER_FLAG_*` color shifts are a **second, orthogonal** channel applied in
   the same block (`src/GLES.cpp:717-757`): `PULSATE` (512) overrides the blend
   func with `(SRC_ALPHA, ONE)` and animates `glColor4ub(v,v,v,v)` from
@@ -619,11 +619,13 @@ Facts that matter for a port:
   `if (n == Enums::TILENUM_SCORCH_MARK) renderMode = Render::RENDER_SUB;`
   (`src/GLES.cpp:609-611`), tile 212.
 
-The 2D image path duplicates the numbering independently in
-`Image::setRenderMode` (`src/Image.cpp:158-210`): 0 = `GL_REPLACE` + optional
-alpha test, 1/2/12/13 = alpha 0.25/0.5/0.75/`blendSpecialAlpha`, 3 =
-`glBlendFunc(GL_SRC_COLOR, GL_ONE)` with `GL_REPLACE`, 8 = modulate by the
-current font color. Note 3 differs from the 3D path's `(SRC_ALPHA, ONE)`.
+The UI image blit path has its **own** switch in `Image::setRenderMode`
+(`src/Image.cpp:158-210`), which implements only a subset of the same numbering:
+0 = `GL_REPLACE` + optional alpha test, 1/2/12/13 = alpha
+0.25/0.5/0.75/`blendSpecialAlpha`, 3 = `glBlendFunc(GL_SRC_COLOR, GL_ONE)` with
+`GL_REPLACE`, 8 = modulate by the current font color. Note 3 differs from the 3D
+path's `(SRC_ALPHA, ONE)`. See §8.8 — that switch is reached only by
+`Graphics::drawImage/drawRegion`, **never** by `Render::draw2DSprite`.
 
 ### 8.3 TinyGL software path: same factors, baked into the palette
 
@@ -777,6 +779,134 @@ index 1, `:1426-1447`) or another entity's sprite (`:1452-1463`) — with `CULL_
 (`src/Render.cpp:848-851`) so it is drawn last, on top of everything.
 (This supersedes the §7.3 citation of `:1495` for the T scroll — the correct
 line is `:1486`.)
+
+### 8.8 Two different "2D" layers — which mode switch each one hits (added 2026-09-07)
+
+The word "2D" covers two unrelated pipelines in the original. Confusing them is
+the source of the "is the muzzle flash modulated?" question.
+
+**(a) Screen-space sprites — `Render::draw2DSprite`.** "2D" only means the
+position is given in screen pixels; the quad is then re-projected into world
+space and drawn by the ordinary sprite pipeline:
+
+`Render::draw2DSprite` (`src/Render.cpp:343`)
+→ `this->setupTexture(tileNum, frame, renderMode, renderFlags)` (`src/Render.cpp:357`)
+→ `gles::SetupTexture(...)` when `_gles->isInit` (`src/Render.cpp:2056-2058`)
+  **and** the TinyGL span/palette selection (`src/Render.cpp:2065-2074`,
+  `Render::setupPalette` at `src/Render.cpp:385`)
+→ `gles::SetGLState()` (`src/Render.cpp:414`)
+→ `gles::DrawWorldSpaceSpriteLine` (`src/Render.cpp:415`, impl `src/GLES.cpp:483`)
+→ `gles::DrawModelVerts` → `glDrawElements` (`src/GLES.cpp:571`).
+If the GL draw returns false (software build), the same quad is rasterized by
+`tinyGL->drawClippedSpriteLine` (`src/Render.cpp:418`).
+
+So a screen-space sprite uses the **full 14-mode table of §8.2** with all its
+`glColor4f` modulation. `gles::SetGLState` (`src/GLES.cpp:77-108`) contains no
+`glColor*` and no `glBlendFunc` call, so the color/blend state written by
+`SetupTexture` at `src/Render.cpp:357` survives until the draw; it does reset the
+cache (`this->renderMode = -1; this->flags = -1;` `src/GLES.cpp:107-108`), which
+guarantees the next `SetupTexture` re-applies its color and nothing leaks between
+sprites.
+
+**(b) UI image blits — `Graphics`/`Image`.** This is the real 2D layer (menus,
+HUD, buttons, fonts):
+
+`Graphics::drawImage` (`src/Graphics.cpp:302`) → `Graphics::drawRegion`
+(`src/Graphics.cpp:308`, clipping/anchors) → `Image::DrawTexture`
+(`src/Graphics.cpp:397`, impl `src/Image.cpp:54`) → `Image::setRenderMode`
+(`src/Image.cpp:63`). `Graphics::fillRegion` always passes mode 0
+(`src/Graphics.cpp:450`); `Graphics::drawChar` picks 0, `canvas->fontRenderMode`,
+or 8 (`src/Graphics.cpp:645-657`).
+
+Mode numbers mean the same thing in both switches where both implement them, but
+`Image::setRenderMode` covers only `{0, 1, 2, 3, 8, 12, 13}` and its `default:`
+is a bare `return` (`src/Image.cpp:205-206`) — **no GL state is touched at all**.
+Passing 4/5/6/7/9/10/11 to a UI blit would therefore reuse whatever blend/color
+was last set, i.e. `RENDER_ADD50` simply does not exist in the UI layer.
+
+| mode | `Image::setRenderMode` (UI blit) | `gles::SetupTexture` (sprites) | same meaning? |
+|---|---|---|---|
+| 0 | `GL_REPLACE`; if `!isTransparentMask` → blend+alpha-test **off**, else alpha test `GREATER 0` + `(SRC_ALPHA, 1−SRC_ALPHA)` (`:163-171`) | `(SRC_ALPHA, 1−SRC_ALPHA)`, color `1,1,1,1` | yes (UI adds an opaque fast path) |
+| 1 | `MODULATE`, `1,1,1,0.25`, `(SRC_ALPHA, 1−SRC_ALPHA)` (`:172-176`) | same | **yes** |
+| 2 | `MODULATE`, `1,1,1,0.5` (`:177-181`) | same | **yes** |
+| 3 | `GL_REPLACE`, alpha test `GREATER 0`, `glBlendFunc(GL_SRC_COLOR, GL_ONE)` (`:182-188`) | `(SRC_ALPHA, ONE)`, color `1,1,1,1` | additive in both, but different source factor and no `glColor` modulation in the UI variant |
+| 4,5,6,7,9,10,11 | *not implemented* → `default: return` (`:205-206`) | ADD75/ADD50/ADD25/SUB/PERF/NONE | **no** — UI has no additive-modulated modes |
+| 8 | `MODULATE` + `glColor4ub` from `Graphics::charColors[currentCharColor]` (`:189-194`) | `assert(0)` (`src/GLES.cpp:703-705`) | **no** — 8 is UI-only (font color) |
+| 12 | `MODULATE`, `1,1,1,0.75` (`:195-199`) | same | **yes** |
+| 13 | `MODULATE`, `1,1,1,canvas->blendSpecialAlpha` (`:200-204`) | same | **yes** |
+
+**Modes actually used by the UI layer** (exhaustive scan of every
+`drawImage`/`drawRegion`/`fillRegion` call site in `src/`):
+
+* **0** — 163 of 170 call sites.
+* **1 `BLEND25`** — `fmButton::normalRenderMode = 1`: main-menu button
+  (`src/MenuSystem.cpp:177`), in-game info button (`:242`), vending arrow
+  glow up/down (`:252`, `:259`), option buttons (`:4454`, `:4464`);
+  sentry-bot buttons 2/3 toggled at `src/SentryBotGame.cpp:686`, `:699`;
+  vending terminal soft buttons when *not* pressed
+  (`src/VendingMachine.cpp:533`+`:536`, `:554`+`:558`).
+* **2 `BLEND50`** — the whole font system via
+  `Applet::setFontRenderMode(2)`/`(0)` (`src/App.cpp:514-515`,
+  `canvas->fontRenderMode` read in `src/Graphics.cpp:651-652`; ~20 call sites:
+  automap, hacking mini-game, HUD, menus, sentry bot, vending, intro);
+  un-highlighted softkey plates (`src/MenuSystem.cpp:5204-5207`, `:5256-5259`);
+  travel-map grid lines (`src/TravelMapManager.cpp:438`, `:441`, `:442`);
+  buttons at `src/MenuSystem.cpp:4217`, `:4448`.
+* **8 (font color)** — `Graphics::drawChar` when
+  `graphics.currentCharColor != 0` (`src/Graphics.cpp:654-656`).
+* **12 `BLEND75`** — touch-control buttons `src/Canvas.cpp:333`, `:339`, `:345`;
+  `src/MiniGameManager.cpp:39`, `:45`; `src/SentryBotGame.cpp:110`, `:117`;
+  `src/VendingMachine.cpp:84`, `:102`.
+* **13 `BLENDSPECIALALPHA`** — on-screen touch controls whose alpha follows
+  `canvas->m_controlAlpha`: `src/Canvas.cpp:291-310` (four button pairs), and
+  the d-pad `graphics->drawImage(imgDpad, x, y, 0, 0, 13)`
+  (`src/Hud.cpp:1039`). `fmButton::Render` calls
+  `canvas->setBlendSpecialAlpha(m_controlAlpha * 0.01f)` right before each
+  mode-13 blit (`src/Button.cpp:171-172`, `:185-186`, `:196-197`, `:217-218`;
+  setter `src/Canvas.cpp:1575`).
+* **3** is never requested by any UI call site — dead code in
+  `Image::setRenderMode`.
+
+Consequence for a port: the UI layer needs alpha-modulated blending
+(0.25/0.5/0.75/dynamic) plus a font-color modulate, and **no** additive path.
+Screen-space sprites need the full sprite mode table instead.
+
+### 8.9 The muzzle flash is half-bright additive (added 2026-09-07)
+
+`Combat::drawWeapon` (`src/Combat.cpp:823-834`) draws the extra flash for
+weapons in the mask `0x181` (weapons 0, 7, 8 — `if (b && (1 << weapon & 0x181) != 0x0)`)
+as a **screen-space sprite**, i.e. path (a) of §8.8:
+
+```cpp
+app->render->draw2DSprite(this->getWeaponTileNum(0), 3, x + wpFlashX + xf, y + wpFlashY + yf,
+                          flags, 5, (!app->render->_gles->isInit) ? 0x400 : 0, 0x8000);
+```
+
+* `renderMode = 5` = `Render::RENDER_ADD50` (`src/Render.h:23`).
+* No override intervenes: `Render::setupTexture` only rewrites the mode for the
+  automap / debug-pipeline masks (`src/Render.cpp:2049-2054`; default
+  `Render::renderMode = RENDER_DEFAULT = 31` has bit `0x10` set and `0x20`
+  clear, `src/Render.cpp:48`, `src/Render.h:82`), and the tile override at
+  `src/GLES.cpp:609` only affects tile 212.
+* `renderFlags` is **0** on the GL path (the `0x400` =
+  `RENDER_FLAG_SCALE_WEAPON`, `src/Render.h:41`, is TinyGL-only), so none of the
+  `PULSATE`/`*_SHIFT` color overrides at `src/GLES.cpp:717-757` apply.
+* GL state at draw time: `glBlendFunc(GL_SRC_ALPHA, GL_ONE)` +
+  `glColor4f(0.50f, 0.50f, 0.50f, 1.0f)` with the fixed `GL_MODULATE` env
+  (`src/GLES.cpp:660-664`, env at `:619`), fog disabled (`fogMode = 0` → `:714`).
+* Independent cross-check in the software rasterizer: mode 5 selects the
+  additive span (`_spanTrans[RENDER_ADD50]` aliases `spanAddTransparent`,
+  `src/Render.cpp:72`) over a palette pre-halved by `(c & 0xE79C) >> 1`
+  (`src/Render.cpp:2002-2006`). Both back-ends agree.
+* `scaleFactor = 0x8000` (half of the weapon's `0x10000`) → quad size
+  `v12 = (176 * 0x8000) / 0x10000 = 88` px (`src/Render.cpp:359`).
+* Tile = `getWeaponTileNum(0)`, frame **3**; the weapon itself is drawn right
+  after with mode 0 (`src/Combat.cpp:839`, `renderMode` initialized at
+  `src/Combat.cpp:785`).
+
+**Verdict: half brightness.** The flash contributes
+`dst += A_tex · 0.5 · C_tex`, not `dst += A_tex · C_tex`. A port that draws it at
+full brightness is twice as bright as the original.
 
 ### 8.7 Draw order: the mode never affects sorting
 

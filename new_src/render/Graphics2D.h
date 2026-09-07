@@ -3,11 +3,11 @@
 
 #include <cstdint>
 
-#include "render/gl/Texture.h"
+#include "render/api/Texture.h"
 
 namespace newcore {
 
-class SpriteBatch;
+class Draw2D;
 class Font;
 class Text;
 
@@ -28,10 +28,10 @@ public:
 
 	Graphics2D() = default;
 
-	void setBatch(SpriteBatch* batch) { batch_ = batch; }
+	void setDevice(Draw2D* device) { dev_ = device; }
 
-	// Clip region in canvas coordinates. Backed by a real GL scissor in
-	// SpriteBatch (which flushes first, so earlier quads keep the old clip);
+	// Clip region in canvas coordinates. Backed by a real clip in the output
+	// device (which flushes first, so earlier quads keep the old clip);
 	// w <= 0 or h <= 0 clips everything away. One level only: nesting is the
 	// UI layer's job. Note it clips the destination pixels only — a caller
 	// that must also trim the source sub-rect of a magnified blit still does
@@ -77,14 +77,15 @@ public:
 	void drawBuffIcon(int iconIndex, int x, int y, int flags = 0,
 		uint8_t tintR = 255, uint8_t tintG = 255, uint8_t tintB = 255, uint8_t alpha = 255);
 
-	// Blend mode passthrough (0 = alpha, 1 = additive RENDER_ADD50).
+	// Blend mode passthrough. `mode` is a legacy RENDER_* value
+	// (render/api/RenderModes.h), the same numbering the world path uses.
 	void setBlendMode(int mode);
 
 	// Sets the Icons_Buffs texture used by drawString's '\'+letter icons.
 	void setBuffIconTexture(const Texture& buffs) { buffIcons_ = &buffs; }
 
 private:
-	SpriteBatch* batch_ = nullptr;
+	Draw2D* dev_ = nullptr;
 	const Texture* buffIcons_ = nullptr;
 	int clipX_ = 0, clipY_ = 0, clipW_ = 0, clipH_ = 0;
 	bool hasClip_ = false;
