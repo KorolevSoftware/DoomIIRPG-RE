@@ -112,7 +112,11 @@ the required palette-swap measurement), `SdlDraw2D` (everything through
 `SDL_RenderGeometry` + a 1x1 white texture for fills, canvas-space clip rect),
 `SdlScene3D` (CPU vertex pipeline: near clip, NDC -> canvas viewport, object-space UV
 tile split because SDL textures are CLAMP_TO_EDGE, batching by texture+mode,
-per-vertex fog + haze pass), `SdlBlendModes` (14 rows -> `SDL_BlendMode`, custom mode
+per-vertex fog + haze pass; **planned, ADR 0023 / spec
+`specs/2026-09-07-sdl-tessellation.md`**: adaptive `n x n` tessellation of the
+near-clipped triangles against the affine warp — criterion = peak affine displacement in
+canvas pixels, cut by averaging clip-space vertices, `n = ceil(sqrt(M/2px))` capped at 8,
+downstream of the tile split; env knobs `DOOM2RPG_SDL_TESS` / `DOOM2RPG_GFX_STATS`), `SdlBlendModes` (14 rows -> `SDL_BlendMode`, custom mode
 for `RENDER_SUB`, `RENDER_NONE` = skip), `SdlRenderBackend`.
 
 ### render/gl/
@@ -208,6 +212,7 @@ _See [adr/](adr/):_
 - [0020 — The graphics backend is a library behind two need-shaped interfaces (`Draw2D`/`Scene3D`)](adr/0020-render-backend-two-interfaces.md) (2026-09-02)
 - [0021 — SDL_Render is a full second backend, 3D view included (affine mapping accepted)](adr/0021-sdl-render-second-backend-with-3d.md) (2026-09-02)
 - [0022 — Fog is a backend-dependent effect (per-pixel on GL, per-vertex on SDL)](adr/0022-fog-is-backend-dependent.md) (2026-09-02)
+- [0023 — The affine warp is fought by adaptive tessellation, measured in screen space and cut in clip space (SDL only)](adr/0023-sdl-clip-space-adaptive-tessellation.md) (2026-09-07)
 
 ## Specs
 
@@ -228,3 +233,4 @@ _See [adr/](adr/):_
 - [2026-08-30 — Shelf pickup (`EV_GIVEITEM` mode 0), full blocking-sprite spawn, crates (open/animate/unlink), `EV_GIVELOOT`](specs/2026-08-30-blocking-crates-shelf-pickup.md)
 - [2026-09-01 — Blend-mode table, `uColorMod` modulation, torchiere glow](specs/2026-09-01-blend-modes.md)
 - [2026-09-02 — Render backend split: `dr_render_core` + GL and SDL_Render implementations (`Draw2D`/`Scene3D`, backend flag, frame capture)](specs/2026-09-02-render-backend-split.md)
+- [2026-09-07 — SDL path: adaptive triangle tessellation against the affine warp (G7.1-G7.3)](specs/2026-09-07-sdl-tessellation.md)

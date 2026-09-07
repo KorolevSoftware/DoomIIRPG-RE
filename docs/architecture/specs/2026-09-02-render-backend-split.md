@@ -902,6 +902,18 @@ counters, `docs/architecture/README.md` module-map refresh, and whichever specif
 artifacts the user names in G6 (candidate: quad subdivision against the affine
 warping, deliberately not done earlier).
 
+**G7.1-G7.3 are specified separately** in `specs/2026-09-07-sdl-tessellation.md`
+(ADR 0023): the artifact the user named after G6 is the affine warp, and the answer is
+adaptive `n x n` tessellation inside `SdlScene3D` — measured in canvas pixels after the
+near clip, cut by averaging clip-space vertices (provably the object-space cut), placed
+downstream of the tile split. That spec also replaces the `--gfx-stats` flag mentioned
+above with the `DOOM2RPG_GFX_STATS` env var plus real per-phase microsecond timings,
+because the "63 FPS on both backends" figure is capped by vsync and the 15 ms pacing
+delay and therefore prices nothing.
+
+Remaining, still-open G7 items: texture-memory log line, SUB fallback / driver logs,
+`docs/architecture/README.md` module-map refresh.
+
 ---
 
 ## 7. Deviations (with the on-screen description)
@@ -985,8 +997,10 @@ warping, deliberately not done earlier).
 * No render thread; the single-threaded GL/game loop stays (ADR 0010 wiring).
 * No texture atlas, no streaming, no eviction, no compression.
 * No z-buffer in either backend (the port relies on BSP painter order).
-* No perspective-correct subdivision in the SDL path (candidate for G7 only if the
-  user asks).
+* No perspective-correct subdivision in the SDL path — **superseded 2026-09-07**: the
+  user asked for it after G6, so it is specified as G7.1-G7.3 in
+  `specs/2026-09-07-sdl-tessellation.md` (ADR 0023). Perspective-correct *rasterization*
+  is still out (SDL_Vertex has no `w`); only the artifact's magnitude changes.
 * No palette-effect framework, no shader files on disk, no shader hot-reload.
 * No change to any faithful port logic: `World3D`'s geometry math, `Camera3D`,
   `SceneRenderer`'s classification, `Graphics2D`'s layout and the `RENDER_*` table

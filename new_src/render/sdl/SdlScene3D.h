@@ -45,6 +45,15 @@ public:
 	static constexpr int kMaxTileCells = 289;
 	// Near plane of the clip stage (ADR 0021 step 2).
 	static constexpr float kNearW = 1.f / 1024.f;
+	// Accepted residual affine texture displacement, in canvas pixels: a
+	// triangle whose peak displacement is below this is emitted whole
+	// (spec 2026-09-07-sdl-tessellation §3, ADR 0023). Tuned by eye, not
+	// derived; halving it costs ~4x the triangles on the affected geometry.
+	static constexpr float kWarpTolerancePx = 2.f;
+	// Hard cap on the n of the n x n split: 64 sub-triangles. n = 8 clears a
+	// metric of 128 px; beyond that the triangle straddles the eye plane and a
+	// uniform split cannot help (spec §7).
+	static constexpr int kMaxSubdivN = 8;
 
 	void initialize(SDL_Renderer* renderer, const SdlTextureStore& store,
 		const SdlBlendModes& blend);
@@ -78,6 +87,32 @@ private:
 	bool splitTiles(const WorldVertex tri[3]);
 	// Transform + near clip + projection of one tile-local world triangle.
 	void projectTriangle(const WorldVertex tri[3]);
+	// Clip-space counterpart of lerpWorld: all six components are linear, which
+	// is what makes a clip-space cut the object-space cut (ADR 0023).
+	static ClipVertex lerpClip(const ClipVertex& a, const ClipVertex& b, float t);
+	// Projects a near-clipped triangle into canvas pixels measured from the
+	// viewport centre (no +0.5 offset, no y flip): the frame warpMetric and
+	// offScreenBox work in.
+	void projectForMetric(const ClipVertex tri[3], float sx[3], float sy[3]) const;
+	// True when the projected bounding box misses the output rect, i.e. the
+	// triangle rasterizes to nothing however finely it is split.
+	bool offScreenBox(const float sx[3], const float sy[3]) const;
+	// Peak affine texture displacement over the three edges of an already
+	// transformed, near-clipped triangle, in canvas pixels (spec §3), from the
+	// positions of projectForMetric.
+	float warpMetric(const ClipVertex tri[3], const float sx[3],
+		const float sy[3]) const;
+	// n for the n x n barycentric split: 1 when the triangle is off screen or
+	// already inside the tolerance, else ceil(sqrt(M / kWarpTolerancePx))
+	// clamped to maxSubdivN_.
+	int subdivisionSteps(const ClipVertex tri[3]) const;
+	// One near-clipped triangle: measures, subdivides in clip space when it
+	// pays, emits through appendVertex.
+	void emitClipTriangle(const ClipVertex tri[3]);
+	// Regular n x n barycentric split of a clip triangle (n >= 2). Splitting in
+	// clip space is exactly the object-space split, because MVP is linear in
+	// homogeneous coordinates (ADR 0023).
+	void emitSubdivided(const ClipVertex tri[3], int n);
 	// The sky path: vertices already in canvas pixels, no transform.
 	void emitScreenTriangle(const WorldVertex tri[3]);
 	// Appends a projected vertex (plus its haze twin when a haze pass is due).
@@ -118,6 +153,10 @@ private:
 	bool tileSplit_ = false;
 	bool fogMultiply_ = false; // fog folded into the vertex color
 	bool hazeDue_ = false;     // fog drawn as the second untextured pass
+
+	// Runtime override of kMaxSubdivN, from DOOM2RPG_SDL_TESS (spec §5).
+	// 1 disables tessellation entirely.
+	int maxSubdivN_ = kMaxSubdivN;
 
 	bool tileOverflowLogged_ = false;
 	bool texMissLogged_ = false;

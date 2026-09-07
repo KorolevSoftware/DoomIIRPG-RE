@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "render/api/RenderModes.h"
 #include "render/sdl/SdlBlendModes.h"
@@ -71,7 +72,20 @@ void SdlScene3D::initialize(SDL_Renderer* renderer, const SdlTextureStore& store
 	renderer_ = renderer;
 	store_ = &store;
 	blend_ = &blend;
-	vertices_.reserve(1024);
+	// Tessellation adds ~1k leaf triangles per frame (spec §7); reserve enough
+	// that neither vector re-grows every frame.
+	vertices_.reserve(8192);
+	haze_.reserve(8192);
+	// Debug/measurement knob (spec §5): DOOM2RPG_SDL_TESS=1 disables the
+	// affine-warp tessellation, 2..8 caps it lower than kMaxSubdivN.
+	if (const char* env = std::getenv("DOOM2RPG_SDL_TESS")) {
+		int n = std::atoi(env);
+		if (n < 1) n = 1;
+		if (n > kMaxSubdivN) n = kMaxSubdivN;
+		maxSubdivN_ = n;
+		std::fprintf(stderr, "SdlScene3D: DOOM2RPG_SDL_TESS=%s -> max subdivision n = %d%s\n",
+			env, maxSubdivN_, maxSubdivN_ == 1 ? " (tessellation off)" : "");
+	}
 	updateBatchState();
 }
 
@@ -250,11 +264,141 @@ void SdlScene3D::projectTriangle(const WorldVertex tri[3]) {
 	}
 	if (n < 3) return;
 
-	reserveFor((n - 2) * 3);
 	for (int i = 1; i + 1 < n; ++i) {
-		appendVertex(out[0]);
-		appendVertex(out[i]);
-		appendVertex(out[i + 1]);
+		const ClipVertex fan[3] = { out[0], out[i], out[i + 1] };
+		emitClipTriangle(fan);
+	}
+}
+
+SdlScene3D::ClipVertex SdlScene3D::lerpClip(const ClipVertex& a, const ClipVertex& b,
+	float t) {
+	ClipVertex r;
+	r.x = a.x + (b.x - a.x) * t;
+	r.y = a.y + (b.y - a.y) * t;
+	r.w = a.w + (b.w - a.w) * t;
+	r.u = a.u + (b.u - a.u) * t;
+	r.v = a.v + (b.v - a.v) * t;
+	r.depth = a.depth + (b.depth - a.depth) * t;
+	return r;
+}
+
+void SdlScene3D::projectForMetric(const ClipVertex tri[3], float sx[3],
+	float sy[3]) const {
+	// Screen positions without the +0.5 offset and the y flip of appendVertex:
+	// the metric only uses differences, so both cancel (spec §3), and the
+	// off-screen test compensates by using the box centred on the viewport.
+	for (int i = 0; i < 3; ++i) {
+		const float w = tri[i].w > kNearW ? tri[i].w : kNearW; // the clip guarantees it
+		const float inv = 1.f / w;
+		sx[i] = tri[i].x * inv * 0.5f * vpW_;
+		sy[i] = tri[i].y * inv * 0.5f * vpH_;
+	}
+}
+
+bool SdlScene3D::offScreenBox(const float sx[3], const float sy[3]) const {
+	float minX = sx[0], maxX = sx[0];
+	float minY = sy[0], maxY = sy[0];
+	for (int i = 1; i < 3; ++i) {
+		if (sx[i] < minX) minX = sx[i];
+		if (sx[i] > maxX) maxX = sx[i];
+		if (sy[i] < minY) minY = sy[i];
+		if (sy[i] > maxY) maxY = sy[i];
+	}
+	// projectForMetric drops the +0.5 offset and flips no y, so the visible
+	// rect [0, vpW_] x [0, vpH_] becomes the symmetric box around the origin:
+	// x_screen = sx + vpW_/2 and y_screen = vpH_/2 - sy.
+	const float hw = 0.5f * vpW_;
+	const float hh = 0.5f * vpH_;
+	// Strict comparisons, so a box that only touches the border is kept. A NaN
+	// coordinate (impossible after the near clip, but cheap to be sure) makes
+	// every comparison false, i.e. "not off screen": the fallback is the
+	// pre-cull behaviour.
+	return minX > hw || maxX < -hw || minY > hh || maxY < -hh;
+}
+
+float SdlScene3D::warpMetric(const ClipVertex tri[3], const float sx[3],
+	const float sy[3]) const {
+	float worst = 0.f;
+	for (int i = 0; i < 3; ++i) {
+		const int j = (i + 1) % 3;
+		// Chebyshev edge length, no sqrt, times the peak parametric error
+		// |w_i - w_j| / (2 * (w_i + w_j)).
+		const float dx = std::fabs(sx[i] - sx[j]);
+		const float dy = std::fabs(sy[i] - sy[j]);
+		const float len = dx > dy ? dx : dy;
+		const float sum = tri[i].w + tri[j].w;
+		if (sum <= 0.f) continue;
+		const float m = 0.5f * len * std::fabs(tri[i].w - tri[j].w) / sum;
+		if (m > worst) worst = m;
+	}
+	return worst;
+}
+
+int SdlScene3D::subdivisionSteps(const ClipVertex tri[3]) const {
+	if (maxSubdivN_ <= 1) return 1;
+	float sx[3], sy[3];
+	projectForMetric(tri, sx, sy);
+	// Off-screen cull: a triangle whose projected bounding box does not
+	// intersect the output rect rasterizes to nothing at any n, so skipping
+	// its split can not change a single visible pixel — this is not a
+	// quality-for-speed trade. A partially visible triangle has an
+	// intersecting box and is split exactly as before. Measured on map00
+	// without the cull: off-screen geometry produced 31584 of 38258 leaves
+	// standing still and up to 98% of them while moving.
+	if (offScreenBox(sx, sy)) return 1;
+	const float m = warpMetric(tri, sx, sy);
+	if (m <= kWarpTolerancePx) return 1;
+	// The error falls as 1/n^2 under an n-way split (ADR 0023 decision 4).
+	const int n = (int)std::ceil(std::sqrt(m / kWarpTolerancePx));
+	if (n >= maxSubdivN_) return maxSubdivN_;
+	return n < 2 ? 2 : n;
+}
+
+void SdlScene3D::emitClipTriangle(const ClipVertex tri[3]) {
+	const int n = subdivisionSteps(tri);
+	if (n <= 1) {
+		reserveFor(3);
+		appendVertex(tri[0]);
+		appendVertex(tri[1]);
+		appendVertex(tri[2]);
+		return;
+	}
+	emitSubdivided(tri, n);
+}
+
+void SdlScene3D::emitSubdivided(const ClipVertex tri[3], int n) {
+	// Regular barycentric grid, row by row: row i (i = 0..n) holds i + 1
+	// vertices between A + (B-A)*i/n and A + (C-A)*i/n. n*n leaves total.
+	ClipVertex rowA[kMaxSubdivN + 1];
+	ClipVertex rowB[kMaxSubdivN + 1];
+	const float invN = 1.f / (float)n;
+	rowA[0] = tri[0]; // row 0 = the apex
+	for (int i = 0; i < n; ++i) {
+		const float t = (float)(i + 1) * invN;
+		const ClipVertex left = lerpClip(tri[0], tri[1], t);
+		const ClipVertex right = lerpClip(tri[0], tri[2], t);
+		const int count = i + 2; // vertices in row i+1
+		for (int k = 0; k < count; ++k) {
+			rowB[k] = lerpClip(left, right, (float)k / (float)(count - 1));
+		}
+		// reserveFor(3) per leaf, before its three vertices: a flush is only
+		// safe between complete triangles (it clears vertices_ and haze_), and
+		// a mid-run flush is invisible because the whole run shares one texture
+		// and one render mode.
+		// Up-triangles keep the input winding.
+		for (int k = 0; k <= i; ++k) {
+			reserveFor(3);
+			appendVertex(rowA[k]);
+			appendVertex(rowB[k]);
+			appendVertex(rowB[k + 1]);
+		}
+		for (int k = 0; k < i; ++k) {
+			reserveFor(3);
+			appendVertex(rowA[k]);
+			appendVertex(rowB[k + 1]);
+			appendVertex(rowA[k + 1]);
+		}
+		for (int k = 0; k < count; ++k) rowA[k] = rowB[k];
 	}
 }
 
