@@ -21,7 +21,7 @@ bool SdlRenderBackend::initialize(Window& window) {
 		std::fprintf(stderr, "SdlDraw2D init failed\n");
 		return false;
 	}
-	scene3d_.initialize(renderer_);
+	scene3d_.initialize(renderer_, textures_, blendModes_);
 	return true;
 }
 
@@ -49,6 +49,8 @@ void SdlRenderBackend::applyViewport(Window& window) {
 	applyRect(vx, vy, vw, vh,
 		(float)vw / (float)CanvasViewport::kCanvasW,
 		(float)vh / (float)CanvasViewport::kCanvasH);
+	// The world device projects NDC onto the canvas rect it is told about.
+	scene3d_.setViewportSize(CanvasViewport::kCanvasW, CanvasViewport::kCanvasH);
 }
 
 void SdlRenderBackend::letterboxRect(int& x, int& y, int& w, int& h) const {
@@ -63,16 +65,21 @@ bool SdlRenderBackend::drawableToCanvas(int px, int py, int& cx, int& cy) const 
 }
 
 void SdlRenderBackend::setCanvasViewport(int x, int y, int w, int h) {
-	// Batched quads rasterize at flush time -> flush before any viewport change.
+	// Batched geometry rasterizes at flush time -> flush before any viewport
+	// change, while the vertices still mean what they meant when they were
+	// built.
 	draw2d_.flush();
+	scene3d_.flush();
 	int dx, dy, dw, dh;
 	if (!vp_.canvasSubRect(x, y, w, h, /*glBottomUp=*/false, dx, dy, dw, dh)) return;
 	// Inside the band the devices draw in band-local canvas units.
 	applyRect(dx, dy, dw, dh, (float)dw / (float)w, (float)dh / (float)h);
+	scene3d_.setViewportSize(w, h);
 }
 
 void SdlRenderBackend::restoreCanvasViewport(Window& window) {
 	draw2d_.flush();
+	scene3d_.flush();
 	applyViewport(window);
 }
 
