@@ -5,10 +5,15 @@
 #include <string>
 
 struct SDL_Window;
+struct SDL_Renderer;
 
 namespace newcore {
 
 enum class WindowMode : int { Windowed = 0, Borderless = 1, Fullscreen = 2 };
+
+// Which drawing API the window is created for (spec 2026-09-02 §4.4). Chosen
+// before creation; there is no runtime switch.
+enum class GraphicsApi { OpenGL, SdlRender };
 
 class Window {
 public:
@@ -18,8 +23,12 @@ public:
 	Window(const Window&) = delete;
 	Window& operator=(const Window&) = delete;
 
-	bool initialize(const char* title);
+	bool initialize(const char* title, GraphicsApi api);
 	void shutdown();
+
+	GraphicsApi api() const { return api_; }
+	// The SDL_Renderer of the SdlRender path; nullptr under OpenGL.
+	SDL_Renderer* sdlRenderer() const { return sdlRenderer_; }
 
 	// Logical canvas size (fixed game resolution).
 	static constexpr int kCanvasWidth = 480;
@@ -55,15 +64,19 @@ public:
 	void windowToDrawable(int wx, int wy, int& px, int& py) const;
 
 	SDL_Window* nativeHandle() const { return window_; }
-	void swapBuffers();
+	// Puts the finished frame on screen: SDL_GL_SwapWindow / SDL_RenderPresent.
+	void present();
 
 private:
 	bool applyResolution();
 	bool applyWindowMode();
 	bool applyVSync();
+	void refreshDrawableSize();
 
+	GraphicsApi api_;
 	SDL_Window* window_;
 	void* glContext_;
+	SDL_Renderer* sdlRenderer_;
 	bool initialized_;
 
 	int resolutionIndex_;

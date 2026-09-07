@@ -1,8 +1,10 @@
 #include "render/gl/GlRenderBackend.h"
 
 #include <cstdio>
+#include <vector>
 
 #include "platform/Window.h"
+#include "render/api/BmpWriter.h"
 #include "render/gl/GlCommon.h"
 
 namespace newcore {
@@ -75,7 +77,10 @@ void GlRenderBackend::beginFrame(Window& window) {
 
 void GlRenderBackend::endFrame(Window& window) {
 	draw2d_.end();
-	window.swapBuffers();
+	// Everything is rasterized and the back buffer is still intact: this is
+	// the only point where the finished frame can be read back (§8.2).
+	if (!capturePath_.empty()) writeCapture();
+	window.present();
 }
 
 void GlRenderBackend::flushFrame() {
@@ -84,10 +89,30 @@ void GlRenderBackend::flushFrame() {
 }
 
 void GlRenderBackend::requestCapture(const char* path) {
-	// Implemented by spec group G4 (glReadPixels of the letterbox rect between
-	// flushFrame and the swap, then render/api/BmpWriter.h).
-	std::fprintf(stderr, "GlRenderBackend: frame capture to '%s' is not implemented yet\n",
-		path != nullptr ? path : "(null)");
+	if (path == nullptr || path[0] == '\0') return;
+	capturePath_ = path;
+}
+
+void GlRenderBackend::writeCapture() {
+	const std::string path = capturePath_;
+	capturePath_.clear(); // one shot, even if the readback or the write fails
+
+	if (vp_.w <= 0 || vp_.h <= 0) {
+		std::fprintf(stderr, "capture: letterbox rect is empty, nothing written\n");
+		return;
+	}
+
+	std::vector<uint8_t> pixels((size_t)vp_.w * (size_t)vp_.h * 4);
+	glPixelStorei(GL_PACK_ALIGNMENT, 4); // rows are w*4 bytes, always aligned
+	glReadPixels(vp_.x, vp_.y, vp_.w, vp_.h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+	// glReadPixels returns the bottom row first, which is exactly BMP order.
+	if (!writeBmp24(path.c_str(), pixels.data(), vp_.w, vp_.h, /*bottomUp=*/true)) {
+		std::fprintf(stderr, "capture: failed to write '%s'\n", path.c_str());
+		return;
+	}
+	std::fprintf(stdout, "capture: %s (%dx%d)\n", path.c_str(), vp_.w, vp_.h);
+	std::fflush(stdout);
 }
 
 } // namespace newcore

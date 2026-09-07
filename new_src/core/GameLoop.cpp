@@ -27,6 +27,8 @@ bool GameLoop::run(AppContext& context) {
 	// the events GameLoop already dispatches, so the Action path below is
 	// unchanged (no event is consumed by either reader).
 	UiInputCollector collector;
+	// F12 frame captures are numbered per run (spec §8.2).
+	int captureIndex = 0;
 
 	context.input().setEventCallback([&](const SDL_Event& ev) {
 		if (ev.type == SDL_QUIT) {
@@ -47,6 +49,14 @@ bool GameLoop::run(AppContext& context) {
 		// away from the reference keymap (UiInputCollector.cpp:103-106).
 		if (ev.key.keysym.scancode == SDL_SCANCODE_B && ev.key.repeat == 0) {
 			ctx.debugToggleCoords();
+		}
+		// DEBUG (rewrite-only): F12 dumps the letterboxed canvas of the frame
+		// being presented, so the two backends can be diffed (spec §8.2).
+		if (ev.key.keysym.scancode == SDL_SCANCODE_F12 && ev.key.repeat == 0) {
+			char path[64];
+			std::snprintf(path, sizeof(path), "capture-%s-%03d.bmp",
+				context.renderer().name(), captureIndex++);
+			context.renderer().requestCapture(path);
 		}
 		const Action a = collector.keyAction(ev);
 		if (a != Action::None) {

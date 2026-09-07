@@ -4,7 +4,6 @@
 #include <cstdio>
 
 #include "render/api/CanvasViewport.h"
-#include "render/gl/GlCommon.h"
 
 namespace newcore {
 
@@ -23,7 +22,8 @@ constexpr int kNumVideoModes = static_cast<int>(sizeof(kVideoModes) / sizeof(kVi
 } // namespace
 
 Window::Window()
-	: window_(nullptr), glContext_(nullptr), initialized_(false)
+	: api_(GraphicsApi::OpenGL)
+	, window_(nullptr), glContext_(nullptr), sdlRenderer_(nullptr), initialized_(false)
 	, resolutionIndex_(0), oldResolutionIndex_(-1)
 	, windowMode_(WindowMode::Windowed), oldWindowMode_(static_cast<WindowMode>(-1))
 	, vSync_(true), oldVSync_(false)
@@ -32,29 +32,33 @@ Window::Window()
 
 Window::~Window() { shutdown(); }
 
-bool Window::initialize(const char* title) {
+bool Window::initialize(const char* title, GraphicsApi api) {
 	if (initialized_) return true;
+	api_ = api;
 
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) < 0) {
 		std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
 		return false;
 	}
 
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+	if (api_ == GraphicsApi::OpenGL) {
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
 #ifdef __APPLE__
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 #else
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
 #endif
-	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+		SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+	}
 
 	int modeWidth = kVideoModes[resolutionIndex_].width;
 	int modeHeight = kVideoModes[resolutionIndex_].height;
 
-	Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
+	Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
 		| SDL_WINDOW_ALWAYS_ON_TOP;
+	if (api_ == GraphicsApi::OpenGL) flags |= SDL_WINDOW_OPENGL;
 	window_ = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
 		modeWidth, modeHeight, flags);
 	if (!window_) {
@@ -62,16 +66,29 @@ bool Window::initialize(const char* title) {
 		return false;
 	}
 
-	glContext_ = SDL_GL_CreateContext(window_);
-	if (!glContext_) {
-		std::fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
-		SDL_DestroyWindow(window_);
-		window_ = nullptr;
-		return false;
+	if (api_ == GraphicsApi::OpenGL) {
+		glContext_ = SDL_GL_CreateContext(window_);
+		if (!glContext_) {
+			std::fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
+			SDL_DestroyWindow(window_);
+			window_ = nullptr;
+			return false;
+		}
+	} else {
+		// vSync_ is the constructor default here; applyVSync() below only ever
+		// runs SDL_RenderSetVSync afterwards, so the flag must be right now.
+		Uint32 rflags = SDL_RENDERER_ACCELERATED | (vSync_ ? SDL_RENDERER_PRESENTVSYNC : 0u);
+		sdlRenderer_ = SDL_CreateRenderer(window_, -1, rflags);
+		if (!sdlRenderer_) {
+			std::fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
+			SDL_DestroyWindow(window_);
+			window_ = nullptr;
+			return false;
+		}
 	}
 
 	SDL_GetWindowSize(window_, &winWidth_, &winHeight_);
-	SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
+	refreshDrawableSize();
 
 	applyVSync();
 	applyResolution();
@@ -83,6 +100,10 @@ bool Window::initialize(const char* title) {
 }
 
 void Window::shutdown() {
+	if (sdlRenderer_) {
+		SDL_DestroyRenderer(sdlRenderer_);
+		sdlRenderer_ = nullptr;
+	}
 	if (glContext_) {
 		SDL_GL_DeleteContext(glContext_);
 		glContext_ = nullptr;
@@ -121,7 +142,7 @@ bool Window::applyResolution() {
 	SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 
 	SDL_GetWindowSize(window_, &winWidth_, &winHeight_);
-	SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
+	refreshDrawableSize();
 	return true;
 }
 
@@ -139,22 +160,34 @@ bool Window::applyWindowMode() {
 	}
 
 	SDL_GetWindowSize(window_, &winWidth_, &winHeight_);
-	SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
+	refreshDrawableSize();
 	return true;
 }
 
 bool Window::applyVSync() {
 	if (vSync_ == oldVSync_) return true;
 	oldVSync_ = vSync_;
-	SDL_GL_SetSwapInterval(vSync_ ? 1 : 0);
+	if (api_ == GraphicsApi::OpenGL) {
+		SDL_GL_SetSwapInterval(vSync_ ? 1 : 0);
+	} else if (sdlRenderer_) {
+		SDL_RenderSetVSync(sdlRenderer_, vSync_ ? 1 : 0);
+	}
 	return true;
+}
+
+void Window::refreshDrawableSize() {
+	if (api_ == GraphicsApi::OpenGL) {
+		SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
+	} else if (sdlRenderer_) {
+		SDL_GetRendererOutputSize(sdlRenderer_, &drawableWidth_, &drawableHeight_);
+	}
 }
 
 void Window::applyVideoSettings() {
 	applyVSync();
 	applyWindowMode();
 	applyResolution();
-	SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
+	refreshDrawableSize();
 }
 
 void Window::computeViewport(int& x, int& y, int& w, int& h) const {
@@ -173,6 +206,12 @@ void Window::windowToDrawable(int wx, int wy, int& px, int& py) const {
 	py = wy * drawableHeight_ / (winHeight_ > 0 ? winHeight_ : 1);
 }
 
-void Window::swapBuffers() { SDL_GL_SwapWindow(window_); }
+void Window::present() {
+	if (api_ == GraphicsApi::OpenGL) {
+		SDL_GL_SwapWindow(window_);
+	} else if (sdlRenderer_) {
+		SDL_RenderPresent(sdlRenderer_);
+	}
+}
 
 } // namespace newcore

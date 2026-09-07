@@ -5,12 +5,11 @@
 #include "platform/FileSystem.h"
 #include "platform/InputSystem.h"
 #include "platform/Window.h"
+#include "core/RenderBackendFactory.h"
 #include "render/api/RenderBackend.h"
-// The only place outside render/gl/ that names a concrete backend; spec group
-// G4 replaces it with core/RenderBackendFactory.
-#include "render/gl/GlRenderBackend.h"
 
 #include <cstdio>
+#include <string>
 
 namespace newcore {
 
@@ -24,14 +23,27 @@ ZipArchive& AppContext::archive() { return *archive_; }
 RenderBackend& AppContext::renderer() { return *renderer_; }
 InputSystem& AppContext::input() { return *input_; }
 
-bool AppContext::initialize(const char* dataArchive) {
+bool AppContext::initialize(const char* dataArchive, BackendKind backend) {
+	// The window's API must match the backend, so the fallback happens first.
+	backendKind_ = resolveBackendKind(backend);
+	const GraphicsApi api = (backendKind_ == BackendKind::OpenGL)
+		? GraphicsApi::OpenGL : GraphicsApi::SdlRender;
+
+	// Title suffix so the user always knows which backend is on screen (§4.3).
+	const std::string title = std::string("Doom II RPG [") + backendKindName(backendKind_) + "]";
+
 	window_ = std::make_unique<Window>();
-	if (!window_->initialize("Doom II RPG")) {
+	if (!window_->initialize(title.c_str(), api)) {
 		std::fprintf(stderr, "Failed to initialize window.\n");
 		return false;
 	}
 
-	renderer_ = std::make_unique<GlRenderBackend>();
+	renderer_ = createRenderBackend(backendKind_);
+	if (!renderer_) {
+		std::fprintf(stderr, "No render backend for '%s'.\n", backendKindName(backendKind_));
+		return false;
+	}
+	std::fprintf(stdout, "renderer: %s\n", renderer_->name());
 	if (!renderer_->initialize(*window_)) {
 		std::fprintf(stderr, "Failed to initialize renderer.\n");
 		return false;

@@ -1,6 +1,8 @@
 #ifndef NEW_RENDER_GL_GLRENDERBACKEND_H
 #define NEW_RENDER_GL_GLRENDERBACKEND_H
 
+#include <string>
+
 #include "render/api/CanvasViewport.h"
 #include "render/api/RenderBackend.h"
 #include "render/gl/GlDraw2D.h"
@@ -38,12 +40,16 @@ public:
 
 private:
 	void applyViewport(Window& window);
+	// Reads back the letterbox rect and writes the pending capture file.
+	void writeCapture();
 
 	GlTextureStore textures_;
 	GlDraw2D draw2d_;
 	GlScene3D scene3d_;
 	// Letterboxed canvas rect in drawable pixels, latched by applyViewport.
 	CanvasViewport vp_;
+	// One-shot frame capture request (see requestCapture).
+	std::string capturePath_;
 };
 
 } // namespace newcore
