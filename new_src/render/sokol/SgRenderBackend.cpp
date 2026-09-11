@@ -25,18 +25,8 @@ void sgLog(const char* tag, uint32_t level, uint32_t itemId, const char* message
 	std::fflush(stderr);
 }
 
-// Do-nothing devices so the game's call sites keep working until G4/G5 bring
-// the real SgDraw2D and SgScene3D (spec §8).
-class SgNullDraw2D final : public Draw2D {
-public:
-	void drawQuad(TextureId, const SrcRect&, const DstRect&, int, const ColorF&) override {}
-	void fillQuad(const DstRect&, const ColorF&) override {}
-	void setRenderMode(int) override {}
-	void setClipCanvas(int, int, int, int) override {}
-	void clearClip() override {}
-	void flush() override {}
-};
-
+// A do-nothing 3D device so the game's call sites keep working until
+// SgScene3D arrives in G5 (spec §8).
 class SgNullScene3D final : public Scene3D {
 public:
 	void beginScene(const SceneView&) override {}
@@ -49,7 +39,6 @@ public:
 	void flush() override {}
 };
 
-SgNullDraw2D g_nullDraw2D;
 SgNullScene3D g_nullScene3D;
 
 } // namespace
@@ -58,6 +47,8 @@ SgRenderBackend::~SgRenderBackend() {
 	if (sgValid_) {
 		// Every sg_destroy_* must happen while the context is still up.
 		textures_.shutdown();
+		pipelines_.shutdown();
+		frame_.shutdown();
 		sg_shutdown();
 		sgValid_ = false;
 	}
@@ -97,6 +88,14 @@ bool SgRenderBackend::initialize(Window& window) {
 	}
 
 	if (!textures_.initialize()) return false; // the store logged why
+	// A pipeline's color format must match the pass it is used in.
+	if (!pipelines_.initialize(env_->environment().defaults.color_format)) return false;
+	if (!frame_.initialize()) return false;
+	if (!draw2d_.initialize(Window::kCanvasWidth, Window::kCanvasHeight,
+			textures_, frame_, pipelines_)) {
+		std::fprintf(stderr, "SgDraw2D init failed\n");
+		return false;
+	}
 
 	applyViewport(window);
 	std::fprintf(stdout, "sokol_gfx backend: %s | swapchain %dx%d\n",
@@ -112,8 +111,20 @@ void SgRenderBackend::applyViewport(Window& window) {
 	vp_.y = vy;
 	vp_.w = vw;
 	vp_.h = vh;
-	// The viewport command itself is recorded into SgFrame from G4 on; nothing
-	// is drawn yet in G2.
+	// The device draws in canvas coords; its scissor needs the letterbox rect,
+	// and clearClip needs the full drawable.
+	draw2d_.setDrawableSize(window.drawableWidth(), window.drawableHeight());
+	draw2d_.setLetterbox(vx, vy, vw, vh);
+}
+
+void SgRenderBackend::recordViewport() {
+	SgFrame::Cmd cmd;
+	cmd.kind = SgFrame::Kind::Viewport;
+	cmd.x = vp_.x;
+	cmd.y = vp_.y;
+	cmd.w = vp_.w;
+	cmd.h = vp_.h;
+	frame_.record(cmd);
 }
 
 void SgRenderBackend::letterboxRect(int& x, int& y, int& w, int& h) const {
@@ -128,29 +139,45 @@ bool SgRenderBackend::drawableToCanvas(int px, int py, int& cx, int& cy) const {
 }
 
 void SgRenderBackend::setCanvasViewport(int x, int y, int w, int h) {
-	// G4 records a Viewport command here; there is no 2D work to flush yet.
-	(void)x;
-	(void)y;
-	(void)w;
-	(void)h;
+	// Batched quads rasterize at replay time -> flush before any viewport change.
+	draw2d_.flush();
+	int dx, dy, dw, dh;
+	// Top-left origin: sokol does the per-backend flip itself (spec §0.4).
+	if (!vp_.canvasSubRect(x, y, w, h, /*glBottomUp=*/false, dx, dy, dw, dh)) return;
+	SgFrame::Cmd cmd;
+	cmd.kind = SgFrame::Kind::Viewport;
+	cmd.x = dx;
+	cmd.y = dy;
+	cmd.w = dw;
+	cmd.h = dh;
+	frame_.record(cmd);
 }
 
 void SgRenderBackend::restoreCanvasViewport(Window& window) {
+	draw2d_.flush();
 	applyViewport(window);
+	recordViewport();
 }
 
 void SgRenderBackend::beginFrame(Window& window) {
 	applyViewport(window);
+	frame_.beginFrame();
+	// sg_begin_pass resets the viewport to the full framebuffer, so the
+	// letterbox has to be re-applied at the head of every frame.
+	recordViewport();
+	draw2d_.begin();
 }
 
 void SgRenderBackend::endFrame(Window& window) {
+	draw2d_.end();
 	presentFrame(window);
 }
 
 void SgRenderBackend::flushFrame() {
-	// The loading screen presents mid-startup. Without a Window& here there is
-	// nothing to acquire a swapchain from, and G2 draws nothing anyway, so the
-	// real implementation arrives with the command list in G4.
+	// GlRenderBackend::flushFrame ends the 2D device and calls glFlush without
+	// presenting (GlRenderBackend.cpp:86-89); the sokol equivalent of that
+	// glFlush is nothing at all, because no GPU work has been submitted yet.
+	draw2d_.end();
 }
 
 void SgRenderBackend::presentFrame(Window& window) {
@@ -161,6 +188,7 @@ void SgRenderBackend::presentFrame(Window& window) {
 	pass.action.colors[0].clear_value = sg_color{ 0.0f, 0.0f, 0.0f, 1.0f };
 	pass.swapchain = env_->acquireSwapchain(window);
 	sg_begin_pass(&pass);
+	frame_.replay();
 	sg_end_pass();
 	sg_commit();
 
@@ -200,7 +228,7 @@ void SgRenderBackend::writeCapture() {
 	std::fflush(stdout);
 }
 
-Draw2D& SgRenderBackend::draw2d() { return g_nullDraw2D; }
+Draw2D& SgRenderBackend::draw2d() { return draw2d_; }
 Scene3D& SgRenderBackend::scene3d() { return g_nullScene3D; }
 TextureStore& SgRenderBackend::textures() { return textures_; }
 

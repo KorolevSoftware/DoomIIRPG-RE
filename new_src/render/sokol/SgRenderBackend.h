@@ -6,7 +6,10 @@
 
 #include "render/api/CanvasViewport.h"
 #include "render/api/RenderBackend.h"
+#include "render/sokol/SgDraw2D.h"
 #include "render/sokol/SgEnvironment.h"
+#include "render/sokol/SgFrame.h"
+#include "render/sokol/SgPipelines.h"
 #include "render/sokol/SgTextureStore.h"
 
 namespace newcore {
@@ -16,9 +19,10 @@ class Window;
 // The sokol_gfx RenderBackend: owns the sg_* context, the letterboxed viewport
 // and the frame pass (spec 2026-09-11-sokol-gfx-backend §5).
 //
-// Group G3 state: the frame is still a plain "clear to black" pass, textures
-// are real (SgTextureStore), and the two drawing devices are do-nothing stubs
-// until SgDraw2D (G4) and SgScene3D (G5) arrive.
+// Group G4 state: the frame is a real command list (SgFrame) replayed inside
+// one pass, the 2D layer draws (SgDraw2D) and textures are real
+// (SgTextureStore). The Scene3D device is still a do-nothing stub until
+// SgScene3D arrives in G5, so the 3D band stays black.
 class SgRenderBackend : public RenderBackend {
 public:
 	~SgRenderBackend() override;
@@ -45,14 +49,23 @@ public:
 	const char* name() const override { return "sokol"; }
 
 private:
+	// Latches vp_ and hands the letterbox to the 2D device; recording the
+	// Viewport command is the caller's job (applyViewport also runs at init,
+	// before the first frame exists).
 	void applyViewport(Window& window);
-	// One clear-to-black pass, commit, optional capture, present.
+	// One pass: clear to black, replay the frame command list, commit, optional
+	// capture, present.
 	void presentFrame(Window& window);
 	// Reads back the letterbox rect and writes the pending capture file.
 	void writeCapture();
+	// The letterbox viewport command every frame starts with.
+	void recordViewport();
 
 	std::unique_ptr<SgEnvironment> env_;
 	SgTextureStore textures_;
+	SgPipelines pipelines_;
+	SgFrame frame_;
+	SgDraw2D draw2d_;
 	// Letterboxed canvas rect in drawable pixels, latched by applyViewport.
 	CanvasViewport vp_;
 	// One-shot frame capture request (see requestCapture).
