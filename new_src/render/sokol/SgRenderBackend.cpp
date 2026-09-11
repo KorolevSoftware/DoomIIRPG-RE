@@ -25,8 +25,8 @@ void sgLog(const char* tag, uint32_t level, uint32_t itemId, const char* message
 	std::fflush(stderr);
 }
 
-// Do-nothing devices so the game's call sites keep working until G3/G4/G5
-// bring the real SgTextureStore, SgDraw2D and SgScene3D (spec §8, group G2).
+// Do-nothing devices so the game's call sites keep working until G4/G5 bring
+// the real SgDraw2D and SgScene3D (spec §8).
 class SgNullDraw2D final : public Draw2D {
 public:
 	void drawQuad(TextureId, const SrcRect&, const DstRect&, int, const ColorF&) override {}
@@ -49,28 +49,15 @@ public:
 	void flush() override {}
 };
 
-class SgNullTextureStore final : public TextureStore {
-public:
-	TextureId createIndexed(const uint8_t*, int, int, const uint16_t*, int,
-		TextureFlags) override {
-		return TextureId{};
-	}
-	TextureId createRgba(const uint8_t*, int, int, TextureFlags) override {
-		return TextureId{};
-	}
-	void destroy(TextureId) override {}
-	bool query(TextureId, int&, int&) const override { return false; }
-	size_t textureBytes() const override { return 0; }
-};
-
 SgNullDraw2D g_nullDraw2D;
 SgNullScene3D g_nullScene3D;
-SgNullTextureStore g_nullTextures;
 
 } // namespace
 
 SgRenderBackend::~SgRenderBackend() {
 	if (sgValid_) {
+		// Every sg_destroy_* must happen while the context is still up.
+		textures_.shutdown();
 		sg_shutdown();
 		sgValid_ = false;
 	}
@@ -108,6 +95,8 @@ bool SgRenderBackend::initialize(Window& window) {
 		std::fprintf(stderr, "sokol: SG_PIXELFORMAT_R8 is not sampleable on this device\n");
 		return false;
 	}
+
+	if (!textures_.initialize()) return false; // the store logged why
 
 	applyViewport(window);
 	std::fprintf(stdout, "sokol_gfx backend: %s | swapchain %dx%d\n",
@@ -213,6 +202,6 @@ void SgRenderBackend::writeCapture() {
 
 Draw2D& SgRenderBackend::draw2d() { return g_nullDraw2D; }
 Scene3D& SgRenderBackend::scene3d() { return g_nullScene3D; }
-TextureStore& SgRenderBackend::textures() { return g_nullTextures; }
+TextureStore& SgRenderBackend::textures() { return textures_; }
 
 } // namespace newcore

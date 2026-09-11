@@ -7,6 +7,7 @@
 #include "render/api/CanvasViewport.h"
 #include "render/api/RenderBackend.h"
 #include "render/sokol/SgEnvironment.h"
+#include "render/sokol/SgTextureStore.h"
 
 namespace newcore {
 
@@ -15,9 +16,9 @@ class Window;
 // The sokol_gfx RenderBackend: owns the sg_* context, the letterboxed viewport
 // and the frame pass (spec 2026-09-11-sokol-gfx-backend §5).
 //
-// Group G2 state: the frame is a plain "clear to black" pass and the three
-// devices are do-nothing stubs, so the game's call sites work while
-// SgTextureStore (G3), SgDraw2D (G4) and SgScene3D (G5) are still missing.
+// Group G3 state: the frame is still a plain "clear to black" pass, textures
+// are real (SgTextureStore), and the two drawing devices are do-nothing stubs
+// until SgDraw2D (G4) and SgScene3D (G5) arrive.
 class SgRenderBackend : public RenderBackend {
 public:
 	~SgRenderBackend() override;
@@ -51,6 +52,7 @@ private:
 	void writeCapture();
 
 	std::unique_ptr<SgEnvironment> env_;
+	SgTextureStore textures_;
 	// Letterboxed canvas rect in drawable pixels, latched by applyViewport.
 	CanvasViewport vp_;
 	// One-shot frame capture request (see requestCapture).
