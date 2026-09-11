@@ -102,8 +102,15 @@ Namespace for everything: `newcore`._
 | `CanvasViewport.h/.cpp` | Letterbox rect + canvas<->drawable mapping (moved from `Window::computeViewport` / `RenderBackend::drawableToCanvas`), shared so input mapping is bit-identical across backends. |
 | `BmpWriter.h/.cpp` | 24-bit BMP dump for F12 frame capture (replaces the unreferenced `saveIndexedBmp` debug helper). |
 
-### render/sdl/
-**(planned, ADR 0021)** target `dr_render_sdl`: `SdlTextureStore` (measured 2026-09-02:
+### render/sdl/ — **RETIRED (ADR 0024, spec `specs/2026-09-11-sokol-gfx-backend.md` group G1)**
+Deleted in full: the directory, the `dr_render_sdl` target, `BackendKind::SdlRender`,
+`GraphicsApi::SdlRender`, `Window::sdlRenderer()`, the CPU vertex pipeline, the
+object-space UV tile split, the per-vertex fog/haze pass and the G7.1 adaptive
+tessellation. Reason: 59.1 MB of texture memory against the indexed path's 15.1 MB,
+and nothing it did was reusable on Metal/D3D11. Kept below for the record of what
+existed and why we know what we know.
+
+_Was:_ **(ADR 0021)** target `dr_render_sdl`: `SdlTextureStore` (measured 2026-09-02:
 SDL2 rejects `INDEX8` on every driver, so it expands once via an INDEX8 surface into a
 runtime-negotiated 32-bit format — ~40 MB for the whole world texture set; SDL3 supports
 `INDEX8` + `SDL_SetTexturePalette` natively and would keep the 9.7 MB indexed pipeline,
@@ -119,7 +126,37 @@ canvas pixels, cut by averaging clip-space vertices, `n = ceil(sqrt(M/2px))` cap
 downstream of the tile split; env knobs `DOOM2RPG_SDL_TESS` / `DOOM2RPG_GFX_STATS`), `SdlBlendModes` (14 rows -> `SDL_BlendMode`, custom mode
 for `RENDER_SUB`, `RENDER_NONE` = skip), `SdlRenderBackend`.
 
-### render/gl/
+### render/sokol/
+**(planned, ADR 0024/0025/0026 / spec `specs/2026-09-11-sokol-gfx-backend.md`)** target
+`dr_render_sokol`: the ONE graphics backend. GPU API chosen at build time by
+`DOOM2RPG_SOKOL_BACKEND` = `metal` (Apple default) | `d3d11` (Windows default) |
+`glcore` (elsewhere, and permanently configurable everywhere for the F12 diff, ADR 0026).
+
+| File | Responsibility |
+|---|---|
+| `SgCommon.h` | The only include of `sokol_gfx.h` (declarations); asserts exactly one `SOKOL_*` define. |
+| `SokolGfxImpl.cpp` / `.mm` | The single `SOKOL_IMPL` translation unit; Objective-C++ on Apple (`sokol_gfx.h:83`). |
+| `SgEnvironment.h` | Everything sokol refuses to do: `create` device, `environment()` for `sg_setup`, `acquireSwapchain()` **per frame** (`sg_swapchain`, `.invalid` on failure), `present()`, `resize()`, `readPixels()`, `apiName()`; plus `sokolGraphicsApi()`. |
+| `SgEnvironmentGl.cpp` | Context already made by `Window`; `gl.framebuffer = 0`; `SDL_GL_SwapWindow`; the only `readPixels` that works (ADR 0026). |
+| `SgEnvironmentMetal.mm` | `SDL_Metal_CreateView` + `SDL_Metal_GetLayer` + `MTLCreateSystemDefaultDevice`; `nextDrawable` per frame via `(__bridge const void*)`; `present()` does **nothing** — sokol calls `presentDrawable` in `sg_commit` (`sokol_gfx.h:17207-17209`). |
+| `SgEnvironmentD3D11.cpp` | Device + swap chain on the SDL `HWND`, one RTV, no depth-stencil view. |
+| `SgShaders.h` | Includes the two shdc-generated headers from the build tree. |
+| `SgPipelines.h/.cpp` | The 14-row `RENDER_*` table (`render/api/RenderModes.cpp`) deduplicated into **4** `sg_blend_state`s x 4 programs = a 16-entry pipeline cache. `mod[4]`/`fog` stay uniforms. Mode 7's alpha factors are split to `(ZERO, ONE_MINUS_SRC_ALPHA)` for D3D11 portability (visible RGB identical). |
+| `SgTexture.h/.cpp` | Per texture: `SG_PIXELFORMAT_R8` index image + view, RGBA8 256x1 palette image + view, one of two shared samplers. R8 support verified on GL/GLES3/Metal/D3D11/WGPU/Vulkan (spec §0.1). |
+| `SgTextureStore.h/.cpp` | `TextureStore`; transliteration of `GlTextureStore` (slot vector, free list, slot 0 never handed out, stable `lookup()`). `textureBytes()` must equal the GL store's number. |
+| `SgFrame.h/.cpp` | **ADR 0025**: the per-frame command list (`Viewport`/`Scissor`/`Draw`) + one 4 MB write-transient vertex buffer shared by both strides. `replay()` is the only code in the program that calls `sg_apply_*`/`sg_draw`. |
+| `SgDraw2D.h/.cpp` | `Draw2D`; port of `GlDraw2D`, same batching and clip semantics. Scissor arithmetic copied **verbatim** from `GlDraw2D::applyScissor` (`lroundf`, not `CanvasViewport::canvasSubRect`'s truncation) so the F12 diff stays clean. The 1x1 white texture disappears (`fillQuad` uses the `quad_color` program). |
+| `SgScene3D.h/.cpp` | `Scene3D`; port of `GlScene3D`. Per-pixel fog on every backend (**ADR 0022 has no subject left**). `depth_fix` uniform remaps clip z `[-w,w] -> [0,w]` on Metal/D3D11 and is the exact identity on GL (spec §0.4) — without it the near half of the world vanishes on Metal. |
+| `SgRenderBackend.h/.cpp` | `RenderBackend`: `sg_setup` with enlarged pools (8192 images / 8192 views, spec §5.1), letterbox, one pass per frame (`sg_begin_pass` -> `SgFrame::replay` -> `sg_end_pass` -> `sg_commit` -> `env_->present`), capture. **No depth buffer anywhere** (spec §0.3). |
+| `shaders/quad2d.glsl` | Hand-written annotated GLSL, 3 programs (`quad_indexed`/`quad_rgba`/`quad_color`) on one vertex shader; `uCanvasSize` becomes `vec4 canvas_size`, `uColorMod` moves into the `fs2d_params` block. |
+| `shaders/world.glsl` | Hand-written annotated GLSL, program `world` (also draws the sky with an identity MVP). Verified to compile for glsl410/glsl300es/metal_macos/metal_ios/metal_sim/hlsl5/wgsl/spirv_vk. |
+
+### render/gl/ — **reference until spec `2026-09-11-sokol-gfx-backend.md` group G8**
+Kept deliberately through the whole sokol migration as the pixel reference:
+`--backend=gl` vs `--backend=sokol` built with `DOOM2RPG_SOKOL_BACKEND=glcore`,
+compared with F12 captures, is a byte-level diff on the same driver (ADR 0026).
+Deleted only after the user signs off on G5 (byte-identical) and G6 (Metal looks right).
+
 | File | Responsibility |
 |---|---|
 | `GlCommon.h` | Platform GL header selection (:4-11). |
@@ -171,7 +208,8 @@ first, then door use.
 - CMake 3.22, target `DoomIIRPG`, C++17, sources via **GLOB_RECURSE** (reconfigure on add/remove).
 - Link: SDL2, ZLIB, OpenGL (+ Apple OpenGL.framework). No GLEW/GLAD.
 - All shaders are inline string literals (World3D.cpp:57-95, SpriteBatch.cpp:9-59) and stay **inside the backend** after the split (ADR 0020).
-- **(planned, spec `specs/2026-09-02-render-backend-split.md`)** four targets: `dr_render_core` (interfaces + neutral helpers), `dr_render_gl`, `dr_render_sdl`, `DoomIIRPG` (glob filtered with `list(FILTER ... EXCLUDE REGEX "/render/(api|gl|sdl)/")`); backend chosen at startup by `--backend=gl|sdl`.
+- **(spec `specs/2026-09-02-render-backend-split.md`)** four targets: `dr_render_core` (interfaces + neutral helpers), `dr_render_gl`, `dr_render_sdl`, `DoomIIRPG` (glob filtered with `list(FILTER ... EXCLUDE REGEX "/render/(api|gl|sdl)/")`); backend chosen at startup by `--backend=gl|sdl`.
+- **(planned, ADR 0024 / spec `specs/2026-09-11-sokol-gfx-backend.md`)** `dr_render_sdl` is deleted and `dr_render_sokol` joins (glob filter becomes `"/render/(api|gl|sokol)/"`; note `*.mm` is not in the GLOB patterns and must be listed explicitly). New vendored trees `third_party_libs/sokol` (header) and `third_party_libs/sokol-tools-bin` (`sokol_shaders.cmake` + `bin/**`, which must stay next to each other) — **bump both commits together**, each carries a `VERSION.txt`. Shaders are compiled at build time by `sokol_shader()` into `${CMAKE_CURRENT_BINARY_DIR}/compile_shaders/`; **no generated code ever lands in `new_src/`**, and a host without an shdc binary fails at configure time on purpose. The GL context request rises to **4.1 core on every platform** (shdc's lowest desktop target is `glsl410`; macOS caps at exactly 4.1), the compatibility-profile branch and `SDL_GL_DEPTH_SIZE` go away. Apple also links `Metal` + `QuartzCore`.
 - zlib only for zip raw-deflate (`inflateInit2 -15`, ZipArchive.cpp:128-140).
 - BMP/font hand-rolled; no SDL_image/SDL_ttf.
 
@@ -210,9 +248,12 @@ _See [adr/](adr/):_
 - [0018 — `Entity::pain`/`Entity::died` become one dispatcher pair on `Game`](adr/0018-entity-pain-died-dispatch.md) (2026-08-31)
 - [0019 — Blend modes are one table; color modulation is a per-draw `uColorMod` uniform](adr/0019-blend-mode-table-and-color-mod-uniform.md) (2026-09-01)
 - [0020 — The graphics backend is a library behind two need-shaped interfaces (`Draw2D`/`Scene3D`)](adr/0020-render-backend-two-interfaces.md) (2026-09-02)
-- [0021 — SDL_Render is a full second backend, 3D view included (affine mapping accepted)](adr/0021-sdl-render-second-backend-with-3d.md) (2026-09-02)
-- [0022 — Fog is a backend-dependent effect (per-pixel on GL, per-vertex on SDL)](adr/0022-fog-is-backend-dependent.md) (2026-09-02)
-- [0023 — The affine warp is fought by adaptive tessellation, measured in screen space and cut in clip space (SDL only)](adr/0023-sdl-clip-space-adaptive-tessellation.md) (2026-09-07)
+- [0021 — SDL_Render is a full second backend, 3D view included (affine mapping accepted)](adr/0021-sdl-render-second-backend-with-3d.md) — **historical**, superseded by 0024
+- [0022 — Fog is a backend-dependent effect (per-pixel on GL, per-vertex on SDL)](adr/0022-fog-is-backend-dependent.md) — **historical**, superseded by 0024 (fog is per-pixel on every backend again)
+- [0023 — The affine warp is fought by adaptive tessellation, measured in screen space and cut in clip space (SDL only)](adr/0023-sdl-clip-space-adaptive-tessellation.md) (2026-09-07) — **historical**, superseded by 0024 (sokol gives hardware perspective correction)
+- [0024 — sokol_gfx is the single graphics backend; SDL2 stays the window, input and swapchain provider](adr/0024-sokol-gfx-single-backend.md) (2026-09-11; supersedes 0021/0022/0023)
+- [0025 — The sokol backend records one frame command list; the GPU is touched only between `sg_begin_pass` and `sg_commit`](adr/0025-frame-command-list.md) (2026-09-11)
+- [0026 — F12 frame capture stays OpenGL-only, and `DOOM2RPG_SOKOL_BACKEND=glcore` stays configurable forever](adr/0026-frame-capture-is-gl-only.md) (2026-09-11)
 
 ## Specs
 
@@ -233,4 +274,5 @@ _See [adr/](adr/):_
 - [2026-08-30 — Shelf pickup (`EV_GIVEITEM` mode 0), full blocking-sprite spawn, crates (open/animate/unlink), `EV_GIVELOOT`](specs/2026-08-30-blocking-crates-shelf-pickup.md)
 - [2026-09-01 — Blend-mode table, `uColorMod` modulation, torchiere glow](specs/2026-09-01-blend-modes.md)
 - [2026-09-02 — Render backend split: `dr_render_core` + GL and SDL_Render implementations (`Draw2D`/`Scene3D`, backend flag, frame capture)](specs/2026-09-02-render-backend-split.md)
-- [2026-09-07 — SDL path: adaptive triangle tessellation against the affine warp (G7.1-G7.3)](specs/2026-09-07-sdl-tessellation.md)
+- [2026-09-07 — SDL path: adaptive triangle tessellation against the affine warp (G7.1-G7.3)](specs/2026-09-07-sdl-tessellation.md) — **historical** (the SDL backend is retired, ADR 0024)
+- [2026-09-11 — sokol_gfx becomes the graphics backend; the SDL_Render backend is retired (G1-G8)](specs/2026-09-11-sokol-gfx-backend.md)

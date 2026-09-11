@@ -1,7 +1,11 @@
 # ADR 0023 — The affine warp is fought by adaptive tessellation, measured in screen space and cut in clip space
 
 Date: 2026-09-07
-Status: accepted
+Status: HISTORICAL as of 2026-09-11 — superseded by ADR 0024. sokol_gfx gives hardware
+perspective correction on every backend, so there is no affine warp left to tessellate
+against; the code and its `DOOM2RPG_SDL_TESS` knob are deleted with `render/sdl/`.
+The measurement that motivated it stands and is part of why the SDL path was dropped.
+_Was: accepted._
 Related: ADR 0021 (affine mapping accepted), ADR 0022 (per-vertex fog), ADR 0020 (two
 interfaces); spec `specs/2026-09-07-sdl-tessellation.md`
 

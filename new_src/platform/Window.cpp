@@ -23,7 +23,7 @@ constexpr int kNumVideoModes = static_cast<int>(sizeof(kVideoModes) / sizeof(kVi
 
 Window::Window()
 	: api_(GraphicsApi::OpenGL)
-	, window_(nullptr), glContext_(nullptr), sdlRenderer_(nullptr), initialized_(false)
+	, window_(nullptr), glContext_(nullptr), initialized_(false)
 	, resolutionIndex_(0), oldResolutionIndex_(-1)
 	, windowMode_(WindowMode::Windowed), oldWindowMode_(static_cast<WindowMode>(-1))
 	, vSync_(true), oldVSync_(false)
@@ -41,24 +41,19 @@ bool Window::initialize(const char* title, GraphicsApi api) {
 		return false;
 	}
 
-	if (api_ == GraphicsApi::OpenGL) {
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-#ifdef __APPLE__
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-#else
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-#endif
-		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-		SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-	}
+	// GL 4.1 core on every platform: sokol-shdc's lowest desktop target is
+	// glsl410 and macOS caps at exactly 4.1 (spec 2026-09-11 §0.7). No depth
+	// buffer is requested - the renderer is painter's-order (§0.3).
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
 	int modeWidth = kVideoModes[resolutionIndex_].width;
 	int modeHeight = kVideoModes[resolutionIndex_].height;
 
 	Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
-		| SDL_WINDOW_ALWAYS_ON_TOP;
-	if (api_ == GraphicsApi::OpenGL) flags |= SDL_WINDOW_OPENGL;
+		| SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_OPENGL;
 	window_ = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
 		modeWidth, modeHeight, flags);
 	if (!window_) {
@@ -66,25 +61,12 @@ bool Window::initialize(const char* title, GraphicsApi api) {
 		return false;
 	}
 
-	if (api_ == GraphicsApi::OpenGL) {
-		glContext_ = SDL_GL_CreateContext(window_);
-		if (!glContext_) {
-			std::fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
-			SDL_DestroyWindow(window_);
-			window_ = nullptr;
-			return false;
-		}
-	} else {
-		// vSync_ is the constructor default here; applyVSync() below only ever
-		// runs SDL_RenderSetVSync afterwards, so the flag must be right now.
-		Uint32 rflags = SDL_RENDERER_ACCELERATED | (vSync_ ? SDL_RENDERER_PRESENTVSYNC : 0u);
-		sdlRenderer_ = SDL_CreateRenderer(window_, -1, rflags);
-		if (!sdlRenderer_) {
-			std::fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
-			SDL_DestroyWindow(window_);
-			window_ = nullptr;
-			return false;
-		}
+	glContext_ = SDL_GL_CreateContext(window_);
+	if (!glContext_) {
+		std::fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
+		SDL_DestroyWindow(window_);
+		window_ = nullptr;
+		return false;
 	}
 
 	SDL_GetWindowSize(window_, &winWidth_, &winHeight_);
@@ -100,10 +82,6 @@ bool Window::initialize(const char* title, GraphicsApi api) {
 }
 
 void Window::shutdown() {
-	if (sdlRenderer_) {
-		SDL_DestroyRenderer(sdlRenderer_);
-		sdlRenderer_ = nullptr;
-	}
 	if (glContext_) {
 		SDL_GL_DeleteContext(glContext_);
 		glContext_ = nullptr;
@@ -167,20 +145,12 @@ bool Window::applyWindowMode() {
 bool Window::applyVSync() {
 	if (vSync_ == oldVSync_) return true;
 	oldVSync_ = vSync_;
-	if (api_ == GraphicsApi::OpenGL) {
-		SDL_GL_SetSwapInterval(vSync_ ? 1 : 0);
-	} else if (sdlRenderer_) {
-		SDL_RenderSetVSync(sdlRenderer_, vSync_ ? 1 : 0);
-	}
+	SDL_GL_SetSwapInterval(vSync_ ? 1 : 0);
 	return true;
 }
 
 void Window::refreshDrawableSize() {
-	if (api_ == GraphicsApi::OpenGL) {
-		SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
-	} else if (sdlRenderer_) {
-		SDL_GetRendererOutputSize(sdlRenderer_, &drawableWidth_, &drawableHeight_);
-	}
+	SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
 }
 
 void Window::applyVideoSettings() {
@@ -207,11 +177,7 @@ void Window::windowToDrawable(int wx, int wy, int& px, int& py) const {
 }
 
 void Window::present() {
-	if (api_ == GraphicsApi::OpenGL) {
-		SDL_GL_SwapWindow(window_);
-	} else if (sdlRenderer_) {
-		SDL_RenderPresent(sdlRenderer_);
-	}
+	SDL_GL_SwapWindow(window_);
 }
 
 } // namespace newcore

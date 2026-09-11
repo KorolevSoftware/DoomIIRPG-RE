@@ -42,21 +42,21 @@ int main(int argc, char* argv[]) {
 	// Combat rolls use std::rand like the RE port (src/App.cpp:506-512).
 	std::srand((unsigned)std::time(nullptr));
 
-	// Command line: [archive] [--backend=gl|sdl]. The archive is the first
+	// Command line: [archive] [--backend=gl]. The archive is the first
 	// non-option argument; the backend also honours DOOM2RPG_BACKEND, and
 	// defaults to gl (spec 2026-09-02-render-backend-split §8.1).
 	const char* archiveName = "Doom 2 RPG.ipa";
 	BackendKind backend = BackendKind::OpenGL;
 	if (const char* env = std::getenv("DOOM2RPG_BACKEND")) {
 		if (!parseBackendKind(env, backend)) {
-			std::fprintf(stderr, "Unknown DOOM2RPG_BACKEND='%s' (expected gl|sdl)\n", env);
+			std::fprintf(stderr, "Unknown DOOM2RPG_BACKEND='%s' (expected gl)\n", env);
 		}
 	}
 	for (int i = 1; i < argc; ++i) {
 		const char* arg = argv[i];
 		if (std::strncmp(arg, "--backend=", 10) == 0) {
 			if (!parseBackendKind(arg + 10, backend)) {
-				std::fprintf(stderr, "Unknown backend '%s' (expected gl|sdl)\n", arg + 10);
+				std::fprintf(stderr, "Unknown backend '%s' (expected gl)\n", arg + 10);
 				return 1;
 			}
 		} else if (arg[0] == '-') {

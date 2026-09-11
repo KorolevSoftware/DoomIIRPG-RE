@@ -1,7 +1,9 @@
 # ADR 0022 — Fog is a backend-dependent effect (per-pixel on GL, per-vertex on SDL)
 
 Date: 2026-09-02
-Status: accepted (user decision)
+Status: HISTORICAL as of 2026-09-11 — superseded by ADR 0024. With sokol_gfx the fog is
+per-pixel on every backend again, so this ADR has no subject left.
+_Was: accepted (user decision)._
 Related: ADR 0019, ADR 0020, ADR 0021
 
 ## Context

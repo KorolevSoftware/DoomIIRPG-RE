@@ -26,8 +26,7 @@ InputSystem& AppContext::input() { return *input_; }
 bool AppContext::initialize(const char* dataArchive, BackendKind backend) {
 	// The window's API must match the backend, so the fallback happens first.
 	backendKind_ = resolveBackendKind(backend);
-	const GraphicsApi api = (backendKind_ == BackendKind::OpenGL)
-		? GraphicsApi::OpenGL : GraphicsApi::SdlRender;
+	const GraphicsApi api = GraphicsApi::OpenGL;
 
 	// Title suffix so the user always knows which backend is on screen (§4.3).
 	const std::string title = std::string("Doom II RPG [") + backendKindName(backendKind_) + "]";

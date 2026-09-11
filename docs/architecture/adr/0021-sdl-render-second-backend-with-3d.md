@@ -1,7 +1,10 @@
 # ADR 0021 — SDL_Render is a full second backend, 3D view included (affine texture mapping accepted)
 
 Date: 2026-09-02
-Status: accepted (user decision, not up for re-litigation)
+Status: HISTORICAL as of 2026-09-11 — superseded by ADR 0024 (the SDL_Render backend
+is retired: 59.1 MB of texture memory against the indexed path's 15.1 MB, and nothing
+it did was reusable on Metal/D3D11). Kept as the record of what was built and measured.
+_Was: accepted (user decision, not up for re-litigation)._
 Related: ADR 0020, ADR 0022
 
 ## Context

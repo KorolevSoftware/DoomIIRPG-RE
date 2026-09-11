@@ -1,7 +1,9 @@
 # Spec — SDL path: adaptive triangle tessellation against the affine warp (G7.1-G7.3)
 
 Date: 2026-09-07
-Status: ready to implement
+Status: HISTORICAL as of 2026-09-11 — implemented (G7.1) and then deleted together with
+the SDL_Render backend, see ADR 0024 and `specs/2026-09-11-sokol-gfx-backend.md` §7.
+_Was: ready to implement._
 Delta on: `specs/2026-09-02-render-backend-split.md` §G7 ("whichever specific artifacts the
 user names in G6 — candidate: quad subdivision against the affine warping")
 ADRs: **0023** (this work), 0021 (affine mapping accepted), 0022 (per-vertex fog), 0020
