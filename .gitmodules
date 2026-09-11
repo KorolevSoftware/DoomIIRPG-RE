@@ -1,0 +1,11 @@
+# sokol-shdc prebuilts (sokol_shaders.cmake + bin/<host>/sokol-shdc).
+# The pinned commit must be bumped TOGETHER with the vendored
+# third_party_libs/sokol/sokol_gfx.h: the generated shader headers carry a
+# generator tag and static bind-slot defines tied to that header revision.
+# See docs/architecture/specs/2026-09-11-sokol-gfx-backend.md §1.1.
+# shallow: the upstream history is several GB of binary prebuilts; only the
+# pinned snapshot is needed.
+[submodule "third_party_libs/sokol-tools-bin"]
+	path = third_party_libs/sokol-tools-bin
+	url = https://github.com/floooh/sokol-tools-bin.git
+	shallow = true

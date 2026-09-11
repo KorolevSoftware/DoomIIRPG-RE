@@ -1,0 +1,10 @@
+sokol
+https://github.com/floooh/sokol
+commit 64a627ba929bea4d4be8af827fad70eda0fa0a9b
+vendored 2026-09-11
+files: sokol_gfx.h (only)
+
+Must be bumped TOGETHER with third_party_libs/sokol-tools-bin: the generated
+shader headers carry a "#version:5#" generator tag and static bind-slot defines
+tied to this header's resource model (sg_view, sg_write_buffer_transient).
+See docs/architecture/specs/2026-09-11-sokol-gfx-backend.md §1.1.

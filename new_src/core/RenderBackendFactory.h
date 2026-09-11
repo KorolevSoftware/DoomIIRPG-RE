@@ -9,14 +9,14 @@ class RenderBackend;
 
 // Which implementation of the render backend to build (spec
 // 2026-09-02-render-backend-split §4.3).
-// The SDL_Render variant is gone (ADR 0024); "sokol" joins in G2.
-enum class BackendKind { OpenGL };
+// The SDL_Render variant is gone (ADR 0024); Sokol is the successor of both.
+enum class BackendKind { OpenGL, Sokol };
 
-// "gl": the --backend= spelling, the window title suffix and the capture file
-// name all use this.
+// "gl" / "sokol": the --backend= spelling, the window title suffix and the
+// capture file name all use this.
 const char* backendKindName(BackendKind kind);
 
-// Parses "gl". Leaves `out` untouched and returns false otherwise.
+// Parses "gl" or "sokol". Leaves `out` untouched and returns false otherwise.
 bool parseBackendKind(const char* text, BackendKind& out);
 
 // True when this build actually contains the implementation.

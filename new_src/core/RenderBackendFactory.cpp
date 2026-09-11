@@ -6,12 +6,15 @@
 #include "render/api/RenderBackend.h"
 // The only translation unit allowed to name concrete backends (spec §4.3).
 #include "render/gl/GlRenderBackend.h"
+#include "render/sokol/SgEnvironment.h"
+#include "render/sokol/SgRenderBackend.h"
 
 namespace newcore {
 
 const char* backendKindName(BackendKind kind) {
 	switch (kind) {
 	case BackendKind::OpenGL: return "gl";
+	case BackendKind::Sokol: return "sokol";
 	}
 	return "gl";
 }
@@ -22,12 +25,20 @@ bool parseBackendKind(const char* text, BackendKind& out) {
 		out = BackendKind::OpenGL;
 		return true;
 	}
+	if (std::strcmp(text, "sokol") == 0) {
+		out = BackendKind::Sokol;
+		return true;
+	}
 	return false;
 }
 
 bool backendKindAvailable(BackendKind kind) {
-	// The raw GL backend is the only one built; the sokol one arrives in G2.
-	return kind == BackendKind::OpenGL;
+	switch (kind) {
+	case BackendKind::OpenGL: return true;
+	// False while the compiled sokol environment is still a stub (D3D11 before G7).
+	case BackendKind::Sokol: return sokolEnvironmentImplemented();
+	}
+	return false;
 }
 
 BackendKind resolveBackendKind(BackendKind requested) {
@@ -42,6 +53,8 @@ std::unique_ptr<RenderBackend> createRenderBackend(BackendKind kind) {
 	switch (kind) {
 	case BackendKind::OpenGL:
 		return std::make_unique<GlRenderBackend>();
+	case BackendKind::Sokol:
+		return std::make_unique<SgRenderBackend>();
 	}
 	return nullptr;
 }
