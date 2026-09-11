@@ -34,6 +34,8 @@ layout(binding=1) uniform fs2d_params {
 layout(binding=0) uniform texture2D tex;   // R8 index texture
 layout(binding=1) uniform texture2D pal;   // RGBA8 palette LUT, 256x1
 layout(binding=0) uniform sampler smp;
+// Own sampler for the LUT, always clamping — see the note in world.glsl.
+layout(binding=1) uniform sampler smp_pal;
 
 in vec2 uv;
 in vec4 color;
@@ -41,7 +43,7 @@ out vec4 frag_color;
 
 void main() {
     float index = texture(sampler2D(tex, smp), uv).r;
-    frag_color = texture(sampler2D(pal, smp), vec2(index, 0.5)) * color * color_mod;
+    frag_color = texture(sampler2D(pal, smp_pal), vec2(index, 0.5)) * color * color_mod;
 }
 @end
 

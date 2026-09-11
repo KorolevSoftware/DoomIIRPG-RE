@@ -10,6 +10,7 @@
 #include "render/sokol/SgEnvironment.h"
 #include "render/sokol/SgFrame.h"
 #include "render/sokol/SgPipelines.h"
+#include "render/sokol/SgScene3D.h"
 #include "render/sokol/SgTextureStore.h"
 
 namespace newcore {
@@ -19,10 +20,10 @@ class Window;
 // The sokol_gfx RenderBackend: owns the sg_* context, the letterboxed viewport
 // and the frame pass (spec 2026-09-11-sokol-gfx-backend §5).
 //
-// Group G4 state: the frame is a real command list (SgFrame) replayed inside
-// one pass, the 2D layer draws (SgDraw2D) and textures are real
-// (SgTextureStore). The Scene3D device is still a do-nothing stub until
-// SgScene3D arrives in G5, so the 3D band stays black.
+// Group G5 state: both devices are real. The frame is a command list (SgFrame)
+// replayed inside one pass; the 2D layer (SgDraw2D), the world/sky/fog
+// (SgScene3D) and the textures (SgTextureStore) all draw. What is left are the
+// Metal (G6) and D3D11 (G7) environments.
 class SgRenderBackend : public RenderBackend {
 public:
 	~SgRenderBackend() override;
@@ -66,6 +67,7 @@ private:
 	SgPipelines pipelines_;
 	SgFrame frame_;
 	SgDraw2D draw2d_;
+	SgScene3D scene3d_;
 	// Letterboxed canvas rect in drawable pixels, latched by applyViewport.
 	CanvasViewport vp_;
 	// One-shot frame capture request (see requestCapture).

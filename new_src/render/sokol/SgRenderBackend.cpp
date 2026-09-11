@@ -25,22 +25,6 @@ void sgLog(const char* tag, uint32_t level, uint32_t itemId, const char* message
 	std::fflush(stderr);
 }
 
-// A do-nothing 3D device so the game's call sites keep working until
-// SgScene3D arrives in G5 (spec §8).
-class SgNullScene3D final : public Scene3D {
-public:
-	void beginScene(const SceneView&) override {}
-	void endScene() override {}
-	void setTexture(TextureId) override {}
-	void setRenderMode(int) override {}
-	void submitTriangles(const WorldVertex*, int) override {}
-	void setFog(bool, float, float, const float[4]) override {}
-	void drawSky(TextureId, float) override {}
-	void flush() override {}
-};
-
-SgNullScene3D g_nullScene3D;
-
 } // namespace
 
 SgRenderBackend::~SgRenderBackend() {
@@ -94,6 +78,10 @@ bool SgRenderBackend::initialize(Window& window) {
 	if (!draw2d_.initialize(Window::kCanvasWidth, Window::kCanvasHeight,
 			textures_, frame_, pipelines_)) {
 		std::fprintf(stderr, "SgDraw2D init failed\n");
+		return false;
+	}
+	if (!scene3d_.initialize(textures_, frame_, pipelines_)) {
+		std::fprintf(stderr, "SgScene3D init failed\n");
 		return false;
 	}
 
@@ -229,7 +217,7 @@ void SgRenderBackend::writeCapture() {
 }
 
 Draw2D& SgRenderBackend::draw2d() { return draw2d_; }
-Scene3D& SgRenderBackend::scene3d() { return g_nullScene3D; }
+Scene3D& SgRenderBackend::scene3d() { return scene3d_; }
 TextureStore& SgRenderBackend::textures() { return textures_; }
 
 } // namespace newcore

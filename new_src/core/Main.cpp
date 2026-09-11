@@ -43,11 +43,12 @@ int main(int argc, char* argv[]) {
 	std::srand((unsigned)std::time(nullptr));
 
 	// Command line: [archive] [--backend=gl|sokol]. The archive is the first
-	// non-option argument; the backend also honours DOOM2RPG_BACKEND, and
-	// defaults to gl (spec 2026-09-02-render-backend-split §8.1; the default
-	// flips to sokol at the end of group G5).
+	// non-option argument; the backend also honours DOOM2RPG_BACKEND. The
+	// default is sokol since group G5 of spec 2026-09-11-sokol-gfx-backend: on
+	// glcore it renders a gameplay frame byte-identically to the gl backend,
+	// which stays selectable until render/gl/ is retired in G8.
 	const char* archiveName = "Doom 2 RPG.ipa";
-	BackendKind backend = BackendKind::OpenGL;
+	BackendKind backend = BackendKind::Sokol;
 	if (const char* env = std::getenv("DOOM2RPG_BACKEND")) {
 		if (!parseBackendKind(env, backend)) {
 			std::fprintf(stderr, "Unknown DOOM2RPG_BACKEND='%s' (expected gl or sokol)\n", env);

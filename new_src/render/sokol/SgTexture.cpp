@@ -50,7 +50,8 @@ SgTexture::~SgTexture() {
 SgTexture::SgTexture(SgTexture&& other) noexcept
 	: indexImg_(other.indexImg_), palImg_(other.palImg_),
 	  indexView_(other.indexView_), palView_(other.palView_), smp_(other.smp_),
-	  format_(other.format_), width_(other.width_), height_(other.height_) {
+	  palSmp_(other.palSmp_), format_(other.format_), width_(other.width_),
+	  height_(other.height_) {
 	other.indexImg_ = {};
 	other.palImg_ = {};
 	other.indexView_ = {};
@@ -65,6 +66,7 @@ SgTexture& SgTexture::operator=(SgTexture&& other) noexcept {
 		indexView_ = other.indexView_;
 		palView_ = other.palView_;
 		smp_ = other.smp_;
+		palSmp_ = other.palSmp_;
 		format_ = other.format_;
 		width_ = other.width_;
 		height_ = other.height_;
@@ -118,6 +120,9 @@ bool SgTexture::uploadIndexed(const uint8_t* indices, int w, int h,
 	}
 
 	smp_ = tiled ? samplers.repeat : samplers.clamp;
+	// The LUT clamps even when the indices repeat, exactly like the two GL
+	// texture objects (GlTexture.cpp:50-56 vs :73-76).
+	palSmp_ = samplers.clamp;
 	return true;
 }
 

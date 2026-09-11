@@ -171,6 +171,7 @@ void SgDraw2D::flush() {
 			cmd.smp = boundTex_->sampler();
 			// Invalid for an RGBA texture, which is exactly what quad_rgba wants.
 			cmd.palView = boundTex_->paletteView();
+			cmd.palSmp = boundTex_->paletteSampler();
 		}
 		cmd.vertexOffset = offset;
 		cmd.vertexCount = (int)vertices_.size();

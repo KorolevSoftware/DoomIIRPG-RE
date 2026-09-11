@@ -49,10 +49,13 @@ public:
 	int width() const { return width_; }
 	int height() const { return height_; }
 	// What the bindings of a draw need: the index/color view, the palette view
-	// (invalid for Rgba) and the sampler.
+	// (invalid for Rgba) and one sampler per view. The palette one always
+	// clamps, like the GL palette texture object (GlTexture.cpp:73-76): a
+	// REPEAT wrap would fetch entry 0 for index 255.
 	sg_view view() const { return indexView_; }
 	sg_view paletteView() const { return palView_; }
 	sg_sampler sampler() const { return smp_; }
+	sg_sampler paletteSampler() const { return palSmp_; }
 	bool valid() const { return indexImg_.id != SG_INVALID_ID; }
 
 	void destroy();
@@ -63,6 +66,7 @@ private:
 	sg_view indexView_ = {};
 	sg_view palView_ = {};
 	sg_sampler smp_ = {};
+	sg_sampler palSmp_ = {};
 	Format format_ = Format::Indexed;
 	int width_ = 0;
 	int height_ = 0;

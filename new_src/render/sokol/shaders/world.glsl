@@ -37,6 +37,11 @@ layout(binding=1) uniform fs_world_params {
 layout(binding=0) uniform texture2D tex;
 layout(binding=1) uniform texture2D pal;
 layout(binding=0) uniform sampler smp;
+// The palette LUT needs its own sampler: GlTexture gives the index texture
+// GL_REPEAT for tiled world textures but always clamps the palette
+// (GlTexture.cpp:50-56, :73-76). Sampling the LUT with REPEAT wraps index 255
+// (u = 1.0) back to entry 0, which is a wrong color, not a rounding error.
+layout(binding=1) uniform sampler smp_pal;
 
 in vec2 uv;
 in float fog_depth;
@@ -44,7 +49,7 @@ out vec4 frag_color;
 
 void main() {
     float index = texture(sampler2D(tex, smp), uv).r;
-    vec4 col = texture(sampler2D(pal, smp), vec2(index, 0.5));
+    vec4 col = texture(sampler2D(pal, smp_pal), vec2(index, 0.5));
     // Fixed-pipeline GL_MODULATE (src/GLES.cpp:620), BEFORE fog, as ADR 0019 requires.
     col *= color_mod;
     if (fog_params.z != 0.0) {

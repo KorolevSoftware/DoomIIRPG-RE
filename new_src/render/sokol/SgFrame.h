@@ -44,6 +44,7 @@ public:
 		sg_view texView = {};      // invalid => no texture binding (quad_color)
 		sg_view palView = {};      // invalid => no palette binding (quad_rgba)
 		sg_sampler smp = {};
+		sg_sampler palSmp = {};   // the LUT's own clamping sampler
 		int vertexOffset = 0;      // BYTE offset into the frame vertex buffer
 		int vertexCount = 0;
 		int uniformIndex = 0;      // index into uniforms_

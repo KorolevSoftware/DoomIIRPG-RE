@@ -102,7 +102,10 @@ void SgFrame::replay() {
 				if (c.texView.id != SG_INVALID_ID) {
 					bind.views[VIEW_tex] = c.texView;
 					bind.samplers[SMP_smp] = c.smp;
-					if (c.palView.id != SG_INVALID_ID) bind.views[VIEW_pal] = c.palView;
+					if (c.palView.id != SG_INVALID_ID) {
+						bind.views[VIEW_pal] = c.palView;
+						bind.samplers[SMP_smp_pal] = c.palSmp;
+					}
 				}
 				sg_apply_bindings(&bind);
 
