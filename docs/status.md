@@ -131,7 +131,11 @@ rationale: `docs/architecture/specs/2026-08-27-ui-layer.md` §"KEYMAP 2026-08-29
     `MacOSX26.5.sdk`. Обе сборки переконфигурированы с неверсионным
     `$(xcrun --show-sdk-path)`. На новой машине передавать
     `-DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)"`.
-  - **Дальше: G7** (DirectX), G8 (удаление `render/gl/`).
+  - **G7 (DirectX / D3D11) — ОТЛОЖЕНА ПО РЕШЕНИЮ ПОЛЬЗОВАТЕЛЯ (2026-09-22)**, см.
+    пункт в «Known bugs (deferred)». Работающий путь сейчас — sokol поверх
+    OpenGL (`build_new`, `glcore`), он же по умолчанию.
+  - **Дальше: G8** (удаление эталонного `render/gl/`) — когда пользователь решит;
+    после него пропадёт побайтовое сравнение sokol против сырого GL.
   - (исходная формулировка) G3 (хранилище
     текстур — расход должен совпасть с GL до байта), G4 (кадровый список команд,
     конвейеры, двумерный слой — побайтово идентичный снимок меню), G5 (мир, небо,
@@ -358,6 +362,21 @@ rationale: `docs/architecture/specs/2026-08-27-ui-layer.md` §"KEYMAP 2026-08-29
 - **Deferred by user:** hangar door unlock chain (item dropped this cycle).
 - Fire additive flicker + scorch stains: done, user-confirmed matches original.
 - **Known bugs (deferred):**
+  - **G7 спеки 2026-09-11-sokol-gfx-backend.md — окружение D3D11 для sokol, НЕ
+    СДЕЛАНО, отложено пользователем 2026-09-22.** Причина: на этой машине (macOS)
+    DirectX нельзя ни собрать, ни проверить — делать только на Windows. Что нужно
+    (всё по спеке §G7): устройство и swapchain D3D11 создаём САМИ (SDL2 их не даёт,
+    `sokol_gfx` тоже — «does not create a window, swapchain or the 3D-API
+    context/device»); swapchain в этой ревизии sokol передаётся на каждый кадр
+    (`sg_swapchain` в `sg_pass`, как на Metal); буфер глубины не нужен
+    (`SG_PIXELFORMAT_NONE`); `depth_fix = (0.5, 0.5)` как на Metal (D3D11 отсекает
+    `0<=z<=w`); вычитающий режим 7 — альфа-множители `(ZERO, ONE_MINUS_SRC_ALPHA)`,
+    потому что D3D11 отвергает цветовые множители в альфа-слоте; F12 на D3D11
+    недоступен (ADR-0026, у sokol нет чтения обратно). Сейчас выбор
+    `-DDOOM2RPG_SOKOL_BACKEND=d3d11` упирается в заглушку в
+    `new_src/render/sokol/SgEnvironment.cpp` («not implemented yet; configure with
+    -DDOOM2RPG_SOKOL_BACKEND=glcore»), то есть падает внятно, а не чёрным экраном.
+    Ограничение `sokol-shdc`: Windows ARM64 и 32-битная Windows не поддерживаются.
   - Camera judder in cinematics (unchanged).
   - Subtitles: CAMERA_STR bit14 showCinPlayer not portable yet; portrait art
     fallback for style 8.
