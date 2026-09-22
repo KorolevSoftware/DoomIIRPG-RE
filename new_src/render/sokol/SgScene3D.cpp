@@ -19,7 +19,7 @@ namespace {
 // Camera3D emits a GL-style projection (clip -w <= z <= w) while Metal and
 // D3D11 clip 0 <= z <= w; the world vertex shader remaps clip z with this pair
 // (spec §0.4). On GL it must be the exact identity, or the byte-for-byte diff
-// against dr_render_gl would drown in rounding noise.
+// against tests/golden/frames would drown in rounding noise.
 #if defined(SOKOL_GLCORE) || defined(SOKOL_GLES3)
 constexpr float kDepthFixX = 1.0f;
 constexpr float kDepthFixY = 0.0f;

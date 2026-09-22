@@ -18,12 +18,11 @@ file(GLOB_RECURSE SOURCE_FILES
 	"*.c")
 
 # render/api   -> dr_render_core (backend-neutral, no GL, no SDL, no game deps)
-# render/gl    -> dr_render_gl
 # render/sokol -> dr_render_sokol
 # Everything else stays in the executable, which may not compile the backend
 # sources twice.
-list(FILTER SOURCE_FILES EXCLUDE REGEX "/render/(api|gl|sokol)/")
-list(FILTER HEADER_FILES EXCLUDE REGEX "/render/(api|gl|sokol)/")
+list(FILTER SOURCE_FILES EXCLUDE REGEX "/render/(api|sokol)/")
+list(FILTER HEADER_FILES EXCLUDE REGEX "/render/(api|sokol)/")
 
 file(GLOB RENDER_CORE_SOURCES "render/api/*.cpp")
 file(GLOB RENDER_CORE_HEADERS "render/api/*.h")
@@ -31,20 +30,11 @@ add_library(dr_render_core STATIC ${RENDER_CORE_SOURCES} ${RENDER_CORE_HEADERS})
 # new_src is the single include root for every target.
 target_include_directories(dr_render_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-file(GLOB RENDER_GL_SOURCES "render/gl/*.cpp")
-file(GLOB RENDER_GL_HEADERS "render/gl/*.h")
-add_library(dr_render_gl STATIC ${RENDER_GL_SOURCES} ${RENDER_GL_HEADERS})
-target_link_libraries(dr_render_gl PUBLIC dr_render_core OpenGL::GL)
-if(APPLE)
-	target_link_libraries(dr_render_gl PUBLIC ${OPENGL_FRAMEWORK})
-endif()
-target_link_libraries(dr_render_gl PRIVATE SDL2::SDL2)   # platform/Window.h only
-
 # --- dr_render_sokol ---------------------------------------------------------
 # The GPU API of the sokol backend is a build-time choice (spec
 # 2026-09-11-sokol-gfx-backend §1.2). metal/d3d11 arrive in G6/G7, so every
 # host defaults to glcore for now; forcing glcore stays supported forever
-# because it is how the F12 pixel diff against dr_render_gl is run.
+# because only it can capture frames for the tests/golden/frames diff.
 set(DOOM2RPG_SOKOL_BACKEND "glcore" CACHE STRING "sokol_gfx GPU API: metal | d3d11 | glcore")
 set_property(CACHE DOOM2RPG_SOKOL_BACKEND PROPERTY STRINGS metal d3d11 glcore)
 if(DOOM2RPG_SOKOL_BACKEND STREQUAL "metal")
@@ -127,24 +117,20 @@ endif()
 
 add_executable(DoomIIRPG ${HEADER_FILES} ${SOURCE_FILES})
 
+# No OpenGL here: the executable makes no GL calls, and dr_render_sokol brings
+# the GL library in PUBLIC when (and only when) its backend is glcore.
 target_link_libraries(DoomIIRPG
-	dr_render_gl
 	dr_render_sokol
 	SDL2::SDL2
 	ZLIB::ZLIB
-	OpenGL::GL
 )
-
-if(APPLE)
-	target_link_libraries(DoomIIRPG ${OPENGL_FRAMEWORK})
-endif()
 
 set_target_properties(DoomIIRPG PROPERTIES
 	OUTPUT_NAME DoomIIRPG
 )
 
 # Same language level and dialect flags for every target.
-foreach(tgt DoomIIRPG dr_render_core dr_render_gl dr_render_sokol)
+foreach(tgt DoomIIRPG dr_render_core dr_render_sokol)
 	set_target_properties(${tgt} PROPERTIES
 		CXX_STANDARD 17
 		CXX_STANDARD_REQUIRED ON

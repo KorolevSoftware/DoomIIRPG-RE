@@ -189,11 +189,4 @@ void Window::windowToDrawable(int wx, int wy, int& px, int& py) const {
 	py = wy * drawableHeight_ / (winHeight_ > 0 ? winHeight_ : 1);
 }
 
-void Window::present() {
-	// Metal never reaches here through the sokol backend (SgEnvironmentMetal
-	// presents, sokol_gfx.h:17207-17209); the guard keeps a stray call from
-	// hitting SDL_GL_SwapWindow on a context-less window.
-	if (api_ == GraphicsApi::OpenGL) SDL_GL_SwapWindow(window_);
-}
-
 } // namespace newcore

@@ -17,14 +17,6 @@ GraphicsApi sokolGraphicsApi() {
 #endif
 }
 
-bool sokolEnvironmentImplemented() {
-#if defined(SOKOL_GLCORE) || defined(SOKOL_METAL)
-	return true;
-#else
-	return false;
-#endif
-}
-
 #if !defined(SOKOL_GLCORE) && !defined(SOKOL_METAL)
 // D3D11 (G7) replaces this with a real factory in SgEnvironmentD3D11.cpp.
 // A clear message, never a crash and never a silent black screen (spec §3.4).

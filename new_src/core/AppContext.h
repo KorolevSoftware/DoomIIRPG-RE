@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 
-#include "core/RenderBackendFactory.h"
 #include "render/Graphics2D.h"
 
 namespace newcore {
@@ -24,12 +23,8 @@ public:
 	// Path prefix for game resources inside the data archive.
 	static constexpr const char* kResourcePrefix = "Payload/Doom2rpg.app/Packages/";
 
-	bool initialize(const char* dataArchive, BackendKind backend);
+	bool initialize(const char* dataArchive);
 	void shutdown();
-
-	// The backend actually built (may differ from the request, see
-	// resolveBackendKind).
-	BackendKind backendKind() const { return backendKind_; }
 
 	bool run();
 
@@ -54,7 +49,6 @@ private:
 	AppContext() = default;
 	bool startup();
 
-	BackendKind backendKind_ = BackendKind::OpenGL;
 	std::unique_ptr<Window> window_;
 	std::unique_ptr<ZipArchive> archive_;
 	std::unique_ptr<RenderBackend> renderer_;

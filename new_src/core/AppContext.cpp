@@ -24,27 +24,15 @@ ZipArchive& AppContext::archive() { return *archive_; }
 RenderBackend& AppContext::renderer() { return *renderer_; }
 InputSystem& AppContext::input() { return *input_; }
 
-bool AppContext::initialize(const char* dataArchive, BackendKind backend) {
-	// The window's API must match the backend, so the fallback happens first.
-	backendKind_ = resolveBackendKind(backend);
-	const GraphicsApi api = (backendKind_ == BackendKind::OpenGL)
-		? GraphicsApi::OpenGL
-		: sokolGraphicsApi();
-
-	// Title suffix so the user always knows which backend is on screen (§4.3).
-	const std::string title = std::string("Doom II RPG [") + backendKindName(backendKind_) + "]";
-
+bool AppContext::initialize(const char* dataArchive) {
+	// The window's API must match the compiled sokol backend.
 	window_ = std::make_unique<Window>();
-	if (!window_->initialize(title.c_str(), api)) {
+	if (!window_->initialize("Doom II RPG [sokol]", sokolGraphicsApi())) {
 		std::fprintf(stderr, "Failed to initialize window.\n");
 		return false;
 	}
 
-	renderer_ = createRenderBackend(backendKind_);
-	if (!renderer_) {
-		std::fprintf(stderr, "No render backend for '%s'.\n", backendKindName(backendKind_));
-		return false;
-	}
+	renderer_ = createRenderBackend();
 	std::fprintf(stdout, "renderer: %s\n", renderer_->name());
 	if (!renderer_->initialize(*window_)) {
 		std::fprintf(stderr, "Failed to initialize renderer.\n");

@@ -1,6 +1,9 @@
 #include "core/GameLoop.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <vector>
 
 #include "core/AppContext.h"
 #include "core/GameContext.h"
@@ -15,6 +18,20 @@ namespace newcore {
 
 namespace {
 constexpr uint32_t kMaxFrameMs = 125; // legacy clamp (src/Main.cpp:133-135)
+
+// "200,400,500" -> {200, 400, 500}, sorted; non-positive entries are dropped.
+std::vector<int> parseTickList(const char* text) {
+	std::vector<int> ticks;
+	while (text != nullptr && *text != '\0') {
+		char* end = nullptr;
+		const long v = std::strtol(text, &end, 10);
+		if (end == text) break;
+		if (v > 0) ticks.push_back((int)v);
+		text = (*end == ',') ? end + 1 : end;
+	}
+	std::sort(ticks.begin(), ticks.end());
+	return ticks;
+}
 }
 
 // Dumb fixed-step driver (spec §4): accumulate clamped dt, consume 15 ms
@@ -29,6 +46,18 @@ bool GameLoop::run(AppContext& context) {
 	UiInputCollector collector;
 	// F12 frame captures are numbered per run (spec §8.2).
 	int captureIndex = 0;
+	// DEBUG (rewrite-only): reference-frame captures keyed to the simulation
+	// tick count, not to wall time (tests/golden/frames/README.md). The menu
+	// cursor swing and every other animation read upTimeMs = ticks * 15, so the
+	// same tick yields the same frame on every run and every backend.
+	// DOOM2RPG_CAPTURE_TICKS=200,400,500 dumps the frame rendered right after
+	// each listed tick and quits after the last one; DOOM2RPG_MENU_TICKS lists
+	// the ticks after which the menu key is queued (it also skips a cinematic).
+	const std::vector<int> captureTicks = parseTickList(std::getenv("DOOM2RPG_CAPTURE_TICKS"));
+	const std::vector<int> menuTicks = parseTickList(std::getenv("DOOM2RPG_MENU_TICKS"));
+	size_t nextCapture = 0;
+	size_t nextMenu = 0;
+	int ticks = 0;
 
 	context.input().setEventCallback([&](const SDL_Event& ev) {
 		if (ev.type == SDL_QUIT) {
@@ -82,9 +111,25 @@ bool GameLoop::run(AppContext& context) {
 		// Leftover accumulation is shed: chasing it produced periodic
 		// double-step frames (30 ms sim jumps every ~8th frame) whenever the
 		// paced period rounded above kTickMs, reading as sharp camera judder.
+		bool lastCapture = false;
 		if (acc >= GameContext::kTickMs) {
 			acc = 0;
 			ctx.tick();
+			++ticks;
+			while (nextMenu < menuTicks.size() && menuTicks[nextMenu] == ticks) {
+				ctx.queueAction(Action::Menu);
+				++nextMenu;
+			}
+			if (nextCapture < captureTicks.size() && captureTicks[nextCapture] == ticks) {
+				char path[64];
+				std::snprintf(path, sizeof(path), "capture-%s-t%04d.bmp",
+					context.renderer().name(), ticks);
+				context.renderer().requestCapture(path);
+				while (nextCapture < captureTicks.size() && captureTicks[nextCapture] == ticks) {
+					++nextCapture;
+				}
+				lastCapture = nextCapture == captureTicks.size();
+			}
 		}
 
 		Window& window = context.window();
@@ -94,6 +139,7 @@ bool GameLoop::run(AppContext& context) {
 		ctx.setUiInput(collector.input());
 		ctx.render(context);
 		++fpsFrames;
+		if (lastCapture) running = false;
 
 		if (frameStart - fpsTimer >= 1000) {
 			std::fprintf(stdout, "FPS: %d\n", fpsFrames);

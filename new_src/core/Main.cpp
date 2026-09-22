@@ -42,25 +42,22 @@ int main(int argc, char* argv[]) {
 	// Combat rolls use std::rand like the RE port (src/App.cpp:506-512).
 	std::srand((unsigned)std::time(nullptr));
 
-	// Command line: [archive] [--backend=gl|sokol]. The archive is the first
-	// non-option argument; the backend also honours DOOM2RPG_BACKEND. The
-	// default is sokol since group G5 of spec 2026-09-11-sokol-gfx-backend: on
-	// glcore it renders a gameplay frame byte-identically to the gl backend,
-	// which stays selectable until render/gl/ is retired in G8.
+	// Command line: [archive]. The archive is the first non-option argument.
+	// --backend= and DOOM2RPG_BACKEND chose between gl and sokol until group G8
+	// of spec 2026-09-11-sokol-gfx-backend retired render/gl/; they are still
+	// accepted so old command lines keep working, and are otherwise ignored.
 	const char* archiveName = "Doom 2 RPG.ipa";
-	BackendKind backend = BackendKind::Sokol;
-	if (const char* env = std::getenv("DOOM2RPG_BACKEND")) {
-		if (!parseBackendKind(env, backend)) {
-			std::fprintf(stderr, "Unknown DOOM2RPG_BACKEND='%s' (expected gl or sokol)\n", env);
+	const auto noteBackendRequest = [](const char* value) {
+		if (std::strcmp(value, "sokol") != 0) {
+			std::fprintf(stderr,
+				"backend '%s' no longer exists (render/gl/ was removed); using sokol\n", value);
 		}
-	}
+	};
+	if (const char* env = std::getenv("DOOM2RPG_BACKEND")) noteBackendRequest(env);
 	for (int i = 1; i < argc; ++i) {
 		const char* arg = argv[i];
 		if (std::strncmp(arg, "--backend=", 10) == 0) {
-			if (!parseBackendKind(arg + 10, backend)) {
-				std::fprintf(stderr, "Unknown backend '%s' (expected gl or sokol)\n", arg + 10);
-				return 1;
-			}
+			noteBackendRequest(arg + 10);
 		} else if (arg[0] == '-') {
 			std::fprintf(stderr, "Unknown option '%s'\n", arg);
 			return 1;
@@ -70,7 +67,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	AppContext& app = AppContext::instance();
-	if (!app.initialize(archiveName, backend)) {
+	if (!app.initialize(archiveName)) {
 		std::fprintf(stderr, "Startup failed.\n");
 		return 1;
 	}

@@ -72,8 +72,7 @@ public:
 	bool readPixels(int x, int y, int w, int h, uint8_t* rgbaBottomUp) override {
 		glPixelStorei(GL_PACK_ALIGNMENT, 4); // rows are w*4 bytes, always aligned
 		glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgbaBottomUp);
-		// GL returns the bottom row first, which is already BMP order
-		// (render/gl/GlRenderBackend.cpp:105-116).
+		// GL returns the bottom row first, which is already BMP order.
 		return true;
 	}
 

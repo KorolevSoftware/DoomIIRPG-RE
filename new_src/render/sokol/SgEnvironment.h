@@ -49,15 +49,12 @@ public:
 
 // Built for whichever SOKOL_* define this target was compiled with. Returns
 // nullptr (after logging) for a backend whose environment is not implemented
-// yet, so the caller falls back instead of crashing.
+// yet, so startup fails with a message instead of crashing.
 std::unique_ptr<SgEnvironment> createSgEnvironment();
 
 // Which window the compiled sokol backend needs. Keeps the #if out of
 // AppContext (spec §6.2).
 GraphicsApi sokolGraphicsApi();
-
-// False while the compiled environment is still a stub (D3D11 before G7).
-bool sokolEnvironmentImplemented();
 
 } // namespace newcore
 

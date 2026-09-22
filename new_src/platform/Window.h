@@ -62,9 +62,6 @@ public:
 	void windowToDrawable(int wx, int wy, int& px, int& py) const;
 
 	SDL_Window* nativeHandle() const { return window_; }
-	// Puts the finished frame on screen: SDL_GL_SwapWindow on OpenGL, nothing
-	// on Metal, where SgEnvironmentMetal owns presentation (spec §6.1 point 5).
-	void present();
 
 private:
 	bool applyResolution();
