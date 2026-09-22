@@ -55,7 +55,15 @@ bool SgRenderBackend::initialize(Window& window) {
 	desc.sampler_pool_size = 8;
 	desc.shader_pool_size = 8;
 	desc.pipeline_pool_size = 32;
-	desc.uniform_buffer_size = 8 * 1024 * 1024;
+	// Only Metal/WebGPU/Vulkan read this (sokol_gfx.h:16173); Metal allocates
+	// SG_NUM_INFLIGHT_FRAMES buffers of this size once (sokol_gfx.h:16178-16180)
+	// and every sg_apply_uniforms eats a full 256-byte slot there
+	// (_SG_MTL_UB_ALIGN, sokol_gfx.h:7087). Two blocks per draw = 512 B/draw.
+	// Measured peak on this game: 1454 draws in one frame -> ~744 KB. 4 MB
+	// leaves room for 8192 draws (5.6x) and is also sokol's own default
+	// (sokol_gfx.h:5257); overflow there is a bare SOKOL_ASSERT, so the
+	// headroom is deliberate.
+	desc.uniform_buffer_size = 4 * 1024 * 1024;
 	// Without a logger sokol's validation failures are silent aborts.
 	desc.logger.func = sgLog;
 	sg_setup(&desc);
@@ -93,6 +101,17 @@ bool SgRenderBackend::initialize(Window& window) {
 }
 
 void SgRenderBackend::applyViewport(Window& window) {
+	// The environment's surface has to follow the drawable before the next
+	// swapchain is acquired: on Metal that is layer_.drawableSize, and nothing
+	// else in the frame path would ever tell it (spec §3.3 resize()).
+	const int dw = window.drawableWidth();
+	const int dh = window.drawableHeight();
+	if (dw != envDrawableW_ || dh != envDrawableH_) {
+		envDrawableW_ = dw;
+		envDrawableH_ = dh;
+		env_->resize(window);
+	}
+
 	int vx, vy, vw, vh;
 	window.computeViewport(vx, vy, vw, vh);
 	vp_.x = vx;

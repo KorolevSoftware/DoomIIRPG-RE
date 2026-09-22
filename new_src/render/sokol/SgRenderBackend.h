@@ -20,10 +20,10 @@ class Window;
 // The sokol_gfx RenderBackend: owns the sg_* context, the letterboxed viewport
 // and the frame pass (spec 2026-09-11-sokol-gfx-backend §5).
 //
-// Group G5 state: both devices are real. The frame is a command list (SgFrame)
+// Group G6 state: both devices are real. The frame is a command list (SgFrame)
 // replayed inside one pass; the 2D layer (SgDraw2D), the world/sky/fog
-// (SgScene3D) and the textures (SgTextureStore) all draw. What is left are the
-// Metal (G6) and D3D11 (G7) environments.
+// (SgScene3D) and the textures (SgTextureStore) all draw. The glcore and Metal
+// environments are implemented; D3D11 (G7) is what is left.
 class SgRenderBackend : public RenderBackend {
 public:
 	~SgRenderBackend() override;
@@ -70,6 +70,10 @@ private:
 	SgScene3D scene3d_;
 	// Letterboxed canvas rect in drawable pixels, latched by applyViewport.
 	CanvasViewport vp_;
+	// Drawable size the environment was last resized to; -1 forces the first
+	// applyViewport to push it through.
+	int envDrawableW_ = -1;
+	int envDrawableH_ = -1;
 	// One-shot frame capture request (see requestCapture).
 	std::string capturePath_;
 	bool sgValid_ = false;

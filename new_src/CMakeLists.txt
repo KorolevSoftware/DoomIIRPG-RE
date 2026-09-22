@@ -89,6 +89,19 @@ if(APPLE)
 	# Objective-C++ implementation instead of the plain C++ one.
 	list(FILTER RENDER_SOKOL_SOURCES EXCLUDE REGEX "/SokolGfxImpl\\.cpp$")
 	list(APPEND RENDER_SOKOL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/render/sokol/SokolGfxImpl.mm")
+	# *.mm is not in the GLOB patterns at all, so the Metal environment has to
+	# be listed by hand as well (spec §6.4).
+	if(DOOM2RPG_SOKOL_BACKEND STREQUAL "metal")
+		list(APPEND RENDER_SOKOL_SOURCES
+			"${CMAKE_CURRENT_SOURCE_DIR}/render/sokol/SgEnvironmentMetal.mm")
+	endif()
+	# ARC for the Objective-C++ sources only: it is what gives the CAMetalDrawable
+	# and MTLDevice members their lifetime, without hand-rolled retain/release.
+	# sokol_gfx supports both modes (sokol_gfx.h:7824-7832).
+	set_source_files_properties(
+		"${CMAKE_CURRENT_SOURCE_DIR}/render/sokol/SokolGfxImpl.mm"
+		"${CMAKE_CURRENT_SOURCE_DIR}/render/sokol/SgEnvironmentMetal.mm"
+		PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endif()
 add_library(dr_render_sokol STATIC
 	${RENDER_SOKOL_SOURCES} ${RENDER_SOKOL_HEADERS} ${SG_GENERATED})
@@ -107,6 +120,9 @@ if(DOOM2RPG_SOKOL_BACKEND STREQUAL "glcore")
 	else()
 		target_link_libraries(dr_render_sokol PUBLIC OpenGL::GL)
 	endif()
+elseif(DOOM2RPG_SOKOL_BACKEND STREQUAL "metal")
+	target_link_libraries(dr_render_sokol PUBLIC
+		"-framework Metal" "-framework QuartzCore" "-framework Foundation")
 endif()
 
 add_executable(DoomIIRPG ${HEADER_FILES} ${SOURCE_FILES})

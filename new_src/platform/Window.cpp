@@ -41,19 +41,24 @@ bool Window::initialize(const char* title, GraphicsApi api) {
 		return false;
 	}
 
-	// GL 4.1 core on every platform: sokol-shdc's lowest desktop target is
-	// glsl410 and macOS caps at exactly 4.1 (spec 2026-09-11 §0.7). No depth
-	// buffer is requested - the renderer is painter's-order (§0.3).
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+	if (api_ == GraphicsApi::OpenGL) {
+		// GL 4.1 core on every platform: sokol-shdc's lowest desktop target is
+		// glsl410 and macOS caps at exactly 4.1 (spec 2026-09-11 §0.7). No depth
+		// buffer is requested - the renderer is painter's-order (§0.3).
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+	}
 
 	int modeWidth = kVideoModes[resolutionIndex_].width;
 	int modeHeight = kVideoModes[resolutionIndex_].height;
 
 	Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
-		| SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_OPENGL;
+		| SDL_WINDOW_ALWAYS_ON_TOP;
+	// One window flag per API (spec 2026-09-11 §6.1 point 3). SDL_WINDOW_METAL
+	// is what makes SDL_Metal_CreateView work in SgEnvironmentMetal.
+	flags |= (api_ == GraphicsApi::Metal) ? SDL_WINDOW_METAL : SDL_WINDOW_OPENGL;
 	window_ = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
 		modeWidth, modeHeight, flags);
 	if (!window_) {
@@ -61,12 +66,14 @@ bool Window::initialize(const char* title, GraphicsApi api) {
 		return false;
 	}
 
-	glContext_ = SDL_GL_CreateContext(window_);
-	if (!glContext_) {
-		std::fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
-		SDL_DestroyWindow(window_);
-		window_ = nullptr;
-		return false;
+	if (api_ == GraphicsApi::OpenGL) {
+		glContext_ = SDL_GL_CreateContext(window_);
+		if (!glContext_) {
+			std::fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
+			SDL_DestroyWindow(window_);
+			window_ = nullptr;
+			return false;
+		}
 	}
 
 	SDL_GetWindowSize(window_, &winWidth_, &winHeight_);
@@ -145,12 +152,18 @@ bool Window::applyWindowMode() {
 bool Window::applyVSync() {
 	if (vSync_ == oldVSync_) return true;
 	oldVSync_ = vSync_;
-	SDL_GL_SetSwapInterval(vSync_ ? 1 : 0);
+	// GL only. On Metal the CAMetalLayer owns the display sync and the
+	// environment sets it once at creation (spec §6.1 point 6).
+	if (api_ == GraphicsApi::OpenGL) SDL_GL_SetSwapInterval(vSync_ ? 1 : 0);
 	return true;
 }
 
 void Window::refreshDrawableSize() {
-	SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
+	if (api_ == GraphicsApi::Metal) {
+		SDL_Metal_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
+	} else {
+		SDL_GL_GetDrawableSize(window_, &drawableWidth_, &drawableHeight_);
+	}
 }
 
 void Window::applyVideoSettings() {
@@ -177,7 +190,10 @@ void Window::windowToDrawable(int wx, int wy, int& px, int& py) const {
 }
 
 void Window::present() {
-	SDL_GL_SwapWindow(window_);
+	// Metal never reaches here through the sokol backend (SgEnvironmentMetal
+	// presents, sokol_gfx.h:17207-17209); the guard keeps a stray call from
+	// hitting SDL_GL_SwapWindow on a context-less window.
+	if (api_ == GraphicsApi::OpenGL) SDL_GL_SwapWindow(window_);
 }
 
 } // namespace newcore

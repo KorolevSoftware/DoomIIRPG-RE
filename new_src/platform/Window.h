@@ -11,9 +11,9 @@ namespace newcore {
 enum class WindowMode : int { Windowed = 0, Borderless = 1, Fullscreen = 2 };
 
 // Which drawing API the window is created for (spec 2026-09-02 §4.4). Chosen
-// before creation; there is no runtime switch. Metal/D3D11 join in G6/G7
+// before creation; there is no runtime switch. D3D11 joins in G7
 // (spec 2026-09-11-sokol-gfx-backend §6.1).
-enum class GraphicsApi { OpenGL };
+enum class GraphicsApi { OpenGL, Metal };
 
 class Window {
 public:
@@ -62,7 +62,8 @@ public:
 	void windowToDrawable(int wx, int wy, int& px, int& py) const;
 
 	SDL_Window* nativeHandle() const { return window_; }
-	// Puts the finished frame on screen: SDL_GL_SwapWindow.
+	// Puts the finished frame on screen: SDL_GL_SwapWindow on OpenGL, nothing
+	// on Metal, where SgEnvironmentMetal owns presentation (spec §6.1 point 5).
 	void present();
 
 private:

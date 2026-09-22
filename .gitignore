@@ -3,6 +3,7 @@ Doom 2 RPG Java
 output
 build
 /build_new
+/build_metal
 /tmp_*
 __pycache__/
 
