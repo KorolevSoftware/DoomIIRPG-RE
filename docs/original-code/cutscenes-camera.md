@@ -90,7 +90,7 @@ Cinematic-relevant opcodes:
 | 59 | EV_LERPSPRITEOFFSET | u8 spr, u8 t(*100), i32 BE | i32: bits11-21 dx, bits0-10 dy, bits22-23 flags, bits24-31 dz(+48). Offsets are absolute sprite coords (64/tile), not deltas (`src/ScriptThread.cpp:1388-1441`) |
 | 61 | EV_LERPSCALE | u16 packed(spr<<4\|flags), u16 ms, u8 scale*2 | scale-only lerp (`src/ScriptThread.cpp:1453-1498`) |
 | 75 | EV_LERPSPRITEPARABOLA | i32 BE, u16 ms | like LERPSPRITE + arc height byte (+48), adds `LS_FLAG_PARABOLA` (`src/ScriptThread.cpp:1653-1708`) |
-| 32 | EV_FADEOP | u16 | bit15=1 → fade OUT duration `arg&0x7FFF`; bit15=0 → fade IN `arg` ms (`src/ScriptThread.cpp:938-957`) |
+| 32 | EV_FADEOP | u16 | bit15=1 → **FADEIN** (`startFade(arg&0x7FFF, 2)`); bit15=0 → **FADEOUT** `arg` ms (`startFade(arg, 1)`); non-blocking; skip: FADEIN→`endFade`, FADEOUT ignored (`src/ScriptThread.cpp:938-958`). The disassembler's `out/in` label is inverted — see fades.md |
 | 17 | EV_ENTITY_FRAME | u8 spr, u8 frame, u8 wait(*100) | force animation frame, optional wait (`src/ScriptThread.cpp:669-688`) |
 | 29 | EV_SHOW_PLAYERATTACK | u8 weaponId | first-person weapon anim during cinematic (`cinematicWeapon`), drawn by `MayaCamera::Render`→`combat->drawWeapon` (`src/ScriptThread.cpp:894-908`, `src/MayaCamera.cpp:312-314`) |
 | 13 | EV_DIALOG | u8 dlgId, u8 hi=flags lo=style | style 2 → queued help dialog (`enqueueHelpDialog`, keeps script running); otherwise `startDialog(..., style, flags, resumeAfterClose=true)` and the thread parks until dialog close (`src/ScriptThread.cpp:545-584`, styles rendered in `src/DialogSystem.cpp:140-214`) |
@@ -318,8 +318,8 @@ starts at (1504,800,560) yaw 256 for 2.5 s, dollies to (1504,320,560) looking do
 ## 5. Fades / transitions
 
 Flags (`src/Render.h:84-91`): NONE=0, FADEOUT=1, FADEIN=2, CHANGEMAP=4, SHOWSTATS=8,
-DENYSKIP=16, EPILOGUE=32; special-mask keeps only flag bits (`FADE_SPECIAL_FLAG_MASK=-29`,
-i.e. strips FADEOUT|FADEIN). State: `fadeTime/fadeDuration/fadeFlags`
+DENYSKIP=16, EPILOGUE=32; special mask `FADE_SPECIAL_FLAG_MASK=-29` = `~0x1C` clears CHANGEMAP|SHOWSTATS|DENYSKIP and
+keeps FADEOUT (so black is held after a map-change fade). Full details: `fades.md`. State: `fadeTime/fadeDuration/fadeFlags`
 (`Render::startFade/endFade`, `src/Render.cpp:2535-2546`).
 
 - Progress drawn in `Render::fadeScene`: `alpha = 65280*((elapsed<<16)/(duration<<8))>>16`,
@@ -357,14 +357,14 @@ staticFunc[0] (@bytecode 0) does, in order:
 - decor placement (`LERPSCALE/LERPSPRITEOFFSET`),
 - chat bubbles over sprites 19 and 16 (`NPCCHAT spr=19 param=0` @64),
 - one-time init guarded by `var17==0` → CALL 1942/2084/2328, `NEXTSTATE var17` (@221-233),
-- tail: `EVAL var15==1` → either plain `FADEOP OUT` (reload path) or **CALL 1889**
+- tail: `EVAL var15==1` → either plain `FADEOP` FADEIN 500 (reload path) or **CALL 1889**
   (new-game intro) (@236-251).
 
 New-game intro (@1889):
 ```
 1889 CALL_FUNC ->1260        ; SETSTATE var5=1
 1892 STARTCINEMATIC cam=4    ; fly-over camera (see §3)
-1894 FADEOP OUT 500ms
+1894 FADEOP 500ms         ; FADEIN (bit15 set; tool prints 'out')
 1897 WAIT 100ms
 1899 PLAYSOUND snd=1057 vol=0 prio=5
 1902 ADV_CAMERAKEY resumes=9 ; play keys 1..9, then resume

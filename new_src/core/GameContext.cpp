@@ -587,7 +587,11 @@ void GameContext::tickCamera() {
 	// (gameTime advances in PLAYING + CAMERA, src/Game.cpp:3259). Skipped on a
 	// skip frame: tickCameraState() returns false there, as the pre-
 	// decomposition early return did.
-	if (cinematic_.tickCameraState()) sys_.hud->update(kTickMs);
+	if (cinematic_.tickCameraState()) {
+		sys_.hud->update(kTickMs);
+	} else if (!sys_.hud->isFading() || (sys_.hud->fadeFlags() & 0xC) == 0) {
+		sys_.hud->startFade(upTimeMs, 500, Hud::kFadeIn);   // end of skipCinematic (src/Game.cpp:2530-2532)
+	}
 }
 
 void GameContext::debugGiveKeycards() {
@@ -886,6 +890,12 @@ void GameContext::render(AppContext& app) {
 		sys_.hud->drawOverlay(g, 0, 42, 480);
 	}
 
+	// Screen fade at the end of the legacy REPAINT_VIEW3D slot: over the world,
+	// view/cinematic weapon and cockpit overlay, under particles, HUD,
+	// letterbox, subtitles, dialog, loot and menu (src/Canvas.cpp:391-417,
+	// src/Canvas.cpp:1346-1355, src/MayaCamera.cpp:311-323).
+	sys_.hud->drawFade(g, upTimeMs);
+
 	// Cinematic letterbox: two opaque black fills painted after the world
 	// pass and the cockpit art, so the top one overpaints rows 0..41 of the
 	// world band (eraseRgn = setColor(0) + fillRect, src/Hud.cpp:455-456;
@@ -938,8 +948,10 @@ void GameContext::render(AppContext& app) {
 		applyUiAction(r.action, r.index);
 	}
 
-	// Messages overlay while cockpit/HUD stay hidden.
-	sys_.hud->drawMessages(g, *sys_.font);
+	// Messages overlay while cockpit/HUD stay hidden. Not while dying:
+	// hud->repaintFlags = 32 there (src/GameStateRunner.cpp:259), so Hud::draw
+	// paints nothing over the fade (src/Hud.cpp:723-819).
+	if (state_ != StateId::Dying) sys_.hud->drawMessages(g, *sys_.font);
 
 	// DEBUG (rewrite-only, not a port): player coordinate readout, B toggles
 	// it (GameLoop.cpp). view* is the interpolated actual position, so the
@@ -972,10 +984,6 @@ void GameContext::render(AppContext& app) {
 			applyUiAction(r.action, r.index);
 		}
 	}
-
-	// Screen fade, painted over the whole frame whenever one is set
-	// (src/Render.cpp:2954-2956); the opaque menu below covers it.
-	sys_.hud->drawFade(g, upTimeMs);
 
 	// In-game menu (spec 2026-08-28-menu §7.1): drawn last because it OWNS the
 	// frame — its 480x320 background is opaque, so the world pass above (which

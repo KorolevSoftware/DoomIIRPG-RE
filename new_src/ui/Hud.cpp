@@ -122,14 +122,22 @@ void Hud::stopShake() {
 	shakeY_ = 0;
 }
 
-// Render::fadeScene (src/Render.cpp:2548-2587), FADEOUT branch only. Legacy
-// passes 256 - a as the scene weight; the black overlay alpha is therefore a.
+// Render::fadeScene (src/Render.cpp:2548-2587), FADEOUT and FADEIN branches.
+// Legacy passes the scene weight to Graphics::fade: a for FADEIN, 256 - a for
+// FADEOUT; the black overlay is the complement (FADEOUT: a, FADEIN: 255 - a).
+// TODO(CHANGE_MAP): the map00 IP 9671 FADEOUT is held into map02, which must
+// fade in from it (src/Render.cpp:2555-2566) — unreachable until map change.
 void Hud::drawFade(Graphics2D& g, int64_t nowMs) {
-	if ((fadeFlags_ & kFadeOut) == 0) return;
+	if ((fadeFlags_ & (kFadeOut | kFadeIn)) == 0) return;
 	int t = static_cast<int>(nowMs - fadeStartMs_);
-	if (t >= fadeDurMs_ - 50) t = fadeDurMs_;                   // :2553-2555
+	if (t >= fadeDurMs_ - 50) {                                  // :2553-2555
+		if ((fadeFlags_ & kFadeIn) != 0) { endFade(); return; }   // :2572-2574, full scene
+		g.fillRect(0, 0, 480, 320, 0, 0, 0, 255);                 // :2576-2579, held black
+		return;
+	}
 	const int a = 65280 * ((t << 16) / (fadeDurMs_ << 8)) >> 16;  // :2581
-	g.fillRect(0, 0, 480, 320, 0, 0, 0, static_cast<uint8_t>(a));
+	const int overlay = (fadeFlags_ & kFadeOut) != 0 ? a : 255 - a;
+	g.fillRect(0, 0, 480, 320, 0, 0, 0, static_cast<uint8_t>(std::clamp(overlay, 0, 255)));
 }
 
 void Hud::drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositive) {

@@ -22,6 +22,7 @@ Topic files (created on demand):
 | `wall-push.md` | Pushing into a wall/spritewall: sound, `shiftWeapon` lower/raise (200/500/200 ms), `rockView` 1000 ms; secret-door branch (mapFlags 0x4) |
 | `secret-doors.md` | Secret push walls (mapFlags 0x4 + ET_SPRITEWALL): `performDoorEvent(...,true)` two-phase 750+750 ms lerp, unlink+hide; `awardSecret` msg 119/sounds/XP/achievement; `EV_AWARDSECRET`; map00 secret walls |
 | `player-damage.md` | Player taking damage: armor/defense math, `pain`/`painEvent`, shake, rock-back, vignette, direction arrow, weapon red tint, `died()` → `ST_DYING` fall/fade → dead menu |
+| `fades.md` | Render scene fade: flags, `fadeScene` math/end behaviour, frame order, `EV_FADEOP` decode (bit15 = FADEIN), readers, map00 FADEOP list |
 | `ui.md` | HUD, menus, dialogs, fonts |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
 | `audio.md` | sound/music |

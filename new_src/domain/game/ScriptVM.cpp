@@ -1014,9 +1014,20 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		}
 
 		case Enums::EV_FADEOP: {
+			// bit15 = FADEIN, else FADEOUT; non-blocking. While a cinematic
+			// is being skipped FADEIN ends the fade and FADEOUT is ignored
+			// (src/ScriptThread.cpp:938-958).
 			int v = readUShort(t);
-			std::fprintf(stderr, "[script] FADEOP %s dur=%d skipped (no fades)\n",
-				(v & 0x8000) != 0 ? "out" : "in", v & 0x7FFF);
+			const bool fadeIn = (v & 0x8000) != 0;
+			std::fprintf(stderr, "[script] FADEOP %s dur=%d at %lld\n",
+				fadeIn ? "in" : "out", v & 0x7FFF, (long long)env_.ctx->upTimeMs);
+			if (env_.ctx->cinematic().skipping()) {
+				if (fadeIn) env_.hud->endFade();
+			} else if (fadeIn) {
+				env_.hud->startFade(env_.ctx->upTimeMs, v & 0x7FFF, Hud::kFadeIn);
+			} else {
+				env_.hud->startFade(env_.ctx->upTimeMs, v, Hud::kFadeOut);
+			}
 			break;
 		}
 

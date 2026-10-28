@@ -192,6 +192,7 @@ docs/architecture/README.md; журнал: docs/journal.md)._
         (core/LootSession + domain/game/CorpseLoot).
       - [x] Толчок о стену (wall push): shiftWeapon + rockView, docs/original-code/wall-push.md (2026-10-28).
       - [x] Секретные двери (mapFlags 0x4) + awardSecret + EV_AWARDSECRET, docs/original-code/secret-doors.md (2026-10-28).
+      - [x] Скриптовые затемнения EV_FADEOP (FADEIN/FADEOUT, порядок отрисовки), docs/original-code/fades.md (2026-10-28).
       - [ ] Полная система диалогов (стили/говорящие).
       - [ ] Виджеты нижней панели HUD: код есть (Hud::draw/drawBottomBar), но
         у него НЕТ вызывающего в игровом рендере — щит/здоровье/портрет/слот

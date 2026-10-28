@@ -1822,3 +1822,13 @@ G1: `SpriteLerps::startSecretWall` + хвосты freeLerpSprite — две фа
 G3: ветка в PlayerActions до толчка о стену (`src/PlayingInputHandler.cpp:461-466`), EV_AWARDSECRET,
 блок help-диалогов при secretActive. Рендер без изменений. Ревью PASS с первого раза; золотые кадры
 идентичны. Пользователь проверил обе стены map00 на экране — всё работает.
+
+## 2026-10-28 — скриптовые затемнения (EV_FADEOP)
+
+Исследование `docs/original-code/fades.md`: бит 15 операнда — FADEIN (не FADEOUT; исправлены доки и метка в
+`tools/disasm_map_scripts.py`). Порт: EV_FADEOP (`src/ScriptThread.cpp:938-958`, `new_src/domain/game/ScriptVM.cpp:1016-1036`),
+FADEIN с самоочисткой и удержание чёрного у FADEOUT (`src/Render.cpp:2552-2585`, `new_src/ui/Hud.cpp:130-141`),
+затемнение перенесено сразу после 3D-вида/оружия/кокпита (`src/Canvas.cpp:391-396`), проявление 0.5 с после
+пропуска катсцены (`src/Game.cpp:2530-2532`), сообщения не рисуются в Dying (`src/GameStateRunner.cpp:259`).
+Ревью: FAIL (сообщения поверх затемнения смерти) → исправлено (проверено оркестратором) → принято. Золотые
+кадры идентичны (кадры захвата не попадают в активное затемнение). Пользователь проверил на экране — работает.

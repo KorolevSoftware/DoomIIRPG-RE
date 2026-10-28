@@ -195,7 +195,7 @@ Opcode ids `src/Enums.h:399-497`; decode = single switch in `ScriptThread::run()
 | 29 | EV_SHOW_PLAYERATTACK | B | cinematic weapon anim in ST_CAMERA (894-909) |
 | 30 | EV_MONSTER_PARTICLES | B | blood on monster sprite (911-919) |
 | 31 | EV_SPAWN_PARTICLES | B,S,B | kind=(B>>3)&0xF color=B&7; bit7 → explicit tile pos else sprite/z param (921-936) |
-| 32 | EV_FADEOP | S | bit15 → fade-out over S&0x7FFF ms else fade-in S ms; skip-aware (938-958) |
+| 32 | EV_FADEOP | S | bit15 → FADEIN (flag 2) over S&0x7FFF ms, else FADEOUT (flag 1) S ms; skip-aware (938-958); see fades.md |
 | 33 | EV_GIVEITEM | B,B,b | mode B3==0 → touch sprite (B1<<8\|B2); else lookup def by **tileIndex** B1 (`EntityDefManager::lookup`, `src/EntityDef.cpp:76-83`), qty=(s8)B2 <0 = silent-fail variant, >0 spawns drop + touched() pickup; failure sets n2=1 → var7 (960-1008) |
 | 34 | EV_NAMEENTITY | B,B | `entity.name = B2 \| loadMapStringID<<10` (1010-1021) |
 | 35 | EV_DROPMONSTERITEM | S,B[,B],B | drop def at sprite's tile (bit15 → relocate whole entity instead) (1023-1057) |

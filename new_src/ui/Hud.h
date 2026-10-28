@@ -83,20 +83,25 @@ public:
 		rockView_ = RockView{ nowMs, durMs, x << 4, y << 4, z << 4 };
 	}
 	const RockView& rockView() const { return rockView_; }
-	// Render::startFade / isFading / fadeScene (src/Render.cpp:2527-2587).
-	// Only FADEOUT is drawn; it stays fully black once finished.
+	// Render::startFade / isFading / getFadeFlags / endFade / fadeScene
+	// (src/Render.cpp:2527-2587). FADEOUT holds black once finished; FADEIN
+	// clears itself inside drawFade when finished, like fadeScene does.
+	// CHANGEMAP/SHOWSTATS are not ported yet (no map change).
 	static constexpr int kFadeOut = 1;   // FADE_FLAG_FADEOUT
+	static constexpr int kFadeIn = 2;    // FADE_FLAG_FADEIN
 	void startFade(int64_t nowMs, int durMs, int flags) {
 		fadeStartMs_ = nowMs;
 		fadeDurMs_ = durMs;
 		fadeFlags_ = flags;
 	}
+	void endFade() { fadeFlags_ = 0; }
 	bool isFading() const { return fadeFlags_ != 0; }
+	int fadeFlags() const { return fadeFlags_; }
 	void drawFade(Graphics2D& g, int64_t nowMs);
 	// Level restart: Render::endFade (src/Render.cpp:2543-2546) plus the shake,
 	// rock and damage-indicator state a fresh boot starts without.
 	void clearScreenEffects() {
-		fadeFlags_ = 0;
+		endFade();
 		stopShake();
 		rockView_ = RockView{};
 		damageDir_ = 0;

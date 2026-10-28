@@ -196,15 +196,17 @@ void CinematicCamera::finishCinematic() {
 void CinematicCamera::skipCinematicNow() {
 	// Game::skipCinematic analog (src/Game.cpp:2507-2544): snap the remaining
 	// keys, fast-forward the parked threads with the huge-timestamp analog,
-	// immediate state restore. Subtitles/particles/fade have no rewrite
-	// counterpart yet.
+	// immediate state restore. Subtitles/particles have no rewrite
+	// counterpart yet; the closing fade-in is the caller's (GameContext::tickCamera).
 	const MapData::MayaCamera& cam = env_.map->mayaCameras[cameraCamIdx_];
 	maya_.snap(cam.numKeys - 1);   // Snap the remaining keys' end pose
 	activeCameraKey_ = -1;
 	cameraView_ = false;           // skip force-ends the view (src/Game.cpp:2507-2544)
 	if (env_.host->state() == StateId::Camera)
 		env_.host->requestState(StateId::Playing);   // Snap tail (:380-384)
+	skipping_ = true;
 	flushParkedThreads(true);
+	skipping_ = false;
 }
 
 void CinematicCamera::flushParkedThreads(bool force) {

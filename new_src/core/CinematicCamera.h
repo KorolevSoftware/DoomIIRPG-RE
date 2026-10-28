@@ -62,6 +62,9 @@ public:
 	void requestSkip() { skipCinematic_ = true; }
 	void clearSkipRequest() { skipCinematic_ = false; }
 	bool skipGateOpen() const { return *env_.gameTime >= cinUnpauseTime_; }
+	// Legacy game->skippingCinematic as seen by the fast-forwarded threads
+	// (EV_FADEOP, src/ScriptThread.cpp:942-948).
+	bool skipping() const { return skipping_; }
 
 	// Display-rate resample + pose, nullptr when no cinematic owns the view.
 	const MayaPose* renderPose();
@@ -85,6 +88,11 @@ private:
 	int64_t cameraStartTime_ = 0;      // legacy activeCameraTime (src/Canvas.cpp:1092)
 	int64_t cinUnpauseTime_ = 0;       // skip soft-key gate (src/ScriptThread.cpp:227-228)
 	bool skipCinematic_ = false;
+	// True only during skipCinematicNow's fast-forward. Legacy clears
+	// skippingCinematic at camera completion (src/MayaCamera.cpp:377) before
+	// resuming the last parked thread (:390-394), so its post-last-key
+	// FADEOPs run unskipped; invisible until CHANGEMAP/SHOWSTATS fades exist.
+	bool skipping_ = false;
 	std::vector<ScriptThread*> cameraResumeList_; // ADV_CAMERAKEY park list (§2)
 	std::vector<int> cameraResumeCounts_;         // remaining key completions per entry
 };

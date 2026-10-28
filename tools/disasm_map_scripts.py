@@ -445,9 +445,11 @@ def h_spawn_particles(r):
 
 
 def h_fadeop(r):
+    # bit15 = FADEIN (startFade(v & 0x7FFF, 2)), else FADEOUT
+    # (src/ScriptThread.cpp:950-954).
     v = r.u16()
-    return {"out": bool(v & 0x8000), "ms": v & 0x7FFF}, \
-        "%s %dms" % ("out" if v & 0x8000 else "in", v & 0x7FFF), [], None
+    return {"in": bool(v & 0x8000), "ms": v & 0x7FFF}, \
+        "%s %dms" % ("in" if v & 0x8000 else "out", v & 0x7FFF), [], None
 
 
 def h_giveitem(r):
