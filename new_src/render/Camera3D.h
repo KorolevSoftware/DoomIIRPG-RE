@@ -47,6 +47,9 @@ public:
 	// magnification is derived from [0]/[5] (src/GLES.cpp:483-547).
 	const int* projectionInt() const { return projection_; }
 
+	// legacy TinyGL::mvp2D (src/TinyGL.cpp:189, :195-200): yaw-only view × projection(fov+|pitch|), no GLES tweaks
+	const int* mvp2DInt() const { return mvp2D_; }
+
 	// Cached view angles (masked 0x3FF) and position.
 	int viewX() const { return viewX_; }
 	int viewY() const { return viewY_; }
@@ -67,6 +70,7 @@ private:
 	int view_[16];
 	int projection_[16];
 	int mvp_[16];
+	int mvp2D_[16];
 	float mvpF_[16];
 	float viewF_[16];
 };

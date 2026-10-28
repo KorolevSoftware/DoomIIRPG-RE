@@ -5,7 +5,9 @@
 #include <cstdlib>
 
 #include "domain/game/EntityDb.h"
+#include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
+#include "domain/game/MonsterAI.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapData.h"
 
@@ -141,10 +143,9 @@ int SpriteLerps::spriteZBias(int sprite, int x, int y) const {
 	return h;
 }
 
-// Single tick of updateLerpSprite (src/Game.cpp:2855-2956), script-lerp
-// subset: relink keeps linked entities on their tile; S_NORELINK/
-// ENT_NORELINK never apply to script lerps and staleView culling,
-// walk-frame anim + boss footsteps have no rewrite counterpart yet.
+// Single tick of updateLerpSprite (src/Game.cpp:2855-2956): walk-frame anim
+// and the per-tick relink of linked entities (skipped for ENT_NORELINK monster
+// steps). S_NORELINK, staleView culling and boss footsteps are not ported.
 int SpriteLerps::updateLerpSprite(SpriteLerp* ls) {
 	if (!env_.map || ls->hSprite == 0) return 4;
 	const int n = env_.map->numSprites;
@@ -193,8 +194,7 @@ int SpriteLerps::updateLerpSprite(SpriteLerp* ls) {
 	}
 
 	// Walk-state writer (src/Game.cpp:2903-2944): distance-driven anim byte
-	// for NPC/monster sprites. The monster half stays dormant until the
-	// EntityMonster unit enables stacked monster rendering (ADR 0005).
+	// for NPC/monster sprites; a monster's 1-tile step is always WALK_FRONT.
 	Entity* ent = env_.db->findEntityBySprite(sprite);
 	if (ent != nullptr && ent->def != nullptr &&
 	    !(env_.map->mapSpriteInfo[sprite] & Enums::SPRITE_FLAG_HIDDEN) &&
@@ -230,8 +230,10 @@ int SpriteLerps::updateLerpSprite(SpriteLerp* ls) {
 		}
 	}
 
-	// Per-tick relinkSprite analog: keep a LINKED entity on its tile.
-	if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0) {
+	// Per-tick relinkSprite analog: keep a LINKED entity on its tile
+	// (skipped for ENT_NORELINK, src/Game.cpp:2946).
+	if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0 &&
+	    (ls->flags & SpriteLerp::kFlagEntNoRelink) == 0) {
 		int tx = x >> 6, ty = y >> 6;
 		if ((ent->linkIndex % 32) != tx || (ent->linkIndex / 32) != ty) {
 			env_.db->linkEntity(ent, tx, ty);
@@ -245,6 +247,7 @@ int SpriteLerps::updateLerpSprite(SpriteLerp* ls) {
 // freed. Door/secret/chicken tails are not ported (door lerps use DoorAnim).
 void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 	const int sprite = ls->hSprite - 1;
+	Entity* ent = nullptr;
 	if (env_.map && sprite >= 0) {
 		const int n = env_.map->numSprites;
 		env_.map->mapSprites[sprite + 0 * n] = (int16_t)ls->dstX;
@@ -252,8 +255,9 @@ void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 		env_.map->mapSprites[sprite + 2 * n] =
 			(int16_t)(ls->dstZ - spriteZBias(sprite, ls->dstX, ls->dstY));
 		env_.map->mapSprites[sprite + 8 * n] = (int16_t)ls->dstScale;
-		Entity* ent = env_.db->findEntityBySprite(sprite);
+		ent = env_.db->findEntityBySprite(sprite);
 		if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0 &&
+		    (ls->flags & SpriteLerp::kFlagEntNoRelink) == 0 &&                 // :3115
 		    ((ent->linkIndex % 32) != (ls->dstX >> 6) || (ent->linkIndex / 32) != (ls->dstY >> 6))) {
 			env_.db->linkEntity(ent, ls->dstX >> 6, ls->dstY >> 6);
 		}
@@ -262,6 +266,7 @@ void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 		if (ent != nullptr && ent->def != nullptr &&
 		    !(env_.map->mapSpriteInfo[sprite] & Enums::SPRITE_FLAG_HIDDEN) &&
 		    (ent->def->eType == Enums::ET_NPC || ent->def->eType == Enums::ET_MONSTER)) {
+			if (ent->monster != nullptr) ent->monster->frameTime = 0;   // :3102-3104
 			int n5 = (env_.map->mapSpriteInfo[sprite] >> 8) & 0xF0;
 			int restore = (n5 == Enums::MANIM_IDLE_BACK || n5 == Enums::MANIM_WALK_BACK) &&
 			                  !(ls->flags & SpriteLerp::kFlagAutoFace)
@@ -274,6 +279,11 @@ void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 	}
 	ls->hSprite = 0;
 	ls->ownerThread = nullptr;
+	// Slot freed first, then the step completes (src/Game.cpp:3211-3216).
+	if (ent != nullptr && ent->monster != nullptr &&
+	    (ent->monster->goalFlags & EntityMonster::kGoalFlagLerping) != 0 && env_.ai != nullptr) {
+		env_.ai->finishLerp(ent);
+	}
 }
 
 // snapLerpSprites (src/Game.cpp:1149-1166): zero the timings and run one tick

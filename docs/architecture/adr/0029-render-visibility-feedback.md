@@ -1,7 +1,7 @@
 # ADR 0029 — The renderer reports what it saw (`ViewVisibility`); the simulation consumes it on the next tick
 
 Date: 2026-09-22
-Status: accepted
+Status: accepted; decision 1 amended by ADR 0031 (drawnSprites/tiles now follow the legacy leaf cull)
 Spec: `specs/2026-09-22-monster-attacks.md` groups G5-G6
 
 ## Context

@@ -81,7 +81,8 @@ Namespace for everything: `newcore`._
 ### render/
 | File | Responsibility |
 |---|---|
-| `Camera3D` | Faithful 14.14 fixed view/projection/MVP via 1024-entry sin table (:15-62); GLES BeginFrame projection tweaks (:83-92); float + int matrix accessors. |
+| `Camera3D` | Faithful 14.14 fixed view/projection/MVP via 1024-entry sin table (:15-62); GLES BeginFrame projection tweaks (:83-92); float + int matrix accessors. **(planned, ADR 0031)** also the legacy `mvp2D` (yaw-only view × projection(fov+|pitch|)) for `ColumnOcclusion`. |
+| `ColumnOcclusion` | **(planned, ADR 0031, spec `specs/2026-09-22-monster-attacks.md` §6.5)** CPU integer port of TinyGL's 2D column-occlusion cull (`transform2DVerts`/`clipLine`/`projectVerts`, `occludeClippedLine`, `clippedLineVisCheck`) + `Render::cullBoundingBox`. Used by `World3D::walkNode` only to fill `ViewVisibility` (legacy-visible leaves/sprites, `checkTileVisibilty` tile bits); never culls the GPU draw. |
 | `Graphics2D` | Canvas-space 2D over SpriteBatch: rects/lines, blits with rotateModes 0-8, anchors, scaled draws, `drawString` with `^N` colors/buff icons; clip recorded but not applied (:20-24) — **(planned, ADR 0012, G1)** `setClip`/`clearClip` become a real GL scissor through `SpriteBatch::setScissorCanvas`, single level (nesting is `Ui::pushClip`'s job). |
 | `RenderBackend` | Frame owner: beginFrame clear + letterbox viewport + batch begin (:37-47); endFrame flush+swap (:49-52); `setCanvasViewport/restoreCanvasViewport` scope the 3D band — ONE world rect (1,7,478,248) for gameplay and cinematics alike (ADR 0009 + its 2026-08-26 amendment: `src/GLES.cpp:119-127` hardcodes the GL y for both, the cinematic letterbox is the cockpit overlay at canvas y = 42, not a viewport); both flush the sprite batch first; **(planned, G1)** latches the letterbox rect into `SpriteBatch` and exposes its inverse (`letterboxRect`, `drawableToCanvas`) for cursor mapping. |
 | `SceneRenderer` | **(planned, ADR 0010, P1-G6)** the world pass: viewport band, camera setup (player view or cinematic `MayaPose`), screen shake, per-sprite sort-bias/character classification, `drawSky`+`drawBSP`; owns `Camera3D`. |
@@ -261,6 +262,7 @@ _See [adr/](adr/):_
 - [0028 — Monster behaviour is a peer module `MonsterAI`; monster attacks run on `Combat` inside `ST_PLAYING`; death is detected from health](adr/0028-monster-ai-module-and-attack-sequencing.md) (2026-09-22)
 - [0029 — The renderer reports what it saw (`ViewVisibility`); the simulation consumes it on the next tick](adr/0029-render-visibility-feedback.md) (2026-09-22)
 - [0030 — Runtime sprites use 48 custom slots appended to the map sprite arrays, owned by `GameSprites`](adr/0030-runtime-sprite-slots.md) (2026-09-22)
+- [0031 — Visibility bookkeeping runs a CPU port of TinyGL's column-occlusion cull; the GPU draw list is untouched](adr/0031-cpu-column-occlusion-for-visibility.md) (2026-10-28)
 
 ## Specs
 

@@ -11,6 +11,7 @@
 #include "domain/game/ScriptVM.h"
 #include "domain/game/SpriteLerps.h"
 #include "domain/game/TraceSystem.h"
+#include "domain/game/ViewVisibility.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
@@ -111,6 +112,32 @@ void MonsterSystem::activate(Entity* e, bool runStaticFunc, bool rangeCheck, boo
 			e->def ? e->def->eSubType : -1, e->def ? e->def->parm : -1);
 	}
 	std::fprintf(stderr, "[monster] activate sprite=%d\n", sprite);
+}
+
+// Port of the renderSpriteObject sight wake (src/Render.cpp:1576-1583) over
+// the sprites the last world frame drew. The gates are re-read per sprite
+// like legacy: activate() may run SCR_MONSTER_ACTIVATE and start lerps.
+// activePropogators (G7), noclip and disableAI are always 0 in the rewrite.
+// The trace is 2D (spec deviation D3, src/Game.cpp:277-283 has a Z check).
+void MonsterSystem::renderActivate(ViewVisibility& vis) {
+	if (vis.valid && !vis.cinematic) {         // disableRenderActivate in ST_CAMERA
+		for (int s : vis.drawnSprites) {
+			if (env_.lerps->animatingEffects() != 0) break;
+			Entity* e = env_.db->findEntityBySprite(s);
+			if (e == nullptr || e->monster == nullptr) continue;
+			if ((e->info & (Entity::kInfoCorpse | Entity::kInfoOnActiveList | Entity::kInfoHidden)) != 0) continue;
+			if ((e->monster->flags & Enums::MFLAG_NOACTIVATE) != 0) continue;
+			const int n = env_.map->numSprites;
+			const TraceHit h = env_.trace->trace(env_.trace->playerX(), env_.trace->playerY(),
+				env_.map->mapSprites[s], env_.map->mapSprites[s + n], env_.db->playerEntity(),
+				Contents::MONSTER_SIGHT, 2);
+			if (h.isEntity() && h.entity == e) {
+				std::fprintf(stderr, "[monster] sight wake sprite=%d\n", s);
+				activate(e, true, true, true, false);
+			}
+		}
+	}
+	vis.drawnSprites.clear();
 }
 
 // Faithful port of Game::deactivate (src/Game.cpp:825-855).

@@ -74,6 +74,8 @@ constexpr int MONSTER_ATTACK_CLEAR = MONSTER_ATTACK_LOS | ENV_DAMAGE | MONSTERBL
                                      NONOBSTRUCTING_SPRITEWALL;
 // Boss pinky / off-axis attack line (src/Entity.cpp:709, :757).
 constexpr int BOSS_ATTACK_LOS = WORLD | PLAYER | DOOR | SPRITEWALL;
+// Render-time sight-wake trace from the view to a drawn monster (src/Render.cpp:1579).
+constexpr int MONSTER_SIGHT = MONSTER_ATTACK_LOS & ~PLAYER;
 
 // Per-weapon modifiers of the fire ray (src/PlayingInputHandler.cpp:203-215).
 constexpr int HOLY_WATER_EXTRA = ENV_DAMAGE | DECOR_NOCLIP;   // was | 0x4100
@@ -87,6 +89,7 @@ static_assert(SPLASH_SOLID == 4129,  "src/Enums.h CONTENTS_SPLASH_SOLID");
 static_assert(MONSTER_ATTACK_LOS   == 5295,  "src/Entity.cpp:768");
 static_assert(MONSTER_ATTACK_CLEAR == 15791, "src/Entity.cpp:780");
 static_assert(BOSS_ATTACK_LOS      == 4131,  "src/Entity.cpp:709");
+static_assert(MONSTER_SIGHT        == 5293,  "src/Render.cpp:1579");
 static_assert(HOLY_WATER_EXTRA == 0x4100 && MELEE_EXTRA == 0x10,
 	"src/PlayingInputHandler.cpp:203-215");
 
@@ -230,6 +233,9 @@ static constexpr int BOSS_VIOS = 15;
 // Subtype masks, bit = 1 << eSubType (src/Enums.h:82): lost soul, revenant,
 // arch-vile, mastermind retreat after attacking.
 static constexpr int EVADING_MONSTERS = 0x4604;
+// Saw goblin, cacodemon, sentinel, Vios, Vios2 attack right after a step
+// (src/Enums.h:84, src/Entity.cpp:1123).
+static constexpr int MOVE2ATTACK_MONSTERS = 0x180D0;
 
 // Monster weapons that need a clear melee lane: ids 1, 15, 16, 17, 18
 // (src/Entity.cpp:784-791).

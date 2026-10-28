@@ -1,5 +1,7 @@
 #include "render/Camera3D.h"
 
+#include <cstdlib>
+
 namespace newcore {
 
 namespace {
@@ -8,7 +10,7 @@ constexpr int kNearClip = 256;
 }
 
 Camera3D::Camera3D() {
-	for (int i = 0; i < 16; ++i) { view_[i] = 0; projection_[i] = 0; }
+	for (int i = 0; i < 16; ++i) { view_[i] = 0; projection_[i] = 0; mvp2D_[i] = 0; }
 	view_[15] = kMatrixOne;
 }
 
@@ -22,8 +24,8 @@ void Camera3D::buildViewMatrix(int x, int y, int z, int yaw, int pitch, int roll
 	int iVar5 = st[(roll + 256) & 0x3ff] >> 2;
 	int n13 = iVar3 * iVar1 >> 14;
 	int n14 = iVar5 * iVar1 >> 14;
-	matrix[0] = n13 * iVar6 + iVar5 * -iVar7 >> 14;
-	matrix[4] = n13 * iVar7 + iVar5 * iVar6 >> 14;
+	matrix[0] = (n13 * iVar6 + iVar5 * -iVar7) >> 14;
+	matrix[4] = (n13 * iVar7 + iVar5 * iVar6) >> 14;
 	matrix[8] = iVar3 * iVar2 >> 14;
 	matrix[1] = -(n14 * iVar6 + -iVar3 * -iVar7) >> 14;
 	matrix[5] = -(n14 * iVar7 + -iVar3 * iVar6) >> 14;
@@ -100,6 +102,13 @@ void Camera3D::setView(int viewX, int viewY, int viewZ, int viewYaw, int viewPit
 		mvpF_[i] = (float)mvp_[i] * (1.f / 16384.f);
 		viewF_[i] = (float)view_[i] * (1.f / 16384.f);
 	}
+
+	int view2D[16], proj2D[16];
+	buildViewMatrix(viewX, viewY, 0, viewYaw_, 0, 0, view2D);
+	int p = viewPitch_;
+	if (p > 512) p -= 1024; // src/TinyGL.cpp:192-194
+	buildProjectionMatrix(viewFov + std::abs(p), viewAspect, proj2D);
+	multMatrix(view2D, proj2D, mvp2D_);
 }
 
 } // namespace newcore

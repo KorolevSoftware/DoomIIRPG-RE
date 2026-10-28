@@ -841,8 +841,8 @@ are simply public). Bytes are signed (`int8_t`), as legacy.
 struct ViewVisibility {
 	bool valid = false;        // a world frame was rendered since the last consume
 	bool cinematic = false;    // that frame was rendered from a MayaCamera pose
-	std::vector<int> drawnSprites;   // drawSprite() calls of the BSP pass, may repeat
-	uint32_t tiles[32] = {};         // bit x of tiles[y]: tile touched by a visible leaf's bounds
+	std::vector<int> drawnSprites;   // sprites legacy renderBSP would submit (§6.5), may repeat
+	uint32_t tiles[32] = {};         // bit x of tiles[y]: legacy checkTileVisibilty(x, y) (§6.5)
 	bool tileVisible(int tx, int ty) const {
 		return tx >= 0 && ty >= 0 && tx < 32 && ty < 32 && ((tiles[ty] >> tx) & 1u) != 0;
 	}
@@ -892,6 +892,226 @@ New header ⇒ reconfigure. User: walk toward an imp that faces you, without sho
 within 4 tiles and in view, it wakes (log `[monster] activate sprite=`), and from then on
 attacks when adjacent and aligned (G3). An imp shown from the back (back-turned pose) does not
 wake by sight — only when shot. Monsters seen only during a cinematic do not wake.
+
+### 6.5 Leaf cull for visibility (D12 fix, ADR 0031) — one coder delegation (G5b)
+
+Goal: `ViewVisibility` reports what the ORIGINAL would have considered visible
+(`Render::walkNode` cull, `src/Render.cpp:1053-1055`). **The GPU draw list must not change**:
+`nodeIdxs_`, `splitPairs_` and the draw loop stay as they are, so golden frames stay
+byte-identical. All new math is integer, 32-bit `int`, written exactly like the legacy
+expressions (same shifts, same division order). Shifts like `a + 7 >> 3` mean `(a + 7) >> 3`.
+
+#### 6.5.1 Facts this design rests on (all verified in `src/`)
+
+* The cull is pure 2D. `transform2DVerts` uses `mvp2D` and fills only x/z/w
+  (`src/TinyGL.cpp:279-292`). `clipLine` clips against planes `w+x`, `w-x`, `w+z`
+  (`src/TinyGL.cpp:459-514`). `projectVerts`: `x = viewportXBias + x*viewportXScale/w`,
+  `z = 0x7fffff/w` (`src/TinyGL.cpp:516-525`). y, s and t are irrelevant here.
+* `mvp2D = view2D × projection(viewFov + |pitch|, viewAspect)`. `view2D =
+  buildViewMatrix(viewX, viewY, 0, yaw, 0, 0)`. The pitch is signed (`>512 → −1024`). The
+  projection is rebuilt fresh, without the GLES negations (`src/TinyGL.cpp:189`, `:192-200`).
+* Viewport: `setViewport(viewRect[0], …)` gives `posX = 0` and calls `_setViewport(1, …, 478, …)`
+  (`src/TinyGL.cpp:149-166`). So `viewportXScale = 478<<2 = 1912` and `viewportXBias =
+  ((1 + 239)<<3) − 4 = 1916` (`src/TinyGL.cpp:141`, `:143`). The cinematic viewport has the
+  same x and width (`cinRect[0]=viewRect[0]`, `cinRect[2]=viewRect[2]`,
+  `src/Canvas.cpp:151-154`), so the X projection is identical in ST_CAMERA. Only x is used.
+* Columns: `TinyGL::screenWidth = Render::screenWidth = viewRect[2] = 480`
+  (`src/App.cpp:111`, `src/Render.cpp:156`, `src/Canvas.cpp:126`). `columnScale[480]` is reset
+  to `COLUMN_SCALE_INIT = INT_MAX` every frame before the BSP walk (`src/Render.cpp:2315-2317`,
+  `src/TinyGL.h:39`).
+* What writes `columnScale` (= what occludes). Writes happen only during the walk, only from
+  VISITED (non-culled) leaves, in walk order (near child first), and each leaf writes AFTER its
+  own cull test:
+  1. `drawNodeLines(leaf)` (`src/Render.cpp:717-744`; `skipLines` is always false,
+     `src/Render.cpp:114`). For `i` in `[n2 & 0x3FF, (n2 & 0x3FF) + (n2 >> 10 & 0x3F))` with
+     `n2 = nodeChildOffset2[leaf]`, the line type is `t = lineFlags[i>>1] >> ((i&1)<<2) & 7`.
+     If `t == 0 || t == 4`, then occlude endpoints `((lineXs[2i]&0xFF)<<7, (lineYs[2i]&0xFF)<<7)`
+     → `((lineXs[2i+1]&0xFF)<<7, (lineYs[2i+1]&0xFF)<<7)` in that order, with NO swap
+     (back-facing lines give `endX <= begX` and write nothing). The `|= 8` automap write
+     (`:735-740`) is not ported.
+  2. Leaf sprites (`src/Render.cpp:1063-1080`): sprite `s` in the leaf's own chain with
+     `!(info & 0x10000)`, an entity bound (`S_ENT != -1`), `info & 0x400000` (SPRITE_FLAG_TILE),
+     and `(info & 0xFF) + 257 < 450`. These go to `occludeSpriteLine(s)`
+     (`src/Render.cpp:666-715`), which returns at once if `info < 0` (DOORLERP bit 31). `n6 =
+     EAST(0x4000000)?4 : NORTH(0x1000000)?6 : WEST(0x8000000)?4 : SOUTH(0x2000000)?6 : 0`, tested
+     in this order. `n7 = ((n6 + 2) & 7) << 1`; `dx = viewStepValues[n7] >> 1 << 4`, `dy =
+     viewStepValues[n7+1] >> 1 << 4`. The segment is `(x+dx, y+dy)` → `(x−dx, y−dy)` with
+     `x = spriteX<<4`, `y = spriteY<<4`. After projection, swap the ends if `v0.x > v1.x`.
+* `occludeClippedLine` / `clippedLineVisCheck` (`src/TinyGL.cpp:689-743`) are quoted in
+  6.5.3. Every caller relevant here passes `b = true` (`src/Render.cpp:1053`, `:2456`,
+  `src/Entity.cpp:1095`).
+* No per-sprite cull exists beyond the leaf cull. `renderBSP` (`src/Render.cpp:1732-1772`)
+  calls `renderSpriteObject` for every sprite that `addNodeSprites` lists for each visited leaf
+  (`:913-924`, own chain + split pairs). `addSprite` only rejects hidden sprites (`:830-832`).
+  `renderSpriteObject` reaches the wake (`:1576-1583`) for every non-hidden sprite except the
+  water stream tile 240 (`:1546-1549`, never a monster) and the mastermind/caldex delays
+  (`:1519-1541`; the sprite is still rendered later, `:1764-1771`).
+* `checkTileVisibilty(tx, ty) = !cullBoundingBox(tx<<10, ty<<10, (tx+1)<<10, (ty+1)<<10, true)`
+  (`src/Render.cpp:2453-2457`). It is evaluated during simulation, with the last frame's
+  camera and its final `columnScale`.
+
+#### 6.5.2 `render/Camera3D.h/.cpp` — add `mvp2D`
+
+* Private member `int mvp2D_[16];` (zero-init in the constructor). Public accessor
+  `const int* mvp2DInt() const { return mvp2D_; }` with the comment `// legacy TinyGL::mvp2D
+  (src/TinyGL.cpp:189, :195-200): yaw-only view × projection(fov+|pitch|), no GLES tweaks`.
+* At the END of `setView` (the existing outputs do not change):
+  ```
+  int view2D[16], proj2D[16];
+  buildViewMatrix(viewX, viewY, 0, viewYaw_, 0, 0, view2D);
+  int p = viewPitch_; if (p > 512) p -= 1024;               // src/TinyGL.cpp:192-194
+  buildProjectionMatrix(viewFov + std::abs(p), viewAspect, proj2D);
+  multMatrix(view2D, proj2D, mvp2D_);
+  ```
+  (`<cstdlib>` for `std::abs`).
+
+#### 6.5.3 New `render/ColumnOcclusion.h/.cpp`
+
+```cpp
+namespace newcore {
+// CPU port of the 2D column-occlusion cull of legacy TinyGL/Render (ADR 0031).
+// Bookkeeping only: never feeds the GPU draw path.
+class ColumnOcclusion {
+public:
+	static constexpr int kColumns = 480;      // TinyGL::screenWidth (src/App.cpp:111, src/Render.cpp:156)
+	static constexpr int kXScale = 478 << 2;  // viewportXScale (src/TinyGL.cpp:141, :166)
+	static constexpr int kXBias = ((1 + 478 / 2) << 3) - 4; // viewportXBias (src/TinyGL.cpp:143)
+	static constexpr int kCullExtra = 256 + 16;             // TinyGL::CULL_EXTRA (src/TinyGL.h:37)
+	static constexpr int kColumnInit = INT_MAX;             // COLUMN_SCALE_INIT (src/TinyGL.h:39)
+
+	// New frame: latch the camera, reset every column (src/Render.cpp:2315-2317).
+	void begin(const int* mvp2D, int viewX, int viewY);
+	// occludeClippedLine for a world-space segment (world units = canvas << 4).
+	// sortX: swap the projected ends so x0 <= x1 (occludeSpriteLine, src/Render.cpp:708-713);
+	// false for map lines (drawNodeLines, src/Render.cpp:735).
+	void occludeLine(int x0, int y0, int x1, int y1, bool sortX);
+	// Render::cullBoundingBox(n, n2, n3, n4, true) (src/Render.cpp:750-823): true = culled.
+	bool cullBox(int x1, int y1, int x2, int y2) const;
+private:
+	struct V { int x, z, w; };
+	// transform2DVerts + clipLine + projectVerts for two points; false = clipped away.
+	bool project(int ax, int ay, int bx, int by, V& a, V& b) const;
+	int mvp2D_[16] = {};
+	int viewX_ = 0, viewY_ = 0;
+	int columnScale_[kColumns];
+};
+}
+```
+
+Algorithms (verbatim, ints):
+
+* `begin`: copy 16 ints, store viewX/viewY, fill `columnScale_` with `kColumnInit`.
+* `project` (`src/TinyGL.cpp:279-292`, `:459-514`, `:516-525`). For each point:
+  `x' = (x*m[0] + y*m[4] >> 14) + m[12]`, `z' = (x*m[2] + y*m[6] >> 14) + m[14]`,
+  `w' = (x*m[3] + y*m[7] >> 14) + m[15]`. Then the three-plane `clipLine` loop exactly as in
+  `src/TinyGL.cpp:462-512` (`n`/`n2` per plane i=0: `w+x`, i=1: `w−x`, i=2: `w+z`; both
+  negative → return false. Case 1 (`a` out): `t = (n2<<14)/(n2−n)`, `a.f = b.f + ((a.f−b.f)*t
+  >> 14)` for f in x, z, w. Case 2 (`b` out): `t = (n<<14)/(n−n2)`, `b.f = a.f + ((b.f−a.f)*t
+  >> 14)`). Then for both: `x = kXBias + (x*kXScale)/w; z = 0x7fffff / w`.
+  (`w >= 256` after the near plane, so there is no division by zero.)
+* `occludeLine`: `if (!project(...)) return;` `if (sortX && a.x > b.x) std::swap(a, b);` then
+  `occludeClippedLine(a, b)` (`src/TinyGL.cpp:719-743`):
+  ```
+  begX = a.x + 7 >> 3; endX = b.x + 7 >> 3;
+  if (begX < 0) begX = 0; if (endX > kColumns) endX = kColumns; if (endX <= begX) return;
+  n = (b.z - a.z) / (endX - begX); n2 = a.z + (n * ((begX << 3) - a.x) >> 3);
+  for (; begX < endX; ++begX, n2 += n) { n3 = 0x7fffff / n2; if (n3 < col[begX]) col[begX] = n3; }
+  ```
+* `cullBox(n, n2, n3, n4)` (`src/Render.cpp:750-823`):
+  1. Camera inside the box grown by `kCullExtra` on all sides → return false.
+  2. Pick the silhouette segment (p0, p1) with the 9-way table of `src/Render.cpp:759-815`,
+     copied exactly. `viewY_` inside `[n2, n4)` while `viewX_` is inside `[n, n3)` → return
+     false.
+  3. `if (!project(p0, p1, a, b)) return true;` then return `!visCheck(a, b)` where `visCheck`
+     is the `b == true` branch of `clippedLineVisCheck` (`src/TinyGL.cpp:689-710`): the same
+     begX/endX/clamp (`endX <= begX` → false), the same `n`/`n2` start, and per column
+     `if (0x7fffff / n2 < col[begX]) return true;` → false after the loop. Do NOT swap a/b
+     here; legacy does not.
+
+#### 6.5.4 `render/World3D.h/.cpp`
+
+* Members: `ColumnOcclusion occl_;`, `std::vector<int> legacyLeaves_;` (visited leaves in walk
+  order) and `std::vector<int> legacySplitPairs_;` (flat `[leaf, sprite]`, cap
+  `2*kMaxSplitSprites`). Clear both per frame next to `splitPairs_.clear()`.
+* `drawBSP` gets a new trailing parameter `const uint8_t* spriteHasEntity = nullptr`
+  (1 = sprite bound to an entity, the `S_ENT != -1` analog; null = none).
+  Store it in a member `const uint8_t* hasEntity_` for the walk's duration.
+* `addSplitSprite(map, firstVisibleLeaf, sprite)` becomes
+  `addSplitSprite(map, const std::vector<int>& leaves, size_t first, int sprite, std::vector<int>& pairs)`
+  with the same body over `leaves`/`pairs`. The existing call passes `nodeIdxs_, start, s,
+  splitPairs_`, so draw behaviour is identical.
+* `walkNode(map, n, viewX, viewY, viewZ, bool legacyVis)`; `drawBSP` calls it with `true`
+  right after `occl_.begin(camera.mvp2DInt(), camera.viewX(), camera.viewY())`. Body:
+  ```
+  if (legacyVis && occl_.cullBox((nodeBounds[n*4+0]&0xFF)<<7, (nodeBounds[n*4+1]&0xFF)<<7,
+                                 (nodeBounds[n*4+2]&0xFF)<<7, (nodeBounds[n*4+3]&0xFF)<<7))
+      legacyVis = false;                         // src/Render.cpp:1053-1055: legacy stops here
+  if (leaf) {
+      nodeIdxs_.push_back(n);                    // unchanged: draw list
+      if (legacyVis) { legacyLeaves_.push_back(n); occludeLeafLines(map, n); occludeLeafSprites(map, n); }
+      return true;
+  }
+  size_t start = nodeIdxs_.size(), lstart = legacyLeaves_.size();
+  ... recurse both children in the existing order, passing legacyVis ...
+  for (int s : internalSprites_[n]) {
+      addSplitSprite(map, nodeIdxs_, start, s, splitPairs_);                       // unchanged
+      if (legacyVis) addSplitSprite(map, legacyLeaves_, lstart, s, legacySplitPairs_); // :1094-1096
+  }
+  ```
+  Replace the "cullBoundingBox early-out is skipped" comment with one line: the draw walk
+  visits every node, and the `legacyVis` flag reproduces the legacy cull for visibility only
+  (ADR 0031).
+* `occludeLeafLines(map, leaf)` and `occludeLeafSprites(map, leaf)` are private helpers
+  implementing 6.5.1 items 1 and 2. Sprites are those with `spriteLeaf_[i] == leaf`, ascending
+  `i` (chain order does not matter: min-writes commute). Use `Player::kViewStepValues`
+  (`new_src/domain/game/Player.cpp:15`, value-identical to `Canvas::viewStepValues`).
+  `hasEntity_ == nullptr` → no sprite occluders.
+* After the walk, replace the leaf-bounds tile loop (`World3D.cpp` "Tiles touched by the
+  visible leaves") with:
+  ```
+  for (int ty = 0; ty < 32; ++ty) for (int tx = 0; tx < 32; ++tx)
+      if (!occl_.cullBox(tx << 10, ty << 10, (tx + 1) << 10, (ty + 1) << 10))  // checkTileVisibilty, src/Render.cpp:2453-2457
+          vis_.tiles[ty] |= 1u << tx;
+  ```
+* Then build `vis_.drawnSprites` (and delete the push in the draw loop at `World3D.cpp:1346`):
+  ```
+  for (int k = (int)legacyLeaves_.size() - 1; k >= 0; --k) {   // renderBSP order, src/Render.cpp:1752
+      const int leaf = legacyLeaves_[k];
+      for (int i = 0; i < map.numSprites; ++i)
+          if (spriteLeaf_[i] == leaf && !(map.mapSpriteInfo[i] & 0x10000)) vis_.drawnSprites.push_back(i);
+      for (size_t p = 0; p + 1 < legacySplitPairs_.size(); p += 2)
+          if (legacySplitPairs_[p] == leaf) vis_.drawnSprites.push_back(legacySplitPairs_[p + 1]);
+  }
+  ```
+* Keep the `ViewVisibility.h` field comments in sync: `drawnSprites` = "sprites the legacy
+  renderBSP would submit (visited leaves + split rescue)", `tiles` = "checkTileVisibilty per
+  tile".
+
+#### 6.5.5 `render/SceneRenderer.h/.cpp`
+
+Add member `std::vector<uint8_t> spriteHasEntity_;`. Next to `spriteCharClass_.assign(...)`,
+call `spriteHasEntity_.assign(numSprites, 0)`. In the entity loop, right after `si` is
+computed and BEFORE the existing `continue`, add
+`if (si >= 0 && si < numSprites) spriteHasEntity_[si] = 1;`. Pass `spriteHasEntity_.data()` as
+the new last `drawBSP` argument.
+
+#### 6.5.6 Build / acceptance
+
+New `.h/.cpp` pair ⇒ reconfigure (`cmake -S . -B build_new -DCMAKE_BUILD_TYPE=Debug`).
+* Golden frames (`tests/golden/frames/README.md`, `tools/compare_frames.py`) are
+  **byte-identical**. Any difference is a FAIL: the draw list must not have changed.
+* Self-check (keep): `assert(!legacyLeaves_.empty())` after the walk when `map.numNodes > 0`.
+  Every ancestor of the camera's leaf contains the camera (within `kCullExtra`), so the root
+  is never culled. A failure means the silhouette table or the projection is wrong.
+* User check, map00, without shooting:
+  (a) Stand with an imp 2-3 tiles BEHIND you (turn away from it): it does NOT wake
+  (previously it did).
+  (b) Turn to face it: it wakes (`[monster] activate sprite=`) on the next frame.
+  (c) An imp within 4 tiles behind a closed door in front of you does not wake until the door
+  is open.
+* Optional log for the reviewer: one stderr line per second with
+  `legacyLeaves_.size()/nodeIdxs_.size()` and the popcount of `vis_.tiles`. Facing a wall up
+  close, both numbers must drop sharply.
 
 ---------------------------------------------------------------------------------------------
 ## 7. G6 — Monster movement
@@ -1188,13 +1408,15 @@ intro/level scripts run again, all monsters asleep at their original places.
 | D1 | Target-practice teleport relinks the player entity | legacy leaves a stale link (`src/Player.cpp:2544`) |
 | D2 | No `StateId::Combat`; `Combat::active` inside Playing | ADR 0028 |
 | D3 | Sight-wake trace is 2D (no Z check) | rewrite trace has no Z variant (`src/Game.cpp:277-283`) |
-| D4 | "On-screen step" = visible BSP leaf overlaps source or goal tile | ADR 0029 |
-| D5 | Sight wake one frame late | ADR 0029 |
+| D4 | "On-screen step" = `tileVisible(src) || tileVisible(dst)`, where a tile bit is legacy `checkTileVisibilty` (§6.5). Legacy culls the ±16-unit union box of the step instead (`src/Entity.cpp:1095`). That box lies inside the two tiles, so the rewrite errs toward animating | ADR 0029, ADR 0031 |
+| D5 | Sight wake one frame late. Sight-wake lists from frames drawn in Dialog are consumed only on the next Playing tick and only the last frame's list counts (legacy wakes during the dialog frames); the trace origin is the current tick's player view, not the rendered frame's | ADR 0029 |
 | D6 | Restart Level = fresh level start | no save system |
 | D7 | `dodgeDir` roll only on the missile path | ADR 0028 decision 5 |
 | D8 | Weapon 18 lunge lerps absent; CHARGE runs as a plain melee attack | not on map00 |
 | D9 | Script threads are swept (finished slots freed) only in Playing/Camera; legacy sweeps in every state except the sound-enable menu (`src/Canvas.cpp:791-796`), so a finished BLOCKINPUT thread may hold its slot through Dialog/Looting/Menu until the next Playing tick | pre-existing; no observable effect found (orchestrator decision, G3) |
-| D10 | In ST_COMBAT, `monsterLerp()` (`new_src/core/GameContext.cpp:383`) runs AFTER the lerp update (`Game::update` in the globals section); legacy runs it BEFORE `updateLerpSprites` (`src/GameStateRunner.cpp:24-25`), so a finishing step clears `interpolatingMonsters` one tick earlier | no effect while movement is a stub — **re-examine in G6** |
+| D11 | (G5, follows `src/` over §6.2) `ViewVisibility::cinematic` is `state == StateId::Camera` at render time, set in `GameContext::render` (`new_src/core/GameContext.cpp`), not `cinePose != nullptr` in `SceneRenderer`. Legacy `disableRenderActivate` is set on entering ST_CAMERA and cleared on leaving it (`src/Canvas.cpp:1211`, `:1038`), so a frame drawn from the camera pose in ST_DIALOG (dialog inside a cinematic) or in ST_PLAYING (surviving camera) still sight-wakes | faithful gate |
+| D12 | (G5, residual after §6.5 / ADR 0031) Visibility follows the legacy cull exactly (CPU column-occlusion port), but (a) within one leaf `drawnSprites` is in ascending sprite index instead of legacy depth order, which matters only if two monsters of one leaf wake in the same frame and the first starts an animating effect; (b) the draw walk itself is still unculled (the GPU draws leaves the original skipped, which is invisible because they are occluded or off-screen) | golden frames stay byte-identical; ADR 0031 |
+| D13 | (G6) Lerp pool exhausted on a monster step → instant placement on the goal tile (X/Y/stored Z as `freeLerpSprite` would write) + `reachedGoalMove`, `kGoalFlagLerping` stays clear (`new_src/domain/game/MonsterAI.cpp` `initLerp`); legacy is fatal Error 36 (`src/Game.cpp:3064-3066`, `src/Entity.cpp:856`) | no fatal errors in the rewrite; clears `kInfoOnScreenStep` so input cannot deadlock |
 
 ---------------------------------------------------------------------------------------------
 ## 12. Open questions for the user

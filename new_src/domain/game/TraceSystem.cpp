@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "domain/game/EntityDb.h"
+#include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
 #include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
@@ -127,9 +128,12 @@ void TraceSystem::traceEntityHits(const MapData& map, Entity* skipEnt, int mask,
 				if (ent->def->eType == Enums::ET_WORLD) continue;               // :222
 				const int sprite = ent->getSprite();                            // :223
 				int cx, cy;
-				// Monster goal-lerp branch (src/Game.cpp:227-237): omitted —
-				// EntityMonster does not exist yet; restore with monsters.
-				if (ent->def->eType == Enums::ET_PLAYER) {                      // :238-243
+				if (ent->monster != nullptr &&
+				    (ent->monster->goalFlags & EntityMonster::kGoalFlagLerping) != 0) { // :227-231
+					// A stepping monster already stands on its goal tile.
+					cx = 32 + (ent->monster->goalX << 6);
+					cy = 32 + (ent->monster->goalY << 6);
+				} else if (ent->def->eType == Enums::ET_PLAYER) {               // :238-243
 					cx = playerDestX_; cy = playerDestY_;                       // canvas->destX/Y
 				} else {                                                        // :244-247
 					cx = (sprite >= 0) ? map.mapSprites[sprite + 0 * map.numSprites] : 0; // S_X

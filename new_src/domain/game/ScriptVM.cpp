@@ -1183,10 +1183,17 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 
 		case Enums::EV_MARKTILE:
 		case Enums::EV_UNMARKTILE: {
+			const bool mark = bc[t->IP] == Enums::EV_MARKTILE;
 			int packed = readUShort(t);
-			std::fprintf(stderr, "[script] %s tile=%d,%d skipped (no automap)\n",
-				bc[t->IP] == Enums::EV_MARKTILE ? "MARKTILE" : "UNMARKTILE",
-				(packed >> 5) & 0x1F, packed & 0x1F);
+			const int flags = (packed >> 10) & 0x3F;
+			const int x = (packed >> 5) & 0x1F;
+			const int y = packed & 0x1F;
+			if ((flags & 0x1) != 0) {          // monster clip (src/ScriptThread.cpp:1157-1159, :1758-1760)
+				if (mark) env_.game->ai.setMonsterClip(x, y);
+				else env_.game->ai.unsetMonsterClip(x, y);
+			}
+			std::fprintf(stderr, "[script] %s tile=%d,%d flags=0x%X%s\n", mark ? "MARKTILE" : "UNMARKTILE",
+				x, y, flags, (flags & 0x20) != 0 ? " (automap entrance skipped)" : "");
 			break;
 		}
 

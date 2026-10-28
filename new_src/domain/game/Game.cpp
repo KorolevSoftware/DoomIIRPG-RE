@@ -29,8 +29,9 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	doors.init({ &db, &map, vm_, &trace });        // peer subsystem wiring (spec §P2-GB)
 	monsters.init({ &db, &map, &defs, vm_, &combat, &trace, &monstersTurn,
 	                &facingDirty, &lerps, &ai, player_ });              // spec §P2-GC
-	ai.init({ &db, &map, &trace, &combat, &monsters, player_ });       // ADR 0028
-	lerps.init({ &db, &map, vm_ });                     // peer subsystem wiring (spec §P2-GD)
+	ai.init({ &db, &map, &trace, &combat, &monsters, player_, &lerps, &doors,
+	          &visibility });                                           // ADR 0028
+	lerps.init({ &db, &map, vm_, &ai });                // peer subsystem wiring (spec §P2-GD)
 	loot.init({ &db, &defs });                          // peer subsystem wiring (spec §P2-GE)
 	db.resetEntities();
 	Entity* pe = db.playerEntity();
@@ -317,9 +318,8 @@ void Game::setLineLocked(Entity* e, bool locked) {
 // placeholders until those systems exist.
 void Game::advanceTurn() {
 	queueAdvanceTurn = false;                  // (:1240)
-	if (monsters.interpolatingMonsters) {      // (:1241-1243) Error 95 guard:
-		// nothing sets interpolatingMonsters until monster movement (G6), so
-		// this is defensive only.
+	if (monsters.interpolatingMonsters) {      // (:1241-1243) legacy is fatal
+		// Error 95; the rewrite logs and force-snaps the monster steps.
 		std::fprintf(stderr, "[turn] ERR_NONSNAPPEDMONSTERS (95)\n");
 		monsters.snapMonsters(true);
 	}

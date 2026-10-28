@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "core/MayaCamera.h"       // MayaPose (plain value; pulls only MapData.h)
+#include "domain/game/ViewVisibility.h"
 #include "render/Camera3D.h"
 
 namespace newcore {
@@ -50,13 +51,18 @@ public:
 	// magnification from it).
 	const Camera3D& camera() const { return camera_; }
 
+	// What this frame's world pass drew (ADR 0029); invalid when no BSP pass ran.
+	const ViewVisibility& visibility() const { return vis_; }
+
 private:
 	Env env_;
 	Camera3D camera_;
+	ViewVisibility vis_;
 	// Per-frame classification buffers, refilled with assign(numSprites, 0)
 	// (same values as the former per-frame vectors, no allocation per frame).
 	std::vector<int> spriteSortBias_;
 	std::vector<uint8_t> spriteCharClass_;
+	std::vector<uint8_t> spriteHasEntity_; // 1 = bound to an entity (legacy S_ENT != -1)
 };
 
 } // namespace newcore

@@ -1,16 +1,22 @@
 #include "domain/game/MonsterAI.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <utility>
 
 #include "domain/game/Combat.h"
+#include "domain/game/DoorSystem.h"
 #include "domain/game/Entity.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
 #include "domain/game/MonsterSystem.h"
 #include "domain/game/Player.h"
+#include "domain/game/SpriteLerps.h"
 #include "domain/game/TraceSystem.h"
+#include "domain/game/ViewVisibility.h"
 #include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 
@@ -166,18 +172,283 @@ void MonsterAI::moveToGoal(Entity* e) {
 	}
 }
 
-// aiGoal_MOVE (src/Entity.cpp:1030-1116) arrives with group G6; until then a
-// chasing monster stays where it is.
-bool MonsterAI::goalMove(Entity* e) {
-	const EntityMonster* m = e->monster;
-	int tx = m->goalX;
-	int ty = m->goalY;
-	if (m->goalType == EntityMonster::kGoalChase && m->goalParam == EntityMonster::kGoalParamPlayer) {
-		tx = env_.player->destX >> 6;                          // :1051-1056
-		ty = env_.player->destY >> 6;
+// ---- movement ----
+
+void MonsterAI::initLerp(Entity* e, int travelTime) {
+	EntityMonster* m = e->monster;
+	const int sprite = e->getSprite();
+	SpriteLerps::SpriteLerp* ls = env_.lerps->allocLerpSprite(nullptr, sprite, true);
+	MapData& map = *env_.map;
+	const int n = map.numSprites;
+	if (ls == nullptr) {
+		// Deviation D13: pool exhausted (legacy fatal Error 36,
+		// src/Game.cpp:3064-3066): place the sprite where freeLerpSprite would
+		// and complete the step at once (clears kInfoOnScreenStep; attack()
+		// only enqueues). kGoalFlagLerping stays clear.
+		const int dstX = 32 + (m->goalX << 6);
+		const int dstY = 32 + (m->goalY << 6);
+		map.mapSprites[sprite] = (int16_t)dstX;
+		map.mapSprites[sprite + n] = (int16_t)dstY;
+		map.mapSprites[sprite + 2 * n] =
+			(int16_t)(32 + map.heightAt(dstX, dstY) - env_.lerps->spriteZBias(sprite, dstX, dstY));
+		reachedGoalMove(e);
+		return;
 	}
-	std::fprintf(stderr, "[ai] spr=%d chase tile=%d,%d (movement: G6)\n", e->getSprite(), tx, ty);
+	ls->srcX = map.mapSprites[sprite];                         // :858-860
+	ls->srcY = map.mapSprites[sprite + n];
+	// Lerps run in legacy baked Z space (SpriteLerps::spriteZBias).
+	ls->srcZ = map.mapSprites[sprite + 2 * n] + env_.lerps->spriteZBias(sprite, ls->srcX, ls->srcY);
+	ls->dstX = 32 + (m->goalX << 6);                           // :861-863
+	ls->dstY = 32 + (m->goalY << 6);
+	ls->dstZ = 32 + map.heightAt(ls->dstX, ls->dstY);
+	ls->srcScale = ls->dstScale = map.mapSprites[sprite + 8 * n];   // :864
+	ls->startTime = env_.lerps->clockMs();                     // :865-866
+	ls->travelTime = travelTime;
+	ls->flags |= SpriteLerps::SpriteLerp::kFlagEntNoRelink | SpriteLerps::SpriteLerp::kFlagAsync;
+	m->frameTime = env_.lerps->clockMs() + travelTime;         // :868
+	ls->calcDist();
+	m->goalFlags |= EntityMonster::kGoalFlagLerping;           // :870
+}
+
+void MonsterAI::finishLerp(Entity* e) {
+	EntityMonster* m = e->monster;
+	m->goalFlags &= ~EntityMonster::kGoalFlagLerping;          // :874
+	if ((m->flags & Enums::MFLAG_KNOCKBACK) != 0) {            // :875-878
+		m->flags &= ~Enums::MFLAG_KNOCKBACK;
+		e->info &= ~Entity::kInfoOnScreenStep;
+	} else {
+		reachedGoalMove(e);
+	}
+}
+
+// Verbatim, including the unreachable loop: one axis delta is zero past the
+// first test, so the && condition never holds (MM §6).
+bool MonsterAI::checkLineOfSight(int n, int n2, int n3, int n4, int n5) {
+	int a = n3 - n;
+	int a2 = n4 - n2;
+	if (a != 0 && a2 != 0) return false;                       // :889-891
+	if (a != 0) a /= std::abs(a);
+	if (a2 != 0) a2 /= std::abs(a2);
+	while (n != n3 && n2 != n4) {                              // :898-904
+		n += a;
+		n2 += a2;
+		if (firstOnTile(n, n2, n5) != nullptr) return false;
+	}
+	return true;
+}
+
+bool MonsterAI::calcPath(int n, int n2, int n3, int n4, int n5, bool b) {
+	PathSearch& ps = ps_;
+	const int n6 = n3 - n;
+	const int n7 = n4 - n2;
+	int closestPathDist = n6 * n6 + n7 * n7;                   // :912-914
+	uint8_t visitOrder[4];
+	int visitDist[4];
+	ps.visitedTiles[n2] |= 1u << n;                            // :916
+	const bool los = checkLineOfSight(n, n2, n3, n4, n5 | 0x100);
+	if ((ps.lineOfSight == 0 && !los) || (ps.lineOfSight == 1 && los)) {   // :918-925
+		if (b) closestPathDist -= 30;
+		else closestPathDist += 30;
+	}
+	if (los) closestPathDist += ps.lineOfSightWeight;
+	if (ps.pathDepth > 0 && ((!b && closestPathDist < ps.closestPathDist) ||
+	                         (b && closestPathDist > ps.closestPathDist))) {   // :927-931
+		ps.closestPath = ps.curPath;
+		ps.closestPathDepth = ps.pathDepth;
+		ps.closestPathDist = closestPathDist;
+	}
+	if (n == n3 && n2 == n4) {                                 // :932-937
+		ps.closestPath = ps.curPath;
+		ps.closestPathDepth = ps.pathDepth;
+		ps.closestPathDist = closestPathDist;
+		return true;
+	}
+	if (ps.pathDepth == ps.pathSearchDepth) return false;      // :938-940
+	const int* viewStepValues = Player::kViewStepValues;       // == Canvas::viewStepValues (src/Canvas.h:108)
+	int n8 = 0;
+	int n9 = 4;
+	uint8_t b2 = (uint8_t)(env_.combat->nextByte() & 0x3);     // :946
+	while (--n9 >= 0) {                                        // :947-975
+		b2 = (uint8_t)((b2 + 1) & 0x3);
+		const int n10 = n + (viewStepValues[(b2 << 2) + 0] >> 6);
+		const int n11 = n2 + (viewStepValues[(b2 << 2) + 1] >> 6);
+		if (n11 >= 0 && n11 < 32 && n10 >= 0) {
+			if (n10 >= 32) continue;
+			if (firstOnTile(n10, n11, Contents::ENV_DAMAGE) != nullptr) continue;   // :955
+			if ((ps.visitedTiles[n11] & (1u << n10)) != 0) continue;
+			visitOrder[n8] = b2;
+			const int n12 = n3 - n10;
+			const int n13 = n4 - n11;
+			visitDist[n8] = n12 * n12 + n13 * n13;
+			const bool los2 = checkLineOfSight(n10, n11, n3, n4, n5 | 0x100);
+			if ((ps.lineOfSight == 0 && !los2) || (ps.lineOfSight == 1 && los2)) {
+				if (b) visitDist[n8] -= 30;
+				else visitDist[n8] += 30;
+			}
+			if (los2) visitDist[n8] += ps.lineOfSightWeight;
+			++n8;
+		}
+	}
+	for (int i = 0; i < n8; ++i) {                             // :976-989 bubble sort
+		for (int j = 0; j < n8 - i - 1; ++j) {
+			const int n17 = visitDist[j] - visitDist[j + 1];
+			if ((!b && n17 > 0) || (b && n17 < 0)) {
+				std::swap(visitDist[j], visitDist[j + 1]);
+				std::swap(visitOrder[j], visitOrder[j + 1]);
+			}
+		}
+	}
+	int n19 = 0;                                               // :990-995
+	int n20 = 0;
+	for (int k = 0; k < n8; ++k) {
+		n19 |= (visitOrder[k] & 0x3) << n20;
+		n20 += 2;
+	}
+	for (int l = 0; l < n8; ++l) {                             // :996-1026
+		const int n21 = n19 & 0x3;
+		n19 >>= 2;
+		const int n22 = n + (viewStepValues[(n21 << 2) + 0] >> 6);
+		const int n23 = n2 + (viewStepValues[(n21 << 2) + 1] >> 6);
+		const TraceHit h = env_.trace->trace((n << 6) + 32, (n2 << 6) + 32,
+			(n22 << 6) + 32, (n23 << 6) + 32, ps.skipEnt, n5, 16);
+		if (ps.findEnt != nullptr && h.entity == ps.findEnt) { // :1005-1010
+			ps.closestPath = ps.curPath;
+			ps.closestPathDepth = ps.pathDepth;
+			ps.closestPathDist = closestPathDist;
+			return true;
+		}
+		// A world hit is 1 << ET_WORLD, like the legacy world entity (:1011-1014).
+		const int clip = h.blocks() ? (1 << h.eType) : ps.interactClipMask;
+		if (clip == 0 || (clip & ps.interactClipMask) != 0) {  // :1015-1025
+			++ps.pathDepth;
+			ps.curPath = (ps.curPath >> 2) | ((uint64_t)n21 << 62);
+			if (calcPath(n22, n23, n3, n4, n5, b)) return true;
+			--ps.pathDepth;
+			ps.curPath <<= 2;
+		}
+	}
 	return false;
+}
+
+bool MonsterAI::goalMove(Entity* e) {
+	EntityMonster* m = e->monster;
+	PathSearch& ps = ps_;
+	bool b = false;
+	const int sprite = e->getSprite();
+	env_.lerps->snap(sprite);                                  // :1035
+	const int n = env_.map->numSprites;
+	const int sX = env_.map->mapSprites[sprite];
+	const int sY = env_.map->mapSprites[sprite + n];
+	ps.closestPath = 0;                                        // :1038-1049
+	ps.closestPathDepth = 0;
+	ps.closestPathDist = 999999999;
+	ps.curPath = 0;
+	ps.pathDepth = 0;
+	ps.pathSearchDepth = 8;
+	ps.findEnt = nullptr;
+	ps.skipEnt = e;
+	ps.lineOfSight = 2;
+	ps.lineOfSightWeight = 0;
+	ps.interactClipMask = Contents::DOOR;
+	std::memcpy(ps.visitedTiles, baseVisitedTiles_, sizeof(ps.visitedTiles));
+	if (m->goalType == EntityMonster::kGoalChase && m->goalParam == EntityMonster::kGoalParamPlayer) {
+		ps.findEnt = env_.db->playerEntity();                  // :1050-1055
+		m->goalX = env_.player->destX >> 6;
+		m->goalY = env_.player->destY >> 6;
+		ps.lineOfSightWeight = -4;
+	} else if (m->goalType == EntityMonster::kGoalRetreat) {   // :1056-1063
+		m->goalX = env_.player->destX >> 6;
+		m->goalY = env_.player->destY >> 6;
+		ps.interactClipMask = 0;
+		b = true;
+		ps.lineOfSight = 1;
+		ps.pathSearchDepth = m->goalParam;
+	} else if (m->goalType == EntityMonster::kGoalFlee) {      // :1064-1069
+		m->goalX = env_.player->destX >> 6;
+		m->goalY = env_.player->destY >> 6;
+		b = true;
+		ps.lineOfSight = 1;
+	} else if (m->goalType == EntityMonster::kGoalChase) {     // :1070-1074
+		ps.findEnt = &env_.db->entities()[m->goalParam];
+		m->goalX = ps.findEnt->linkIndex % 32;
+		m->goalY = ps.findEnt->linkIndex / 32;
+	}
+	if (b) ps.closestPathDist = 0;                             // :1075-1077
+	const auto t0 = std::chrono::steady_clock::now();
+	bool ok = calcPath(sX >> 6, sY >> 6, m->goalX, m->goalY, Contents::MONSTERSOLID, b);
+	const long long us = std::chrono::duration_cast<std::chrono::microseconds>(
+		std::chrono::steady_clock::now() - t0).count();
+	std::fprintf(stderr, "[ai] spr=%d path goal=%d,%d found=%d depth=%d best=%d %lldus\n", sprite,
+		m->goalX, m->goalY, ok ? 1 : 0, ps.pathDepth, ps.closestPathDepth, us);   // §7.6 watch item
+	if (!ok && ps.closestPathDist < 999999999) {               // :1079-1083
+		ok = true;
+		ps.curPath = ps.closestPath;
+		ps.pathDepth = ps.closestPathDepth;
+	}
+	if (!ok || ps.pathDepth <= 0) return false;                // :1084, :1115
+	ps.curPath >>= 64 - ps.pathDepth * 2;                      // :1085
+	e->info &= ~Entity::kInfoOnScreenStep;
+	const int dir = (int)(ps.curPath & 0x3);
+	const int dX = sX + Player::kViewStepValues[(dir << 2) + 0];   // :1087-1088
+	const int dY = sY + Player::kViewStepValues[(dir << 2) + 1];
+	m->goalX = dX >> 6;
+	m->goalY = dY >> 6;
+	const TraceHit h = env_.trace->trace(sX, sY, dX, dY, e, ps.interactClipMask, 25);   // :1091
+	if (!h.blocks()) {                                         // :1092-1104
+		env_.db->unlinkEntity(e);
+		env_.db->linkEntity(e, dX >> 6, dY >> 6);
+		// Deviation D4: tile visibility of src or dst instead of the legacy
+		// cullBoundingBox of the ±16 step box (:1095-1097).
+		const ViewVisibility* vis = env_.visibility;
+		if (vis != nullptr && vis->valid &&
+		    (vis->tileVisible(sX >> 6, sY >> 6) || vis->tileVisible(dX >> 6, dY >> 6))) {
+			e->info |= Entity::kInfoOnScreenStep;
+		}
+		env_.monsters->interpolatingMonsters = true;
+		const int sub = e->def->eSubType;
+		initLerp(e, ((sub == Enums::BOSS_MASTERMIND && e->def->parm != 0) || sub == Enums::BOSS_PINKY)
+			? 500 : 275);
+		std::fprintf(stderr, "[ai] spr=%d step %d,%d -> %d,%d%s\n", sprite, sX >> 6, sY >> 6,
+			m->goalX, m->goalY, (e->info & Entity::kInfoOnScreenStep) != 0 ? " (on screen)" : "");
+	} else {                                                   // :1105-1111
+		m->goalX = sX >> 6;
+		m->goalY = sY >> 6;
+		if (h.isEntity() && h.eType == Enums::ET_DOOR) {
+			env_.doors->performDoorEvent(0, h.entity, 2);
+			std::fprintf(stderr, "[ai] spr=%d opens door\n", sprite);
+		}
+	}
+	return true;
+}
+
+void MonsterAI::reachedGoalMove(Entity* e) {
+	EntityMonster* m = e->monster;
+	const EntityDef* def = e->def;
+	e->info &= ~Entity::kInfoOnScreenStep;                     // :1122
+	const int bit = 1 << def->eSubType;
+	if (m->goalType != EntityMonster::kGoalFlee && m->goalType != EntityMonster::kGoalRetreat &&
+	    ((bit & Enums::MOVE2ATTACK_MONSTERS) != 0 ||
+	     ((bit & Enums::EVADING_MONSTERS) != 0 && (m->flags & Enums::MFLAG_ABILITY) == 0))) {   // :1123
+		Entity* target = env_.db->playerEntity();
+		const int w = weaponForTarget(e, target);
+		if (w != -1) {                                         // :1126-1136
+			m->target = nullptr;               // target is always the player (:1127-1132)
+			m->ce.weapon = w;
+			env_.monsters->attack(e);
+			return;
+		}
+	}
+	if ((bit & Enums::EVADING_MONSTERS) != 0) m->flags |= Enums::MFLAG_ABILITY;   // :1138-1140
+	if ((m->goalFlags & EntityMonster::kGoalFlagRepath) != 0) {   // :1141-1151, no setter in src/
+		m->goalFlags &= ~EntityMonster::kGoalFlagRepath;
+		calcSimpleGoal(e, false);
+		if (m->goalType == EntityMonster::kGoalMoveTile || m->goalType == EntityMonster::kGoalChase) {
+			// tileObstructsAttack is not ported; read as true -> resetGoal.
+			static bool logged = false;
+			logOnce(logged, "[ai] repath tileObstructsAttack stubbed");
+			m->resetGoal();
+		}
+	}
 }
 
 // ---- weapon choice / re-validation ----

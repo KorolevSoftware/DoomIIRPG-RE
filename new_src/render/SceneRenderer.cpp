@@ -44,6 +44,7 @@ static bool isSpecialBossTile(int n) {
 void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
                               const MayaPose* cinePose, bool underDialog) {
 	env_.world->setTime((int)*env_.upTimeMs);
+	vis_ = ViewVisibility{};
 
 	// World band, used by BOTH gameplay and cinematics: the GL path snaps the
 	// viewport to glViewport(1, 65, 478, 248) = canvas rect (1, 7, 478, 248),
@@ -135,8 +136,10 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 		// (src/Render.cpp:1622-1626); ET_MONSTER is its exact proxy
 		// (allocated iff eType == 2, src/Game.cpp:430-436).
 		spriteCharClass_.assign(env_.map->numSprites, 0);
+		spriteHasEntity_.assign(env_.map->numSprites, 0);
 		for (const Entity& ent : env_.game->db.entities()) {
 			int si = ent.getSprite();
+			if (si >= 0 && si < env_.map->numSprites) spriteHasEntity_[si] = 1;
 			if (!ent.def || si < 0 || si >= env_.map->numSprites) continue;
 			if (ent.info & 0x1010000) spriteSortBias_[si] = +1;
 			else if (ent.def->eType == Enums::ET_MONSTER) spriteSortBias_[si] = -1;
@@ -164,7 +167,8 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 			}
 		}
 		env_.world->drawBSP(*env_.map, *env_.media, camera_, spriteSortBias_.data(),
-		                    spriteCharClass_.data());
+		                    spriteCharClass_.data(), spriteHasEntity_.data());
+		vis_ = env_.world->visibility();
 		renderer.restoreCanvasViewport(window);
 	} else if (env_.g2d != nullptr) {
 		env_.g2d->fillRect(0, 0, 480, 320, 32, 32, 64);

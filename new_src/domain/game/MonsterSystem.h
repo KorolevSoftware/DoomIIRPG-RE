@@ -18,6 +18,7 @@ class SpriteLerps;
 class TraceSystem;
 class EntityDefs;
 struct EntityDef;
+struct ViewVisibility;
 
 // Peer subsystem owning the monster payload pool, the activate/deactivate
 // rings, the monster turn window and the pain/death/corpse transitions
@@ -34,7 +35,7 @@ public:
 		const EntityDefs* defs = nullptr;
 		ScriptVM* vm = nullptr;
 		Combat* combat = nullptr;            // shotsFired + tileDistSq + the monster attack seq
-		const TraceSystem* trace = nullptr;  // player pos + distFrom
+		TraceSystem* trace = nullptr;        // player pos + distFrom + the sight-wake trace
 		int* monstersTurn = nullptr;
 		bool* facingDirty = nullptr;
 		// Lerp pool owner: the pose-hold clock (clockMs) and the
@@ -62,8 +63,8 @@ public:
 	// Monster rings + combat-seq owner (legacy Game::activeMonsters /
 	// inactiveMonsters / combatMonsters / interpolatingMonsters,
 	// src/Game.cpp:884-939). combatMonsters is the pending-attack LIFO
-	// (monster->nextAttacker links). Nothing sets interpolatingMonsters until
-	// monster movement lands (G6).
+	// (monster->nextAttacker links). MonsterAI::goalMove sets
+	// interpolatingMonsters when a step starts; monsterLerp clears it.
 	Entity* activeMonsters = nullptr;
 	Entity* inactiveMonsters = nullptr;
 	Entity* combatMonsters = nullptr;
@@ -78,6 +79,10 @@ public:
 	// b4 unused like legacy.
 	void activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4);
 	void deactivate(Entity* e);
+
+	// Sight wake (src/Render.cpp:1576-1583), run on the next tick over the
+	// sprites the last world frame drew (ADR 0029); empties the list.
+	void renderActivate(ViewVisibility& vis);
 
 	// Pending-attack queue (ADR 0028).
 	void attack(Entity* e);          // Entity::attack     src/Entity.cpp:1160-1167 (LIFO push)

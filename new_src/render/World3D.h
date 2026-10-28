@@ -5,8 +5,10 @@
 #include <map>
 #include <vector>
 
+#include "domain/game/ViewVisibility.h"
 #include "render/api/Texture.h"
 #include "render/Camera3D.h"
+#include "render/ColumnOcclusion.h"
 #include "io/Media.h"
 
 namespace newcore {
@@ -60,8 +62,15 @@ public:
 	// src/Render.cpp:856-862), indexed by sprite index; may be null.
 	// charClass: optional per-sprite stacked-character classification bytes
 	// (ADR 0005; 1 = draw via the leg/torso/head stack path); may be null.
+	// spriteHasEntity: optional per-sprite byte, 1 = bound to an entity
+	// (legacy S_ENT != -1); null = no sprite occluders.
 	void drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
-		const int* spriteSortBias = nullptr, const uint8_t* charClass = nullptr);
+		const int* spriteSortBias = nullptr, const uint8_t* charClass = nullptr,
+		const uint8_t* spriteHasEntity = nullptr);
+
+	// What the legacy cull would have shown in the last drawBSP (ADR 0031):
+	// sprites of the legacy-visible leaves and checkTileVisibilty per tile.
+	const ViewVisibility& visibility() const { return vis_; }
 
 	// Renders map sprite billboards (legacy renderSpriteObject/renderSprite).
 	// Static sprites only for now; entity-driven monsters/NPCs come later.
@@ -120,8 +129,11 @@ private:
 	// media has no texel/palette or the upload failed; dedups against
 	// spriteTexByMedia_ internally.
 	bool ensureSpriteTexture(const MediaLoader& media, int tileNum, int mediaId);
-	bool walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ);
-	void addSplitSprite(const MapData& map, size_t firstVisibleLeaf, int sprite);
+	bool walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ, bool legacyVis);
+	void addSplitSprite(const MapData& map, const std::vector<int>& leaves, size_t first,
+		int sprite, std::vector<int>& pairs);
+	void occludeLeafLines(const MapData& map, int leaf);
+	void occludeLeafSprites(const MapData& map, int leaf);
 	int nodeClassifyPoint(const MapData& map, int n, int x, int y, int z);
 	int getNodeForPoint(const MapData& map, int x, int y, int z, int info);
 
@@ -145,6 +157,7 @@ private:
 
 	// BSP traversal state (mirrors legacy Render fields).
 	std::vector<int> nodeIdxs_; // visible leaf node indices
+	ViewVisibility vis_;        // refilled by every drawBSP
 
 	// Split-sprite rescue pipeline (legacy addSplitSprite/addNodeSprites,
 	// src/Render.cpp:896-924): sprites classified onto INTERNAL BSP nodes by
@@ -157,6 +170,12 @@ private:
 	std::vector<std::vector<int>> internalSprites_;  // per-node list of internally-attached sprites
 	std::vector<int> splitPairs_;                    // flat [leaf,sprite]*kMaxSplitSprites pairs
 	std::vector<int> leafSprites_, leafDepth_;       // per-leaf sorted draw lists (hoisted locals)
+
+	// Legacy-cull bookkeeping for vis_ only (ADR 0031); never feeds drawing.
+	ColumnOcclusion occl_;
+	std::vector<int> legacyLeaves_;      // leaves the legacy cull visits, walk order
+	std::vector<int> legacySplitPairs_;  // flat [leaf,sprite], split rescue over legacyLeaves_
+	const uint8_t* hasEntity_ = nullptr; // drawBSP's spriteHasEntity, valid during the walk
 
 	// Game time (ms) for animated textures/sprites.
 	int timeMs_ = 0;

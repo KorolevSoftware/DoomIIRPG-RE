@@ -16,6 +16,7 @@
 #include "domain/game/Player.h"
 #include "domain/game/SpriteLerps.h"
 #include "domain/game/TraceSystem.h"
+#include "domain/game/ViewVisibility.h"
 #include "io/EntityDefs.h"
 #include "domain/world/MapData.h"
 
@@ -146,6 +147,9 @@ public:
 	SpriteLerps lerps;              // peer subsystem (spec §P2-GD); wired in loadEntities
 	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
 	ItemPickup items;               // peer subsystem (spec 2026-08-29-world-item-pickup §G2); wired in Main
+
+	// Last rendered world frame (ADR 0029); written only by GameContext::render.
+	ViewVisibility visibility;
 
 	// Difficulty source: ScriptVM vars[12], default 2 when no VM is wired
 	// (spec §1 difficulty note).

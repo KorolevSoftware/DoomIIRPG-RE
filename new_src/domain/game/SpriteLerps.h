@@ -8,6 +8,7 @@ namespace newcore {
 
 class EntityDb;
 class MapData;
+class MonsterAI;
 class ScriptVM;
 struct ScriptThread;
 
@@ -24,6 +25,7 @@ public:
 		EntityDb* db = nullptr;
 		MapData* map = nullptr;
 		ScriptVM* vm = nullptr;
+		MonsterAI* ai = nullptr;   // finishLerp of a completed monster step
 	};
 
 	static constexpr int kMaxLerpSprites = 16;   // pool size (src/Game.cpp:3028)
@@ -31,10 +33,11 @@ public:
 	// One active script lerp; subset of legacy LerpSprite (save/load,
 	// TRUNC/chicken/door/secret tails are not ported).
 	struct SpriteLerp {
-		// Runtime flag bits (src/Enums.h:293-295 subset).
+		// Runtime flag bits (src/Enums.h:293-304 subset).
 		static constexpr int kFlagAsync = 0x1;
 		static constexpr int kFlagAnimatingEffect = 0x2;
 		static constexpr int kFlagParabola = 0x4;
+		static constexpr int kFlagEntNoRelink = 0x10; // LS_FLAG_ENT_NORELINK: monster step, linked at start (src/Enums.h:297)
 		static constexpr int kFlagAutoFace = 0x800;   // LS_FLAG_AUTO_FACE (src/Enums.h:295)
 
 		int hSprite = 0;          // sprite+1; 0 = free slot (src/Game.cpp:3030)

@@ -252,8 +252,9 @@ void GameContext::tick() {
 
 	// SpriteLerp pool + door anims tick in every state legacy covers with
 	// updateLerpSprites: PLAYING/INTER_CAMERA (src/GameStateRunner.cpp:25,
-	// :184), ST_DIALOG (src/Canvas.cpp:921), ST_CAMERA (:953); automap
-	// (src/AutomapController.cpp:22) and combat have no rewrite counterpart.
+	// :184), ST_DIALOG (src/Canvas.cpp:921), ST_CAMERA (:953); ST_COMBAT
+	// (:25) is Playing with combat.active here. Automap
+	// (src/AutomapController.cpp:22) has no rewrite counterpart.
 	// Centralized here so no state can regress out of coverage again. Safe
 	// under a dialog: legacy resumes blocking door/lerp owners from its
 	// ST_DIALOG branch too (updateLerpSprites -> callThreads flush). Playing
@@ -269,6 +270,10 @@ void GameContext::tick() {
 		sys_.game->lerps.setLerpViewAngle(cinematic_.active()
 		                                      ? cinematic_.pose().yaw
 		                                      : sys_.player->viewAngle);
+		// ST_COMBAT refreshes interpolatingMonsters BEFORE updateLerpSprites
+		// (src/GameStateRunner.cpp:24-25): a step finishing this tick still
+		// counts as interpolating for this tick's runFrame.
+		if (state_ == StateId::Playing && sys_.game->combat.active) sys_.game->monsters.monsterLerp();
 		sys_.game->update(kTickMs);
 	}
 
@@ -374,13 +379,14 @@ void GameContext::tickPlaying() {
 	//    once per rendered frame (src/Render.cpp:2351) so activate()'s
 	//    back-turned wake guard is bypassed only during shot frames.
 	sys_.game->combat.shotsFired = false;
+	// Sight wake of the last rendered frame, seen with shotsFired == false
+	// like the legacy render pass (ADR 0029, src/Render.cpp:2351, :1576-1583).
+	sys_.game->monsters.renderActivate(sys_.game->visibility);
 	Combat& c = sys_.game->combat;
 	const bool inCombat = c.active;               // ST_COMBAT for the whole tick
 	if (c.active) {
-		// combatState refreshes interpolatingMonsters every frame before
-		// runFrame (src/GameStateRunner.cpp:24); the lerps themselves already
-		// ticked in the globals section (Game::update).
-		sys_.game->monsters.monsterLerp();
+		// monsterLerp + the lerp tick already ran in the globals section in
+		// legacy combatState order (src/GameStateRunner.cpp:24-25).
 		if (!c.tick()) {                          // runFrame analog
 			if (c.curAttacker == nullptr) {
 				c.active = false;
@@ -750,6 +756,10 @@ void GameContext::render(AppContext& app) {
 	const bool underDialog = state_ == StateId::Dialog;
 
 	scene_.drawWorld(renderer, app.window(), cinePose, underDialog);
+	// The only writer of Game::visibility (ADR 0029). disableRenderActivate is
+	// tied to ST_CAMERA, not to the camera pose (src/Canvas.cpp:1038, :1211).
+	sys_.game->visibility = scene_.visibility();
+	sys_.game->visibility.cinematic = state_ == StateId::Camera;
 
 	// View weapon paints over the world in full canvas space; its legacy
 	// anchors already include the world viewport origin (ADR 0009). The two

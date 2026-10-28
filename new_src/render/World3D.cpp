@@ -1,5 +1,6 @@
 #include "render/World3D.h"
 
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -377,7 +378,7 @@ void World3D::drawSprites(const MapData& map, const MediaLoader& media, const Ca
 		int x = map.mapSprites[i + 0 * n];
 		int y = map.mapSprites[i + 1 * n];
 		int z = map.mapSprites[i + 2 * n];
-		int d = (x * mvp[2] + y * mvp[6] + z * mvp[10] >> 14) + mvp[14];
+		int d = ((x * mvp[2] + y * mvp[6] + z * mvp[10]) >> 14) + mvp[14];
 		if (info & 0x400000) d += 6;
 		else if (tileNum == 240 || tileNum == 246 || tileNum == 245 || tileNum == 247) d = (int)0x80000000;
 		else if (info & SpriteInfo::ORIENTED) d += 5;
@@ -1093,35 +1094,77 @@ int World3D::getNodeForPoint(const MapData& map, int x, int y, int z, int info) 
 	return n;
 }
 
-bool World3D::walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ) {
-	// Note: the legacy cullBoundingBox early-out is skipped here. Its cheap
-	// 2D test rejects boxes the camera is outside of, but the full version
-	// then re-checks via screen projection (transform2DVerts). On the GL path
-	// the painter's-order BSP traversal already produces correct results, so
-	// we simply walk every node (cheap for this map size).
+bool World3D::walkNode(const MapData& map, int n, int viewX, int viewY, int viewZ, bool legacyVis) {
+	// The draw walk visits every node; legacyVis reproduces the legacy cull for visibility only (ADR 0031).
+	if (legacyVis && occl_.cullBox((map.nodeBounds[(n << 2) + 0] & 0xFF) << 7,
+	                               (map.nodeBounds[(n << 2) + 1] & 0xFF) << 7,
+	                               (map.nodeBounds[(n << 2) + 2] & 0xFF) << 7,
+	                               (map.nodeBounds[(n << 2) + 3] & 0xFF) << 7))
+		legacyVis = false; // src/Render.cpp:1053-1055: legacy stops here
 
 	if ((map.nodeOffsets[n] & 0xFFFF) == 0xFFFF) {
 		// Leaf: queue it for drawing.
 		nodeIdxs_.push_back(n);
+		if (legacyVis) {
+			if (legacyLeaves_.size() < 256) legacyLeaves_.push_back(n); // src/Render.cpp:1058
+			occludeLeafLines(map, n);
+			occludeLeafSprites(map, n);
+		}
 		return true;
 	}
 
 	// Snapshot of visible-leaf count before recursing: everything appended
 	// after this point lies inside this node's subtree (src/Render.cpp:1085).
-	size_t start = nodeIdxs_.size();
+	size_t start = nodeIdxs_.size(), lstart = legacyLeaves_.size();
 	if (nodeClassifyPoint(map, n, viewX, viewY, viewZ) >= 0) {
-		walkNode(map, map.nodeChildOffset1[n], viewX, viewY, viewZ);
-		walkNode(map, map.nodeChildOffset2[n], viewX, viewY, viewZ);
+		walkNode(map, map.nodeChildOffset1[n], viewX, viewY, viewZ, legacyVis);
+		walkNode(map, map.nodeChildOffset2[n], viewX, viewY, viewZ, legacyVis);
 	} else {
-		walkNode(map, map.nodeChildOffset2[n], viewX, viewY, viewZ);
-		walkNode(map, map.nodeChildOffset1[n], viewX, viewY, viewZ);
+		walkNode(map, map.nodeChildOffset2[n], viewX, viewY, viewZ, legacyVis);
+		walkNode(map, map.nodeChildOffset1[n], viewX, viewY, viewZ, legacyVis);
 	}
 	// Feed this internal node's attached sprites to the split rescue
 	// (src/Render.cpp:1094-1096).
 	for (int s : internalSprites_[n]) {
-		addSplitSprite(map, start, s);
+		addSplitSprite(map, nodeIdxs_, start, s, splitPairs_);
+		if (legacyVis) addSplitSprite(map, legacyLeaves_, lstart, s, legacySplitPairs_);
 	}
 	return true;
+}
+
+// drawNodeLines (src/Render.cpp:717-744): solid lines (types 0/4) occlude,
+// endpoints in stored order. The automap |= 8 write is not ported.
+void World3D::occludeLeafLines(const MapData& map, int leaf) {
+	const int n2 = map.nodeChildOffset2[leaf];
+	for (int n3 = (n2 & 0x3FF) + (n2 >> 10 & 0x3F), i = n2 & 0x3FF; i < n3; ++i) {
+		const int t = map.lineFlags[i >> 1] >> ((i & 1) << 2) & 7;
+		if (t != 0 && t != 4) continue;
+		occl_.occludeLine((map.lineXs[(i << 1) + 0] & 0xFF) << 7, (map.lineYs[(i << 1) + 0] & 0xFF) << 7,
+		                  (map.lineXs[(i << 1) + 1] & 0xFF) << 7, (map.lineYs[(i << 1) + 1] & 0xFF) << 7, false);
+	}
+}
+
+// Closed entity-bound wall sprites of the leaf (src/Render.cpp:1063-1080)
+// through occludeSpriteLine (src/Render.cpp:666-715).
+void World3D::occludeLeafSprites(const MapData& map, int leaf) {
+	if (hasEntity_ == nullptr) return;
+	for (int i = 0; i < map.numSprites; ++i) {
+		if (spriteLeaf_[i] != leaf || !hasEntity_[i]) continue;
+		const int info = map.mapSpriteInfo[i];
+		if ((info & 0x10000) || !(info & 0x400000) || (info & 0xFF) + 257 >= 450) continue;
+		if (info < 0) continue; // DOORLERP, :669-672
+		int n6 = 0;
+		if (info & 0x4000000) n6 = 4;
+		else if (info & 0x1000000) n6 = 6;
+		else if (info & 0x8000000) n6 = 4;
+		else if (info & 0x2000000) n6 = 6;
+		const int n7 = (n6 + 2 & 0x7) << 1;
+		const int dx = kViewStepValues[n7 + 0] >> 1 << 4;
+		const int dy = kViewStepValues[n7 + 1] >> 1 << 4;
+		const int x = map.mapSprites[i + 0 * map.numSprites] << 4;
+		const int y = map.mapSprites[i + 1 * map.numSprites] << 4;
+		occl_.occludeLine(x + dx, y + dy, x - dx, y - dy, true);
+	}
 }
 
 // Legacy Render::addSplitSprite (src/Render.cpp:896-910): scan the visible
@@ -1130,26 +1173,31 @@ bool World3D::walkNode(const MapData& map, int n, int viewX, int viewY, int view
 // center box [x-8,x+8] x [y-8,y+8] (SPLIT_SPRITE_BOUNDS=8, src/Render.h:122).
 // Capped at MAX_SPLIT_SPRITES pairs per frame; like legacy, once the cap is
 // full no leaf can match and the sprite is silently skipped this frame.
-void World3D::addSplitSprite(const MapData& map, size_t firstVisibleLeaf, int sprite) {
+void World3D::addSplitSprite(const MapData& map, const std::vector<int>& leaves, size_t first,
+	int sprite, std::vector<int>& pairs) {
 	const int sx = map.mapSprites[sprite + 0 * map.numSprites];
 	const int sy = map.mapSprites[sprite + 1 * map.numSprites];
-	for (size_t k = firstVisibleLeaf; k < nodeIdxs_.size(); ++k) {
-		const int leaf = nodeIdxs_[k];
+	for (size_t k = first; k < leaves.size(); ++k) {
+		const int leaf = leaves[k];
 		const int bx1 = (map.nodeBounds[(leaf << 2) + 0] & 0xFF) << 3;
 		const int by1 = (map.nodeBounds[(leaf << 2) + 1] & 0xFF) << 3;
 		const int bx2 = (map.nodeBounds[(leaf << 2) + 2] & 0xFF) << 3;
 		const int by2 = (map.nodeBounds[(leaf << 2) + 3] & 0xFF) << 3;
 		if (bx1 < sx + 8 && bx2 > sx - 8 && by1 < sy + 8 && by2 > sy - 8
-			&& splitPairs_.size() < 2 * kMaxSplitSprites) { // numSplitSprites < 8 (:905)
-			splitPairs_.push_back(leaf);                    // (leaf<<16|sprite), :906
-			splitPairs_.push_back(sprite);
+			&& pairs.size() < 2 * kMaxSplitSprites) { // numSplitSprites < 8 (:905)
+			pairs.push_back(leaf);                    // (leaf<<16|sprite), :906
+			pairs.push_back(sprite);
 			return;
 		}
 	}
 }
 
 void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
-	const int* spriteSortBias, const uint8_t* charClass) {
+	const int* spriteSortBias, const uint8_t* charClass, const uint8_t* spriteHasEntity) {
+	vis_.valid = false;
+	vis_.cinematic = false;
+	vis_.drawnSprites.clear();
+	std::memset(vis_.tiles, 0, sizeof(vis_.tiles));
 	if (!initialized_ || map.numNodes == 0) return;
 
 	// Preallocate traversal buffers once; only counts reset per frame.
@@ -1157,6 +1205,8 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 	if ((int)internalSprites_.size() != map.numNodes) internalSprites_.resize(map.numNodes);
 	for (auto& bucket : internalSprites_) bucket.clear();
 	splitPairs_.clear(); // numSplitSprites = 0 each frame (src/Render.cpp:1745)
+	legacyLeaves_.clear();
+	legacySplitPairs_.clear();
 
 	// Recompute the BSP owner for every sprite EVERY frame from live positions
 	// (legacy relinkSprite runs on every lerp tick, src/Game.cpp:2889-2896;
@@ -1189,7 +1239,28 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 	}
 
 	nodeIdxs_.clear();
-	walkNode(map, 0, camera.viewX(), camera.viewY(), camera.viewZ());
+	hasEntity_ = spriteHasEntity;
+	occl_.begin(camera.mvp2DInt(), camera.viewX(), camera.viewY());
+	walkNode(map, 0, camera.viewX(), camera.viewY(), camera.viewZ(), true);
+	hasEntity_ = nullptr;
+	// The root always contains the camera (within CULL_EXTRA), so it is never
+	// culled; an empty list means the silhouette table or projection is wrong.
+	assert(!legacyLeaves_.empty());
+
+	for (int ty = 0; ty < 32; ++ty) {
+		for (int tx = 0; tx < 32; ++tx) {
+			if (!occl_.cullBox(tx << 10, ty << 10, (tx + 1) << 10, (ty + 1) << 10)) // checkTileVisibilty, src/Render.cpp:2453-2457
+				vis_.tiles[ty] |= 1u << tx;
+		}
+	}
+	for (int k = (int)legacyLeaves_.size() - 1; k >= 0; --k) { // renderBSP order, src/Render.cpp:1752
+		const int leaf = legacyLeaves_[k];
+		for (int i = 0; i < map.numSprites; ++i)
+			if (spriteLeaf_[i] == leaf && !(map.mapSpriteInfo[i] & 0x10000)) vis_.drawnSprites.push_back(i);
+		for (size_t p = 0; p + 1 < legacySplitPairs_.size(); p += 2)
+			if (legacySplitPairs_[p] == leaf) vis_.drawnSprites.push_back(legacySplitPairs_[p + 1]);
+	}
+	vis_.valid = true;
 
 	// TEMP [dbg] anomaly tripwire (freeze hunt 2026-08-26)
 	if (splitPairs_.size() > 2 * kMaxSplitSprites) {
@@ -1323,7 +1394,8 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 			leafSprites_[b] = sprite;
 			leafDepth_[b] = depth;
 		}
-		for (int i : leafSprites_) drawSprite(map, media, camera, i, charClass);
+		for (int i : leafSprites_)
+			drawSprite(map, media, camera, i, charClass);
 	}
 	end();
 }
