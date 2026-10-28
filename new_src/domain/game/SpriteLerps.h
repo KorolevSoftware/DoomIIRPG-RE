@@ -75,6 +75,14 @@ public:
 	// active lerp of one sprite.
 	void snap(int sprite);
 
+	// Legacy Game::animatingEffects: active slots flagged kFlagAnimatingEffect.
+	// Counted on demand because the script opcode tails overwrite flags after
+	// alloc, so an incrementally kept counter could drift.
+	int animatingEffects() const;
+	// snapMonsters' pre-check (src/Game.cpp:2394-2408): every animating-effect
+	// slot's sprite is bound to an ET_MONSTER entity.
+	bool animatingEffectsAreMonsters() const;
+
 	// Stored-vs-baked S_Z bias: legacy postProcessSprites bakes terrain
 	// height (-32 for z-sprites) into stored S_Z at load and the legacy
 	// renderer consumes it directly (src/Render.cpp:2459-2467,1424); our

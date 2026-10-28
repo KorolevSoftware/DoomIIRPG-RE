@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-09-22_
+_Last updated: 2026-10-28_
 
 ## Controls (2026-08-29, aligned with `src/Input.cpp:80-95`)
 
@@ -21,6 +21,12 @@ reference. Z/X/I/O/P/B are reserved-unmapped (no rewrite counterpart). Full
 rationale: `docs/architecture/specs/2026-08-27-ui-layer.md` §"KEYMAP 2026-08-29".
 
 ## Working on
+
+- **АТАКА МОНСТРОВ (2026-09-22).** Исследование готово (monster-turn/attack/movement,
+  player-damage в docs/original-code/), спека 2026-09-22-monster-attacks.md, ADR-0027..0030.
+  Группы G1..G8b. G1, G2 готовы; G3 (последовательность атаки, урон игроку) и G4 (обратная
+  связь урона) — ревью PASS, проверены на экране 2026-10-28. Следующий шаг — G5 (пробуждение по
+  видимости), затем G6 (передвижение).
 
 - **ПЕРЕХОД НА SOKOL_GFX (spec 2026-09-11-sokol-gfx-backend.md, ADR-0024/0025/0026).**
   Решение пользователя 2026-09-11: переписать графику на sokol_gfx как

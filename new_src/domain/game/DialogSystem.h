@@ -65,6 +65,8 @@ public:
 	// Help FIFO for style-2 popups (src/DialogSystem.cpp:753-908).
 	bool enqueueHelpDialog(int textType, int strIdx, int threadIdx);
 	void dequeueHelpDialog(bool force = false);
+	// Queued help popups; gates the monster phase (src/GameStateRunner.cpp:181-183).
+	int numHelpMessages() const { return numHelpMessages_; }
 
 	// ACTION_* dispatch while ST_DIALOG (src/DialogSystem.cpp:29-112).
 	void handleInput(Action action);

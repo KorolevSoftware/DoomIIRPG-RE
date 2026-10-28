@@ -91,14 +91,25 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 	int yaw = env_.player->viewAngle & 0x3FF;
 	int viewSin = sinTable[yaw];
 	int viewCos = sinTable[(yaw + 256) & 0x3FF];
-	int rvx = (env_.player->viewX << 4) + 8 - (160 * viewCos >> 16);
-	int rvy = (env_.player->viewY << 4) + 8 + (160 * viewSin >> 16);
+	// Legacy order: rock, shake, then the pull-back (src/Render.cpp:2248-2282).
+	int rvx = (env_.player->viewX << 4) + 8;
+	int rvy = (env_.player->viewY << 4) + 8;
 	int rvz = (env_.player->viewZ << 4) + 8;
+	const int64_t now = *env_.upTimeMs;
+	const Hud::RockView& rock = env_.hud->rockView();
+	if (now < rock.startMs + rock.durMs) {                     // :2248-2253
+		int w = sinTable[(((now - rock.startMs) << 16) / (rock.durMs << 8) + 256) & 0x3FF] >> 8;
+		rvx += w * ((rock.x - rvx) << 8) >> 16;
+		rvy += w * ((rock.y - rvy) << 8) >> 16;
+		rvz += w * ((rock.z - rvz) << 8) >> 16;
+	}
 	if (shakeX != 0 || shakeY != 0) {
 		rvx += (shakeX << 4) * sinTable[(yaw + 512) & 0x3FF] >> 16;
 		rvy += (shakeX << 4) * -viewCos >> 16;
 		rvz += shakeY << 4;
 	}
+	rvx -= 160 * viewCos >> 16;
+	rvy += 160 * viewSin >> 16;
 	// Pitch feeds the view matrix (positive = up; the loot crouch writes
 	// player->viewPitch). FOV stays at the documented 290: legacy widened by
 	// |pitch| only on the mvp2D billboard path (src/TinyGL.cpp:195-200), the

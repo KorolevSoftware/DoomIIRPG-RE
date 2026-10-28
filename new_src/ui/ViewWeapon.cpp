@@ -45,7 +45,7 @@ constexpr int kWeaponCanvasCx = 240, kWeaponCanvasCy = 131;
 // clip must trim the source sub-rect as well as the destination quad, which a
 // scissor cannot do on magnified art. Both are trimmed by hand below.
 static void drawWeaponQuad(Graphics2D& g, const Texture& tex, int x, int y, int v12,
-	uint8_t tint, float magX, float magY) {
+	uint8_t r, uint8_t gr, uint8_t b, float magX, float magY) {
 	constexpr int kSrc = 176;
 	const float fxl = kWeaponCanvasCx + (x - kWeaponVpCx) * magX;
 	const float fxr = kWeaponCanvasCx + (x + v12 - kWeaponVpCx) * magX;
@@ -68,7 +68,7 @@ static void drawWeaponQuad(Graphics2D& g, const Texture& tex, int x, int y, int 
 	const int sy1 = (int)std::lround((cy1 - yt) * sv);
 	if (sx1 <= sx0 || sy1 <= sy0) return;
 	g.drawImage(tex, sx0, sy0, sx1 - sx0, sy1 - sy0,
-		cx0, cy0, cx1 - cx0, cy1 - cy0, 0, tint, tint, tint, 255);
+		cx0, cy0, cx1 - cx0, cy1 - cy0, 0, r, gr, b, 255);
 }
 
 void ViewWeapon::init(const Env& env) {
@@ -124,7 +124,7 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel&
 		const Texture* ftex = env_.world->spriteTexture(*env_.media, m.flashTile, 3);
 		if (ftex != nullptr) {
 			g.setBlendMode(kRenderAdd50);
-			drawWeaponQuad(g, *ftex, x + m.flashX + 40, y + m.flashY + 40, 88, 255,
+			drawWeaponQuad(g, *ftex, x + m.flashX + 40, y + m.flashY + 40, 88, 255, 255, 255,
 				magX, magY);
 			g.setBlendMode(kRenderNormal);
 		}
@@ -136,7 +136,9 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel&
 	// deferred (hero-choice doc §B.3 exclusions).
 	const Texture* tex = env_.world->spriteTexture(*env_.media, m.weaponTile, 0);
 	if (tex != nullptr) {
-		drawWeaponQuad(g, *tex, x, y, 176, 255, magX, magY);
+		// RENDER_NORMAL + BRIGHTREDSHIFT -> glColor4f(1, .5, .5, 1) (src/GLES.cpp:625-631).
+		const uint8_t gb = m.brightRed ? 128 : 255;
+		drawWeaponQuad(g, *tex, x, y, 176, 255, gb, gb, magX, magY);
 	}
 }
 

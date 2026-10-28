@@ -318,8 +318,8 @@ int main(int argc, char* argv[]) {
 	vm.init({                  // Env: map, defs, game, player, loc, tables, hud, ctx, dialogs, gameTime
 		&g_map, &g_entityDefs, &game, &player, &loc, &tables, &hud, &ctx, &dialogs, &ctx.gameTime });
 	game.setVM(&vm);
-	game.combat.init({         // Env: game, player, hud, loc, tables, map, gameTime (spec §2.2)
-		&game, &player, &hud, &loc, &tables, &g_map, &ctx.gameTime });
+	game.combat.init({         // Env: game, player, hud, loc, tables, map, gameTime, upTimeMs (spec §2.2)
+		&game, &player, &hud, &loc, &tables, &g_map, &ctx.gameTime, &ctx.upTimeMs });
 	game.items.init({          // Env: db, defs, map, player, hud, loc, tables, vm, game (§G2.3)
 		&game.db, &g_entityDefs, &g_map, &player, &hud, &loc, &tables, &vm, &game });
 	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges

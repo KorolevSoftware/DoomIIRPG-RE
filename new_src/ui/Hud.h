@@ -64,13 +64,25 @@ public:
 	void setBubbleText(const std::string& text, uint32_t color, int durationMs = kBubbleDurationMs);
 	void setBubbleText(int durationMs) { if (bubbleText_.empty()) bubbleTextTime_ = 0; else bubbleTextTime_ = durationMs; }
 
-	// Demo damage effects (red vignette + attack direction arrow).
-	void setDamageDemo(int dir, int durationMs = 1500) {
-		damageDir_ = dir;
-		damageTime_ = durationMs;
-		damageCount_ = 1;
+	// Legacy Hud::damageDir / damageTime / damageCount (PD §1.2, §2.4-2.5).
+	// damageTime is an absolute upTimeMs deadline, 0 = none.
+	void setDamageDir(int d) { damageDir_ = d; }
+	int damageDir() const { return damageDir_; }
+	void setDamageTime(int64_t t) { damageTime_ = t; }
+	int64_t damageTime() const { return damageTime_; }
+	void setDamageCount(int c) { damageCount_ = c; }
+	int damageCount() const { return damageCount_; }
+	// Arrow (src/Hud.cpp:507-530) then vignette (src/Hud.cpp:533-583),
+	// including the arrow's else-branch expiry write (:525-529).
+	void drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositive);
+	// canvas->shakeTime = 0 (src/Combat.cpp:591).
+	void stopShake();
+	// Render::rockView (src/Render.cpp:2962-2968). Stores x<<4, y<<4, z<<4.
+	struct RockView { int64_t startMs = 0; int durMs = 0; int x = 0, y = 0, z = 0; };
+	void startRockView(int64_t nowMs, int durMs, int x, int y, int z) {
+		rockView_ = RockView{ nowMs, durMs, x << 4, y << 4, z << 4 };
 	}
-	void drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int viewH);
+	const RockView& rockView() const { return rockView_; }
 	void drawHudOverdraw(Graphics2D& g, int hudX, int hudY, int hudW, int hudH);
 	void setArrowPressed(int a) { arrowPressed_ = a; }
 	void setShowArrows(bool on) { showArrows_ = on; }
@@ -193,10 +205,12 @@ private:
 	int bubbleTextTime_ = 0;
 	int bubbleTextDuration_ = kBubbleDurationMs;
 
-	// Demo damage effect state.
-	int damageDir_ = -1;
-	int damageTime_ = 0;
+	// Damage feedback state (legacy Hud damageDir/damageTime/damageCount)
+	// and Render rockView* (src/Render.cpp:2962-2968).
+	int damageDir_ = 0;
+	int64_t damageTime_ = 0;
 	int damageCount_ = 0;
+	RockView rockView_;
 
 	// Cinematic text state (subTitleID/subTitleTime + cinTitleID/
 	// cinTitleTime analogs; duration-counted instead of gameTime-stamped).

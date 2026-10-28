@@ -66,6 +66,14 @@ constexpr int MONSTERSOLID = WORLD | PLAYER | MONSTER | NPC | DOOR | DECOR |
                              NONOBSTRUCTING_SPRITEWALL;
 // Splash / line-of-sight solidity (src/Combat.cpp:1070).
 constexpr int SPLASH_SOLID = WORLD | DOOR | SPRITEWALL;
+// Monster attack line of fire (src/Entity.cpp:656, :768).
+constexpr int MONSTER_ATTACK_LOS = WORLD | PLAYER | MONSTER | NPC | DOOR | DECOR |
+                                   ATTACK_INTERACTIVE | SPRITEWALL;
+// Melee clearance trace, started 18 units toward the target (src/Entity.cpp:780).
+constexpr int MONSTER_ATTACK_CLEAR = MONSTER_ATTACK_LOS | ENV_DAMAGE | MONSTERBLOCK_ITEM |
+                                     NONOBSTRUCTING_SPRITEWALL;
+// Boss pinky / off-axis attack line (src/Entity.cpp:709, :757).
+constexpr int BOSS_ATTACK_LOS = WORLD | PLAYER | DOOR | SPRITEWALL;
 
 // Per-weapon modifiers of the fire ray (src/PlayingInputHandler.cpp:203-215).
 constexpr int HOLY_WATER_EXTRA = ENV_DAMAGE | DECOR_NOCLIP;   // was | 0x4100
@@ -76,6 +84,9 @@ static_assert(WEAPONSOLID  == 13997, "src/Enums.h CONTENTS_WEAPONSOLID");
 static_assert(FACING_PROBE == 21741, "src/MovementController.cpp:38");
 static_assert(MONSTERSOLID == 15535, "src/Enums.h CONTENTS_MONSTERSOLID");
 static_assert(SPLASH_SOLID == 4129,  "src/Enums.h CONTENTS_SPLASH_SOLID");
+static_assert(MONSTER_ATTACK_LOS   == 5295,  "src/Entity.cpp:768");
+static_assert(MONSTER_ATTACK_CLEAR == 15791, "src/Entity.cpp:780");
+static_assert(BOSS_ATTACK_LOS      == 4131,  "src/Entity.cpp:709");
 static_assert(HOLY_WATER_EXTRA == 0x4100 && MELEE_EXTRA == 0x10,
 	"src/PlayingInputHandler.cpp:203-215");
 
@@ -209,6 +220,32 @@ static constexpr int TILENUM_SPRITEWALL_NOCLIP_B = 168;
 static constexpr int FIRSTBOSS = 12;
 static constexpr int LASTBOSS = 16;
 
+// Monster subtypes with special AI branches (src/Enums.h:63-76).
+static constexpr int MONSTER_PINKY = 5;
+static constexpr int MONSTER_ARCH_VILE = 10;
+static constexpr int BOSS_PINKY = 13;
+static constexpr int BOSS_MASTERMIND = 14;
+static constexpr int BOSS_VIOS = 15;
+
+// Subtype masks, bit = 1 << eSubType (src/Enums.h:82): lost soul, revenant,
+// arch-vile, mastermind retreat after attacking.
+static constexpr int EVADING_MONSTERS = 0x4604;
+
+// Monster weapons that need a clear melee lane: ids 1, 15, 16, 17, 18
+// (src/Entity.cpp:784-791).
+static constexpr int MELEE_WEAPON_MASK = 0x78002;
+// Charge/lunge monster weapon (src/Entity.cpp:812, src/Combat.cpp:131).
+static constexpr int WP_MONSTER_CHARGE = 18;
+
+// Monster sound slots, row = eSubType * MSOUND_TYPES (src/Enums.h:85-95).
+static constexpr int MSOUND_NONE = 255;
+static constexpr int MSOUND_ATTACK1 = 3;
+static constexpr int MSOUND_ATTACK2 = 4;
+static constexpr int MSOUND_TYPES = 8;
+
+// Any-hit mask of crFlags: hit | crit | far-shot | 0x1000 (src/Enums.h:977).
+static constexpr int CR_HITMASK = 0x1007;
+
 // Character art tiles (src/Enums.h:708-719): stacked leg/torso/head sheets.
 static constexpr int TILENUM_FIRST_NPC = 65;
 static constexpr int TILENUM_LAST_NPC = 80;
@@ -217,6 +254,8 @@ static constexpr int TILENUM_NPC_SARGE = 72;
 static constexpr int TILENUM_SHADOW = 232;             // src/Enums.h:830
 
 // Monster art tiles (src/Enums.h:665-707) — classification-side subsets.
+static constexpr int TILENUM_MONSTER_IMP        = 23;  // ..25  (Render::isImp, src/Render.cpp:2975-2977)
+static constexpr int TILENUM_MONSTER_IMP3       = 25;
 static constexpr int TILENUM_MONSTER_LOST_SOUL  = 29;  // ..31  (floater, src/Render.cpp:3007-3009)
 static constexpr int TILENUM_MONSTER_LOST_SOUL3 = 31;
 static constexpr int TILENUM_MONSTER_CACODEMON  = 41;  // ..43  (floater, src/Render.cpp:3003-3005)

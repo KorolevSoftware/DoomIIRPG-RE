@@ -110,15 +110,14 @@ void Combat::performAttack(Entity* target, int attackX, int attackY, bool script
 	(void)attackY;
 	(void)scripted;
 
+	curAttacker = nullptr;                             // :59
+	attackerMonster = nullptr;                         // :87
 	curTarget = target;
 	accumRoundDamage = 0;                              // :61
 	// player->updateStats / lastCombatTurn / inCombat skipped: no rewrite
 	// consumers (:63-75).
 	if (curTarget != nullptr) {
-		// info bit 0x200000: write-only in the original (set here and on
-		// splash-damage victims, never read anywhere), meaning unknown, so it
-		// stays a literal — docs/original-code/entities.md §5.
-		curTarget->info |= 0x200000;                   // :69-71
+		curTarget->info |= Entity::kInfoCombatMark;    // :69-71
 		targetType = curTarget->def ? curTarget->def->eType : 0;      // :77
 		targetSubType = curTarget->def ? curTarget->def->eSubType : 0; // :78
 		targetMonster = curTarget->monster;                            // :79
@@ -159,7 +158,303 @@ void Combat::performAttack(Entity* target, int attackX, int attackY, bool script
 		worldDist, tileDist, animLoopCount, attackerWeaponProj);
 }
 
+void Combat::performMonsterAttack(Entity* attacker, Entity* target) {
+	// src/Combat.cpp:54-166 with curAttacker != nullptr. attackX/Y and b are
+	// zero/false at every monster call site.
+	curAttacker = attacker;                            // :59
+	curTarget = target;                                // :60
+	accumRoundDamage = 0;                              // :61
+	// player->updateStats / lastCombatTurn / inCombat (:63-65, :72-75): no
+	// rewrite consumers.
+	curAttacker->info |= Entity::kInfoCombatMark;      // :66-68
+	if (curTarget != nullptr) {                        // :69-84
+		curTarget->info |= Entity::kInfoCombatMark;
+		targetType = curTarget->def->eType;
+		targetSubType = curTarget->def->eSubType;
+		targetMonster = curTarget->monster;
+	} else {
+		targetType = targetSubType = 0;
+		targetMonster = nullptr;
+	}
+	attackerMonster = curAttacker->monster;            // :90-100
+	attackerWeaponId = attackerMonster->ce.weapon;
+	if (attackerWeaponId == Enums::WP_MONSTER_CHARGE) {
+		attackFrame = Enums::MANIM_ATTACK1;
+	} else if (attackerWeaponId == getMonsterField(curAttacker->def, 1)) {
+		attackFrame = Enums::MANIM_ATTACK2;
+	} else {
+		attackFrame = Enums::MANIM_ATTACK1;
+	}
+	// punchingMonster staging (:103-107): no punching.
+	stage = 0;                                         // :109
+	nextStageTime = 0;                                 // :110
+	animEndTime = 0;                                   // :112
+	const WeaponDef& row = weaponDef(attackerWeaponId);
+	animLoopCount = row.numShots;                      // :113 (no ammo cap for monsters, :114-120)
+	attackerWeaponProj = row.projType;                 // :121
+	worldDist = env_.game->trace.distFrom(curAttacker,
+		env_.player->viewX, env_.player->viewY);       // :123
+	tileDist = worldDistToTileDist(worldDist);         // :124
+	if (attackerWeaponId == Enums::WP_MONSTER_CHARGE) {
+		// Lunge lerp toward the player (:131-164): deferred, the attack runs
+		// as a plain melee attack (spec deviation D8).
+		static bool logged = false;
+		if (!logged) {
+			logged = true;
+			std::fprintf(stderr, "[combat] weapon 18 lunge deferred\n");
+		}
+	}
+	active = true;                                     // setState(ST_COMBAT) analog (:165)
+	std::fprintf(stderr, "[combat] monster attack spr=%d w=%d proj=%d shots=%d tileDist=%d\n",
+		curAttacker->getSprite(), attackerWeaponId, attackerWeaponProj, animLoopCount, tileDist);
+}
+
+int Combat::getMonsterField(const EntityDef* def, int k) const {
+	if (env_.tables == nullptr || def == nullptr || def->parm < 0) return 0;
+	const size_t idx = (size_t)(def->eSubType * 9 + def->parm * 3 + k);   // src/Combat.cpp:1059
+	if (idx >= env_.tables->monsterAttacks.size()) return 0;
+	return env_.tables->monsterAttacks[idx];
+}
+
 bool Combat::tick() {
+	// runFrame (src/Combat.cpp:857-862).
+	return curAttacker == nullptr ? playerSeq() : monsterSeq();
+}
+
+bool Combat::monsterSeq() {
+	// src/Combat.cpp:427-610. Pose clocks (frameTime) run on the SpriteLerps
+	// clock, stage clocks on gameTime (spec 2026-09-22-monster-attacks §1.1).
+	const int sprite = curAttacker->getSprite();
+	int32_t& info = env_.map->mapSpriteInfo[sprite];
+	const int clock = env_.game->lerps.clockMs();
+	const int gt = (int)*env_.gameTime;
+	const int shotHold = weaponDef(attackerWeaponId).shothold * 10;
+	const int n2 = (info & 0xFF00) >> 8;                         // :429-433
+	const int anim = n2 & 0xF0;
+	const int frame = n2 & 0xF;
+	if ((anim == Enums::MANIM_ATTACK1 || anim == Enums::MANIM_ATTACK2) && frame == 0) {
+		if (clock >= attackerMonster->frameTime) {               // :434-441
+			attackerMonster->frameTime = clock + shotHold;
+			nextStageTime = gt + shotHold;
+			info = (info & 0xFFFF00FF) | ((anim | (frame + 1)) << 8);
+			launchProjectile();
+		}
+	} else if (nextStageTime != 0 && gt > nextStageTime && numActiveMissiles == 0 &&
+	           env_.game->lerps.animatingEffects() == 0) {      // :442-462
+		// Reflection branch (:443-455): buffs absent, reflectionDmg is always 0.
+		stage = nextStage;
+		nextStageTime = 0;
+		nextStage = -1;
+	}
+	if (stage == 0) {                                            // :462-571
+		totalDamage = 0;
+		totalArmorDamage = 0;
+		hitType = 0;
+		crFlags = 0;
+		gotCrit = false;
+		gotHit = false;
+		targetKilled = false;
+		const EntityDef* def = curAttacker->def;
+		const int soundType = (attackerWeaponId == getMonsterField(def, 1))
+			? Enums::MSOUND_ATTACK2 : Enums::MSOUND_ATTACK1; // :479-485
+		if (weaponDef(attackerWeaponId).strMax > 0) {            // :487-511
+			if (curTarget == nullptr) {
+				env_.player->ce.calcCombat(*this, attackerMonster->ce,
+					env_.game->db.playerEntity(), true,
+					env_.game->trace.distFrom(curAttacker, env_.player->destX, env_.player->destY),
+					-1);
+				if ((crFlags & Enums::CR_HITMASK) != 0) {
+					if ((crFlags & 0x2) != 0) {
+						gotCrit = true;
+						hitType = 2;
+					} else {
+						hitType = 1;
+					}
+					gotHit = true;
+					damage = crDamage;
+				} else {
+					damage = 0;
+				}
+			} else {
+				hitType = 1;
+				damage = 1;
+			}
+			totalDamage += damage;
+			totalArmorDamage += crArmorDamage;
+		}
+		int snd;                                                 // :512-522, no audio backend
+		if (attackerWeaponId == 17 && (crFlags & Enums::CR_HITMASK) == 0) {
+			snd = 1100;
+		} else if (attackerWeaponId == 28) {
+			snd = 1087;
+		} else {
+			snd = monsterSound(def->eSubType, def->parm, soundType);
+		}
+		std::fprintf(stderr, "[sound] %d\n", snd);
+		--animLoopCount;                                         // :524-527
+		animTime = shotHold;
+		animStartTime = gt;
+		animEndTime = animStartTime + animTime;
+		if (attackerWeaponId != Enums::WP_MONSTER_CHARGE) {      // :528-531
+			info = (info & 0xFFFF00FF) | (attackFrame << 8);
+			attackerMonster->frameTime = clock + animTime;
+		}
+		if (curTarget != nullptr) targetKilled = true;           // :532-534
+		if (attackerWeaponId == Enums::WP_MONSTER_CHARGE) {      // :535-551, return lerp deferred (D8)
+			info &= 0xFFFF00FF;
+			attackerMonster->frameTime = clock + 500;            // lerpSprite->travelTime
+			launchProjectile();
+		}
+		if (gotHit && (attackerWeaponId == 23 || def->eSubType == 2)) {   // :552-555
+			std::fprintf(stderr, "[combat] burn status deferred\n");
+		}
+		stage = -1;                                              // :556-563
+		nextStage = (animLoopCount <= 0) ? 1 : 0;
+		nextStageTime = animEndTime;
+		if (def->tileIndex >= Enums::TILENUM_MONSTER_IMP &&      // :564-566 isImp
+		    def->tileIndex <= Enums::TILENUM_MONSTER_IMP3 &&
+		    attackerWeaponId == 16 && animLoopCount == 0) {
+			info ^= 0x20000;                                     // sprite H-flip bit
+		}
+		updateProjectile();                                      // :567
+		// crFlags 0x80 message 67 (:568-570): no calcHit path sets 0x80.
+	} else if (stage == 1) {                                     // :574-597
+		if (curAttacker->def->eType == Enums::ET_MONSTER) {
+			info &= 0xFFFF00FF;
+		}
+		if (targetKilled) env_.game->entityDied(curTarget, false);
+		// Reflect-buff message 131 (:582-585): buffs absent.
+		if (accumRoundDamage > 0) {                              // :586-590
+			std::string args[2] = { entityName(curAttacker), std::to_string(accumRoundDamage) };
+			centerMessage(112, args, 2);
+		}
+		env_.hud->stopShake();                                   // :591-593
+		env_.hud->setDamageDir(0);
+		env_.hud->setDamageTime(0);
+		attackerMonster->flags |= Enums::MFLAG_ATTACKING;        // :594
+		// [G7: gsprite_clear(64)] (:595)
+		return false;
+	} else if (stage == -1) {                                    // :599-604
+		if (numActiveMissiles != 0 || exploded) updateProjectile();
+	}
+	if (env_.player->getHealth() <= 0) return false;            // ST_DYING analog (:606-608)
+	return true;
+}
+
+void Combat::explodeOnPlayer() {
+	// src/Combat.cpp:948-1056.
+	if (curTarget != nullptr) return;                            // :950-952
+	const int64_t now = *env_.upTimeMs;
+	const int sprite = curAttacker->getSprite();
+	const int ax = env_.map->mapSprites[sprite + 0 * env_.map->numSprites];   // S_X
+	const int ay = env_.map->mapSprites[sprite + 1 * env_.map->numSprites];   // S_Y
+	// :953-967; zoom absent, the staleTime repaint stamp has no counterpart.
+	env_.hud->setDamageDir(Player::calcDamageDir(env_.player->viewX, env_.player->viewY,
+		env_.player->viewAngle, ax, ay));
+	env_.hud->setDamageTime(now + (animLoopCount > 0 ? 150 : 1000));
+	// Reflect buff (buffs[0], :968-971) absent: always the non-reflect path.
+	if (gotHit && (totalDamage > 0 || totalArmorDamage > 0)) {  // :972
+		playerPainEvent(curAttacker, true);                      // :973
+		env_.game->db.unlinkEntity(curAttacker);                 // :976 (linkIndex is kept)
+		if (attackerWeaponProj == 7) {                           // :977-980
+			std::fprintf(stderr, "[combat] burn status deferred\n");
+		}
+		env_.player->addArmor(-totalArmorDamage);                // :981
+		if (totalDamage > 0) {
+			if (difficulty() != 1) {                             // :984-990
+				int mapId = loadMapID;
+				if (difficulty() == 4) mapId *= 2;
+				// Legacy divides by numShots unguarded; every attack weapon has >= 1.
+				totalDamage += (totalDamage >> 1) +
+					mapId / std::max(1, (int)weaponDef(attackerWeaponId).numShots);
+			}
+			// VIOS bonus (:991-999): deferred (boss).
+			accumRoundDamage += totalDamage;                     // :1000
+			playerPain(totalDamage, curAttacker, false);         // :1001
+			if (env_.player->getHealth() == 0) return;           // :1002-1004 (attacker stays unlinked: verbatim)
+			// knockbackDist is always 0 (:1005-1016).
+			const int dx = env_.player->viewX - ax;
+			const int dy = env_.player->viewY - ay;
+			const int sx = (dx > 0) - (dx < 0);
+			const int sy = (dy > 0) - (dy < 0);
+			env_.hud->startRockView(now, 200, env_.player->viewX + sx * 6,
+				env_.player->viewY + sy * 6, env_.player->viewZ);
+			// Pinky charge knockback (:1017-1019): deferred.
+		} else {
+			env_.hud->setDamageCount(0);                         // :1028
+			totalDamage = 0;                                     // :1029
+		}
+		if (totalDamage <= 0) centerMessage(72);                 // :1031-1033
+		env_.game->db.linkEntity(curAttacker,
+			curAttacker->linkIndex % 32, curAttacker->linkIndex / 32);   // :1034
+	} else {                                                     // :1040-1054
+		env_.hud->setDamageCount(0);                             // :1041
+		if ((crFlags & 0x100) != 0) {
+			centerMessage(73);
+		} else if ((crFlags & 0x80) == 0) {
+			std::string args[1] = { entityName(curAttacker) };
+			centerMessage(69, args, 1);
+		}
+		env_.hud->setDamageCount(-1);                            // :1053
+	}
+}
+
+void Combat::playerPainEvent(Entity* src, bool fromMonster) {
+	// src/Player.cpp:624-650; isFamiliar / characterChoice sounds absent.
+	if (src == nullptr) env_.hud->setDamageDir(3);
+	std::fprintf(stderr, "[sound] 1093\n");
+	env_.hud->setDamageCount(1);
+	// startShake(500, 2, 150) -> intensity 2*2; the monster case
+	// startShake(0, 0, 150) only vibrates.
+	if (!fromMonster) env_.hud->startShake(*env_.upTimeMs, 500, 4);
+}
+
+void Combat::playerPain(int n, Entity* src, bool showMsg) {
+	// src/Player.cpp:652-709, presentation half; the state half is Player::pain.
+	if (env_.player->god) return;                               // :654-656
+	if (showMsg) {                                               // :657-671
+		if (src != nullptr) {
+			std::string args[2] = { entityName(src), std::to_string(n) };
+			centerMessage(112, args, 2);
+		} else {
+			std::string args[1] = { std::to_string(n) };
+			centerMessage(71, args, 1);
+		}
+	}
+	int warnId = -1;
+	switch (env_.player->pain(n)) {                              // :683-697
+	case Player::PainBand::NearDeath: warnId = 113; break;
+	case Player::PainBand::LowHealth: warnId = 114; break;
+	case Player::PainBand::HalfHealth:
+		std::fprintf(stderr, "[help] 10/11 deferred\n");         // showHelp not ported
+		break;
+	case Player::PainBand::None: break;
+	}
+	if (warnId != -1 && env_.loc != nullptr && env_.hud != nullptr) {
+		env_.hud->addMessage(env_.loc->get(kTextMain, warnId), 0xAA000000,
+			Hud::kMsgFlagForce | Hud::kMsgFlagCenter);           // addMessage(id, 3)
+	}
+	// ST_AUTOMAP -> ST_PLAYING (:703-705): no automap state. Death (:706-708)
+	// is detected by the caller (ADR 0028 decision 4).
+}
+
+int Combat::monsterSound(int sub, int parm, int soundType) const {
+	// src/Game.cpp:3771-3845 for MSOUND_ATTACK1/2: rand stays 0 and the
+	// death-sound overrides do not apply.
+	if (sub == Enums::MONSTER_PINKY && parm == 0) return 1082;  // :3779-3786
+	// Mastermind parm 1 attack types jump to the table read (:3810-3812).
+	const size_t idx = (size_t)(sub * Enums::MSOUND_TYPES + soundType);
+	if (env_.tables == nullptr || idx >= env_.tables->monsterSounds.size()) return 0;
+	const int id = env_.tables->monsterSounds[idx];              // :3826-3830
+	return id != Enums::MSOUND_NONE ? id + 1000 : id;
+}
+
+std::string Combat::entityName(const Entity* e) const {
+	if (env_.loc == nullptr || e == nullptr || e->def == nullptr) return std::string();
+	return Localization::titleOf(env_.loc->get(kTextIngame, e->def->name & 0x3FF));
+}
+
+bool Combat::playerSeq() {
 	// Muzzle-flash latch (src/Combat.cpp:742-744). The original — and the
 	// rewrite until now (new_src/ui/ViewWeapon.cpp:135) — flips it from
 	// drawWeapon, i.e. the draw path mutates combat state. Moved here next to
@@ -436,7 +731,7 @@ void Combat::updateProjectile() {
 	// against re-entry.
 	exploded = false;
 	if (curTarget == nullptr) {                           // :1422-1424
-		std::fprintf(stderr, "[combat] explodeOnPlayer deferred\n");
+		explodeOnPlayer();
 		return;
 	}
 	explodeOnMonster();                                  // :1426-1427

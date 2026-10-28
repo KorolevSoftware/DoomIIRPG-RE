@@ -147,6 +147,11 @@ void GameContext::enterState_(StateId s) {
 		break;
 	case StateId::Dying:
 		deathTimeMs_ = upTimeMs; // unused this phase (src/Canvas.cpp:1125-1131 analog)
+		// Player::died tail (src/Player.cpp:711-733); counters, sound and
+		// shake arrive with G8a.
+		sys_.game->monsters.combatMonsters = nullptr;
+		sys_.game->combat.active = false;
+		std::fprintf(stderr, "[player] died\n");
 		break;
 	case StateId::Looting:
 		// The session itself (pose latch + poolLoot) lives in LootSession;
@@ -233,9 +238,17 @@ void GameContext::tick() {
 	// Globals each tick: UpdatePlayerVars + runScriptThreads
 	// (src/Canvas.cpp:791-796); gsprite_update has no counterpart.
 	// Threads tick in PLAYING and CAMERA only (src/Game.cpp:3259): during a
-	// cinematic the scripts keep running — input is what's parked.
+	// cinematic the scripts keep running — input is what's parked. Playing
+	// with combat.active is ST_COMBAT: runScriptThreads is still called
+	// (src/Canvas.cpp:791-796) but resumes nothing, only sweeps finished
+	// threads (src/Game.cpp:3259-3265). Lerp/door owners still resume their
+	// threads via updateLerpSprites (src/GameStateRunner.cpp:25), ticked below.
 	sys_.game->trace.setPlayerPos(sys_.player->viewX, sys_.player->viewY);
-	if (state_ == StateId::Playing || state_ == StateId::Camera) sys_.vm->runScriptThreads(gameTime);
+	sys_.game->trace.setPlayerDest(sys_.player->destX, sys_.player->destY);
+	if (state_ == StateId::Playing || state_ == StateId::Camera) {
+		const bool resume = state_ == StateId::Camera || !sys_.game->combat.active;
+		sys_.vm->runScriptThreads(gameTime, resume);
+	}
 
 	// SpriteLerp pool + door anims tick in every state legacy covers with
 	// updateLerpSprites: PLAYING/INTER_CAMERA (src/GameStateRunner.cpp:25,
@@ -310,10 +323,10 @@ void GameContext::tickLoading() {
 
 	// phase 1 (src/LoadingManager.cpp:617-744)
 	sys_.vm->resetPool();                                  // 20 threads freed (src/Game.cpp:332-360)
-	// Difficulty stamped BEFORE loadEntities so the spawn-time +25% hp bump
-	// sees it (spec §1; Group-2 order fix pulled forward — Group 1's own
-	// acceptance checks hp=62 at difficulty 2).
-	sys_.vm->vars[12] = 2;                                 // difficulty default (:692)
+	// Difficulty stamped BEFORE loadEntities, which reads it for the spawn-time
+	// +25% hp bump; at the legacy default 1 (src/Game.cpp:43) that bump does
+	// not apply (user decision 2026-09-23, spec 2026-09-22-monster-attacks §2.1a).
+	sys_.vm->vars[12] = 1;                                 // difficulty default (:692)
 	sys_.game->loadEntities(*sys_.map, *sys_.defs);        // (:658); loadWorldState slot: fresh entry no-op (:670)
 	actions_.spawnPlayer();                                // (:673)
 	lastTurnTime_ = upTimeMs;                              // stamp kept at the call site (spec §P1-G7)
@@ -341,7 +354,8 @@ void GameContext::tickLoading() {
 void GameContext::tickPlaying() {
 	// 1. [held-button auto-repeat — n/a, keyboard discrete]
 	// 2. deferred turn consumer (dialog-close analog, src/Canvas.cpp:812-815).
-	if (sys_.game->queueAdvanceTurn) {
+	//    ST_PLAYING only: not while an attack seq runs (ST_COMBAT analog).
+	if (sys_.game->queueAdvanceTurn && !sys_.game->combat.active) {
 		sys_.game->queueAdvanceTurn = false;
 		sys_.game->advanceTurn();
 	}
@@ -351,29 +365,54 @@ void GameContext::tickPlaying() {
 		return;
 	}
 	// 4. combat seq / monster phase at the legacy position (:181-183). While
-	//    a fire seq runs (ST_COMBAT analog, spec §0.C) it ticks and consumes
-	//    the turn on completion; otherwise the monster-phase stub closes the
-	//    monstersTurn window opened by advanceTurn.
+	//    an attack seq runs (ST_COMBAT analog, ADR 0028) it ticks; a finished
+	//    player attack consumes the turn, a finished monster attack hands
+	//    over to the next queued attacker (src/GameStateRunner.cpp:41-78).
+	//    Otherwise the monster phase runs under the legacy playingState gate
+	//    (knockbackDist and activePropogators are always 0 here).
 	//    Per-tick shotsFired reset (spec §C step 4): legacy clears the latch
 	//    once per rendered frame (src/Render.cpp:2351) so activate()'s
 	//    back-turned wake guard is bypassed only during shot frames.
 	sys_.game->combat.shotsFired = false;
-	if (sys_.game->combat.active) {
-		if (!sys_.game->combat.tick()) {          // runFrame analog (spec §5)
-			sys_.game->combat.active = false;
-			sys_.game->advanceTurn();             // turn consumed AFTER seq
+	Combat& c = sys_.game->combat;
+	const bool inCombat = c.active;               // ST_COMBAT for the whole tick
+	if (c.active) {
+		// combatState refreshes interpolatingMonsters every frame before
+		// runFrame (src/GameStateRunner.cpp:24); the lerps themselves already
+		// ticked in the globals section (Game::update).
+		sys_.game->monsters.monsterLerp();
+		if (!c.tick()) {                          // runFrame analog
+			if (c.curAttacker == nullptr) {
+				c.active = false;
+				sys_.game->advanceTurn();         // turn consumed AFTER seq
+			} else {
+				sys_.game->monsters.onMonsterAttackDone();
+			}
 		}
-	} else {
-		sys_.game->monsters.updateMonsters();      // Stage-1 stub (spec §0.B)
+	} else if (sys_.game->lerps.animatingEffects() == 0 &&
+	           sys_.game->monstersTurn != 0 &&
+	           sys_.dialogs->numHelpMessages() == 0) {
+		sys_.game->monsters.updateMonsters();
+	}
+	// Legacy enters ST_DYING inside Player::pain (src/Player.cpp:706-708 ->
+	// :711-733); step 3 above stays as the second line of defence.
+	if (sys_.player->getHealth() <= 0) {
+		setState(StateId::Dying);
+		return;
 	}
 	// 4.5 The facing probe no longer runs here: legacy recomputes it from the
 	//     HUD top bar on every rendered frame (src/Hud.cpp:735-742), see
 	//     GameContext::render.
 	// 5. door/sprite lerps tick in the globals section (legacy updateLerpSprites
 	//    here, src/GameStateRunner.cpp:184), still BEFORE updateView (:185).
-	// Help-popup dequeue while playing & monsters idle
-	// (src/GameStateRunner.cpp:199; guards live in the dialog system).
-	if (sys_.game->monstersTurn == 0) sys_.dialogs->dequeueHelpDialog();
+	// Help-popup dequeue while playing and no camera is active
+	// (src/GameStateRunner.cpp:197-199; state guards live in the dialog
+	// system). No monstersTurn term: the monster phase waits for an empty help
+	// queue, so gating on the turn would deadlock it. Not in ST_COMBAT: the
+	// legacy dequeue lives in playingState only and re-checks the state after
+	// updateMonsters, so neither the tick a seq starts nor the tick it ends
+	// (combatState) dequeues.
+	if (!inCombat && !c.active && !cinematic_.active()) sys_.dialogs->dequeueHelpDialog();
 	// 6. updateView (src/MovementController.cpp:377-547).
 	bool posIdle = (sys_.player->viewX == sys_.player->destX && sys_.player->viewY == sys_.player->destY);
 	bool angleIdle = (sys_.player->viewAngle == sys_.player->destAngle);
@@ -590,13 +629,13 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 	const int atkY  = pose->atkY;
 
 	// Attack pose: hold (atkX,atkY) until flashDone, then lerp back over
-	// animTime in 16.16 (src/Combat.cpp:735-767). b5 reduces to
-	// "seq running for this weapon" (curAttacker == nullptr always). The
-	// flashDone latch itself lives in Combat::tick now (deviation D2).
+	// animTime in 16.16 (src/Combat.cpp:735-767). b5 = "the player's own
+	// seq is running for this weapon". The flashDone latch itself lives in
+	// Combat's player sequence now (deviation D2).
 	int wpX = idleX, wpY = idleY;
 	bool flash = false;
 	const Combat& c = sys_.game->combat;
-	if (c.active && c.attackerWeaponId == w) {
+	if (c.active && c.curAttacker == nullptr && c.attackerWeaponId == w) {
 		wpX = atkX;
 		wpY = atkY;
 		if (!c.flashDone) {
@@ -628,6 +667,9 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 	// so the model carries the already-negated value.
 	m.shakeX = sys_.hud->shakeX();
 	m.shakeY = -std::abs(sys_.hud->shakeY());
+	// src/Combat.cpp:710-712 (the cinematicWeapon `b2` term is false here).
+	m.brightRed = upTimeMs < sys_.hud->damageTime() && sys_.hud->damageCount() >= 0 &&
+		c.totalDamage > 0;
 }
 
 void GameContext::applyUiAction(UiAction a, int index) {
@@ -761,6 +803,8 @@ void GameContext::render(AppContext& app) {
 	}
 	targeting_.feedHealthBar();
 	if (gameplayView) {
+		// Repaint bit 0x1 (drawEffects) before 0x2 (drawTopBar), src/Hud.cpp:725-742.
+		sys_.hud->drawDamageEffects(g, upTimeMs, sys_.game->combat.totalDamage > 0);
 		sys_.hud->drawTopBar(g, *sys_.font, 480);
 	}
 

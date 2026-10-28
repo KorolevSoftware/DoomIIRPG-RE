@@ -6,6 +6,7 @@
 #include "domain/game/Combat.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
+#include "domain/game/MonsterAI.h"
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/game/SpriteLerps.h"
@@ -28,6 +29,7 @@ void MonsterSystem::init(const Env& env) {
 	activeMonsters = inactiveMonsters = nullptr;
 	combatMonsters = nullptr;
 	interpolatingMonsters = false;
+	monstersUpdated = false;
 }
 
 // ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
@@ -51,6 +53,11 @@ bool MonsterSystem::isBossDef(const EntityDef* def) {
 	// src/Entity.cpp:1399 shape: eSubType within [FIRSTBOSS..LASTBOSS].
 	return def != nullptr &&
 	       def->eSubType >= Enums::FIRSTBOSS && def->eSubType <= Enums::LASTBOSS;
+}
+
+bool MonsterSystem::isBoss(const Entity* e) {
+	return isBossDef(e->def) &&
+	       (e->def->eSubType != Enums::BOSS_MASTERMIND || e->def->parm != 0);   // src/Entity.cpp:1399
 }
 
 // Faithful port of Game::activate (src/Game.cpp:752-808). The render-side
@@ -135,11 +142,97 @@ void MonsterSystem::deactivate(Entity* e) {
 	e->info &= ~Entity::kInfoOnActiveList;     // :854
 }
 
-// Stage-1 stub (spec §0.B): placed where legacy runs AI + lerps
-// (src/Game.cpp:2458-2474); monsters never move or attack, so the window
-// just closes.
+// ---- pending-attack queue (ADR 0028) ----
+
+void MonsterSystem::attack(Entity* e) {
+	EntityMonster* m = e->monster;
+	if ((m->flags & Enums::MFLAG_ATTACKING) == 0) {            // src/Entity.cpp:1162-1166
+		m->flags |= Enums::MFLAG_ATTACKING;
+		m->nextAttacker = combatMonsters;
+		combatMonsters = e;
+	}
+}
+
+void MonsterSystem::undoAttack(Entity* e) {
+	EntityMonster* m = e->monster;
+	if ((m->flags & Enums::MFLAG_ATTACKING) == 0) return;      // src/Entity.cpp:1171-1173
+	m->flags &= ~Enums::MFLAG_ATTACKING;
+	if (m->ce.weapon == Enums::WP_MONSTER_CHARGE) {            // :1176-1178
+		env_.map->mapSpriteInfo[e->getSprite()] &= 0xFFFF00FF;
+	}
+	m->resetGoal();                                            // :1179
+	Entity* cur = combatMonsters;                              // :1180-1190
+	Entity* prev = nullptr;
+	while (cur != nullptr && cur != e) {
+		prev = cur;
+		cur = cur->monster->nextAttacker;
+	}
+	if (prev != nullptr) {
+		prev->monster->nextAttacker = m->nextAttacker;
+	} else if (combatMonsters != nullptr) {
+		combatMonsters = m->nextAttacker;
+	}
+}
+
+// ---- monster turn driver ----
+
+// src/Game.cpp:874-913. disableAI (:877-879) is never set in src/.
+void MonsterSystem::monsterAI() {
+	if (monstersUpdated) return;                               // :880-882
+	monstersUpdated = true;                                    // :883
+	combatMonsters = nullptr;                                  // :884
+	if (activeMonsters == nullptr) return;
+	int i = 0;
+	Entity* cur = activeMonsters;
+	do {                                                       // :888-897
+		Entity* next = cur->monster->nextOnList;
+		if ((cur->monster->monsterEffects & 0x2) == 0 &&
+		    (*env_.monstersTurn == 1 || (*env_.monstersTurn == 2 && isHasteResistant(cur)))) {
+			env_.ai->think(cur, false);
+			if ((cur->monster->goalFlags & EntityMonster::kGoalFlagLerping) != 0) i = 1;
+		}
+		cur = next;
+	} while (cur != activeMonsters && activeMonsters != nullptr);
+	while (i != 0) {                                           // :898-911 re-validation
+		i = 0;
+		Entity* nextAttacker;
+		for (Entity* c = combatMonsters; c != nullptr; c = nextAttacker) {
+			nextAttacker = c->monster->nextAttacker;
+			if (!env_.ai->isAttackValid(c)) {
+				undoAttack(c);
+				env_.ai->think(c, false);
+				if ((c->monster->goalFlags & EntityMonster::kGoalFlagLerping) != 0) i = 1;
+			}
+		}
+	}
+}
+
+// src/Game.cpp:915-939; the invalidateRect tail has no counterpart.
+void MonsterSystem::monsterLerp() {
+	if (!interpolatingMonsters) return;                        // :920-922
+	bool any = false;
+	if (activeMonsters != nullptr) {
+		Entity* e = activeMonsters;
+		do {
+			if ((e->monster->goalFlags & EntityMonster::kGoalFlagLerping) != 0) any = true;
+			e = e->monster->nextOnList;
+		} while (e != activeMonsters);
+	}
+	interpolatingMonsters = any;
+}
+
+// src/Game.cpp:2458-2474. drawPlayingSoftKeys has no counterpart.
 void MonsterSystem::updateMonsters() {
-	if (*env_.monstersTurn != 0) endMonstersTurn();
+	monsterAI();
+	monsterLerp();
+	if (!interpolatingMonsters) {
+		*env_.facingDirty = true;
+		if (combatMonsters != nullptr) {
+			env_.combat->performMonsterAttack(combatMonsters, combatMonsters->monster->target);
+		} else {
+			endMonstersTurn();
+		}
+	}
 }
 
 // src/Game.cpp:2452-2456. canvas->startRotation(true) has no rewrite
@@ -148,12 +241,87 @@ void MonsterSystem::endMonstersTurn() {
 	*env_.monstersTurn = 0;
 }
 
-// Stage-1 stub (spec §0.B): no lerps exist, so snapping degenerates to
-// driving/closing the turn — the only externally visible part of
-// src/Game.cpp:2411-2449.
-void MonsterSystem::snapMonsters(bool b) {
-	(void)b;
-	if (*env_.monstersTurn != 0) endMonstersTurn();
+bool MonsterSystem::canSnapMonsters() const {
+	if (activeMonsters == nullptr) return true;
+	const Entity* e = activeMonsters;
+	do {                                                       // src/Game.cpp:2378-2386
+		if ((e->info & Entity::kInfoOnScreenStep) != 0) return false;
+		e = e->monster->nextOnList;
+	} while (e != activeMonsters);
+	return true;
+}
+
+// src/Game.cpp:2391-2450; invalidateRect has no counterpart. Both snap loops
+// cache the ring successor before snapping (legacy caches it only in the
+// monstersTurn == 0 arm; snapping never moves a monster between rings here).
+bool MonsterSystem::snapMonsters(bool b) {
+	if (!env_.lerps->animatingEffectsAreMonsters()) return false;   // :2394-2408
+	bool b2 = b;
+	if (*env_.monstersTurn == 0) {                             // :2410-2429
+		if (!b) b2 = canSnapMonsters();
+		Entity* cur = activeMonsters;
+		if (b2 && cur != nullptr) {
+			do {
+				Entity* next = cur->monster->nextOnList;
+				env_.lerps->snap(cur->getSprite());
+				cur = next;
+			} while (cur != activeMonsters);
+			interpolatingMonsters = false;
+		} else if (cur == nullptr) {
+			interpolatingMonsters = false;
+		}
+		*env_.facingDirty = true;
+		return b2;
+	}
+	monsterAI();                                               // :2430
+	if (!b) b2 = canSnapMonsters();
+	if (b2 && activeMonsters != nullptr) {                     // :2434-2442
+		Entity* cur = activeMonsters;
+		do {
+			Entity* next = cur->monster->nextOnList;
+			env_.lerps->snap(cur->getSprite());
+			cur = next;
+		} while (cur != activeMonsters);
+		*env_.facingDirty = true;
+	}
+	monsterLerp();                                             // :2443
+	if (combatMonsters != nullptr && !interpolatingMonsters) { // :2444-2447
+		env_.combat->performMonsterAttack(combatMonsters, combatMonsters->monster->target);
+		return false;
+	}
+	return b2;
+}
+
+// GameStateRunner::combatState, monster arm after runFrame returned 0
+// (src/GameStateRunner.cpp:41-78).
+void MonsterSystem::onMonsterAttackDone() {
+	Combat& combat = *env_.combat;
+	if (env_.player->getHealth() <= 0) {                       // ST_DYING check (:41-46)
+		while (combatMonsters != nullptr) undoAttack(combatMonsters);
+		combat.active = false;
+		return;
+	}
+	// knockbackDist (:51) is always 0: no knockback.
+	Entity* cur = combat.curAttacker;
+	if ((cur->monster->goalFlags & EntityMonster::kGoalFlagRetreat) != 0) {   // :53-58
+		cur->monster->resetGoal();
+		cur->monster->goalType = EntityMonster::kGoalRetreat;
+		cur->monster->goalParam = 1;
+		env_.ai->think(cur, false);
+	}
+	Entity* next = cur->monster->nextAttacker;                 // :59-64
+	while (next != nullptr && next->monster->target == nullptr && !env_.ai->isAttackValid(next)) {
+		Entity* n2 = next->monster->nextAttacker;
+		undoAttack(next);
+		next = n2;
+	}
+	if (next != nullptr) {                                     // :65-66
+		combat.performMonsterAttack(next, next->monster->target);
+		return;
+	}
+	combatMonsters = nullptr;                                  // :67-78
+	combat.active = false;
+	if (!interpolatingMonsters) endMonstersTurn();             // else updateMonsters closes the turn
 }
 
 // Non-boss ET_MONSTER subset of Entity::pain (src/Entity.cpp:281-394).
@@ -212,6 +380,7 @@ void MonsterSystem::diedMonster(Entity* e, bool giveXP) {
 	// monsterEffects re-stamp (:472-484) and Lost Soul/Cacodemon poof
 	// (:491-495): deferred (absent on the map00 route).
 	deactivate(e);                                             // :485
+	undoAttack(e);                                             // :486
 	if (giveXP) awardKillXP(*m);                               // :496 (+ :407-413)
 	const EntityDef* corpseDef =
 		env_.defs->find(Enums::ET_CORPSE, e->def ? e->def->eSubType : 0,

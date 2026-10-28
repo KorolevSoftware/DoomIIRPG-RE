@@ -31,17 +31,6 @@ const Texture& Hud::imgPageDown() const { return art().pageDown; }
 const Texture& Hud::imgPageOk() const { return art().pageOk; }
 
 void Hud::draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeight) {
-	// Demo: attack-direction arrow while the damage effect is active.
-	if (damageCount_ > 0 && damageTime_ > 0 && art().attackArrows.valid() && (1 << damageDir_ & 0xC1)) {
-		int n4 = canvasHeight - 20 - 25;
-		int n5 = 0;
-		int n6;
-		if (damageDir_ == 0) { n6 = canvasWidth - 20; n5 = 24; }
-		else if (damageDir_ == 6) { n6 = 20; n5 = 12; }
-		else { n6 = canvasWidth >> 1; }
-		g.drawRegion(art().attackArrows, 0, n5, 12, 12, n6, n4, Graphics2D::kAnchorHCenter);
-	}
-	drawDamageVignette(g, 0, 42, canvasWidth, canvasHeight - 42);
 	drawHudOverdraw(g, 0, 0, canvasWidth, canvasHeight);
 	drawTopBar(g, font, canvasWidth); // also paints the bottom panel background
 	if (showArrows_) drawArrowControls(g);
@@ -127,10 +116,30 @@ void Hud::tickShake(int64_t nowMs) {
 	shakeY_ = static_cast<int>(shakeNextByte(shakeRng_) % (amp * 2)) - amp;
 }
 
-void Hud::drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int viewH) {
-	if (damageCount_ <= 0 || !art().damageVignette.valid()) return;
-	if (damageTime_ <= 0) { damageCount_ = 0; return; }
+void Hud::stopShake() {
+	shakeIntensity_ = 0;
+	shakeX_ = 0;
+	shakeY_ = 0;
+}
 
+void Hud::drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositive) {
+	// Attack arrow (src/Hud.cpp:507-524), y = screenRect[3] - 20 - 25.
+	if (nowMs < damageTime_ && damageCount_ > 0 && totalDamagePositive) {
+		if ((1 << damageDir_ & 0xC1) != 0) {
+			int x = 240, srcY = 0;
+			if (damageDir_ == 0) { x = 460; srcY = 24; }
+			else if (damageDir_ == 6) { x = 20; srcY = 12; }
+			g.drawRegion(art().attackArrows, 0, srcY, 12, 12, x, 275,
+				Graphics2D::kAnchorHCenter | Graphics2D::kAnchorVCenter);
+		}
+	} else if (damageTime_ != 0) {
+		// :525-529; stopBrightenScreen/stopScreenSmack have no counterpart.
+		damageTime_ = 0;
+	}
+
+	// Vignette (src/Hud.cpp:533-583) over viewRect {0,20,480,250}; the
+	// familiar's imgDamageVignetteBot is absent.
+	if (!(nowMs < damageTime_ && damageCount_ >= 0 && totalDamagePositive)) return;
 	int n = 0;
 	switch (damageDir_) {
 		case 1: n = 2; break;
@@ -139,9 +148,10 @@ void Hud::drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int
 		case 4: n = 5; break;
 		case 5: n = 4; break;
 		case 0: case 6: case 7: n = 8; break;
-		default: damageCount_ = 0; return;
 	}
+	const int viewX = 0, viewY = 20, viewW = 480, viewH = 250;
 	int width = art().damageVignette.width(); // 16
+	if (width <= 0) return;                  // missing sheet: the tile loop would not advance
 	auto tile = [&](int x, int y, int w, int h, int rot) {
 		// Legacy fillRegion: repeat the 16x16 texture (no scaling).
 		int yBeg = y, yEnd = y + h;
@@ -159,7 +169,7 @@ void Hud::drawDamageVignette(Graphics2D& g, int viewX, int viewY, int viewW, int
 	if (n & 1) tile(viewX, viewY, viewW, width, 1);                        // top
 	if (n & 2) tile(viewX + (viewW - width), viewY, width, viewH, 4);      // right
 	if (n & 4) tile(viewX, viewY, width, viewH, 0);                        // left
-	if (n & 8) tile(viewX, viewY + (viewH - width), viewW, width, 3);      // bottom
+	if (n & 8) tile(viewX, 256 - width, viewW, width, 3);                  // bottom, hard-coded 256 (:579-581)
 }
 
 void Hud::drawHudOverdraw(Graphics2D& g, int hudX, int hudY, int hudW, int hudH) {
@@ -463,10 +473,6 @@ void Hud::update(int timeMs) {
 	// Health-bar drain clock (src/Hud.cpp:854 threshold): past 250 ms the
 	// bar snaps to the fed hp instead of easing.
 	if (monsterId_ >= 0) monsterChangeTime_ += timeMs;
-	if (damageCount_ > 0) {
-		damageTime_ -= timeMs;
-		if (damageTime_ <= 0) damageCount_ = 0;
-	}
 	// Cinematic-text expiry: legacy clears when subTitleTime/cinTitleTime
 	// pass gameTime during the HUD pass (src/Hud.cpp:787-798).
 	if (hasCinTitle_) {

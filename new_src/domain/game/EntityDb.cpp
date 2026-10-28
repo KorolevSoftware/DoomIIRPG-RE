@@ -1,5 +1,6 @@
 #include "domain/game/EntityDb.h"
 
+#include <algorithm>
 #include <cstdio>
 
 #include "domain/game/Player.h"
@@ -10,6 +11,7 @@ namespace newcore {
 void EntityDb::resetEntities() {
 	entities_.clear();
 	entities_.resize(kEntities);
+	std::fill(entityDb_, entityDb_ + 1024, nullptr);
 }
 
 // ---- entityDb (32x32 tile lists) ----
@@ -85,6 +87,7 @@ bool EntityDb::TileWalk::ok(const Entity* e) {
 }
 
 Entity* EntityDb::findEntityBySprite(int sprite) {
+	if (sprite < 0) return nullptr;   // the player entity has a def and sprite -1
 	for (Entity& e : entities_) {
 		if (e.def != nullptr && e.getSprite() == sprite) return &e;
 	}

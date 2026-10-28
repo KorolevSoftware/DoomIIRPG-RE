@@ -10,10 +10,14 @@ namespace newcore {
 
 // MapData::mapFlags[tileY * 32 + tileX] — one byte per tile, the low nibble
 // read verbatim from the packed table (src/LoadingManager.cpp:558-563), the
-// high bits set at runtime. Only the two bits used by the rewrite are named;
-// the remaining readers in the original (0x1 door-link, 0x4 wall push, 0x8/0x80
+// high bits set at runtime. Only the bits used by the rewrite are named;
+// the remaining readers in the original (0x4 wall push, 0x8/0x80
 // automap, 0x10/0x20 player) are still literals at their own call sites.
 namespace TileFlag {
+
+// File bit 0; the world entity is linked on these tiles at load, which also
+// sets the tile's static monster-clip bit (src/Game.cpp:497-507, :179).
+constexpr int SOLID_AT_LOAD = 0x1;
 
 // Sight stops at this tile. The single reader in the original is the facing /
 // health-bar probe's promotion re-scan, and only for an ET_SPRITEWALL hit:

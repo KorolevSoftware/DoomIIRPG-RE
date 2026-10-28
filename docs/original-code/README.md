@@ -15,7 +15,11 @@ Topic files (created on demand):
 | `map-format.md` | mapXX.bin sections, geometry decoding |
 | `media.md` | mappings/palettes/texels, texture creation, animation |
 | `entities.md` | Entity/EntityDef/EntityMonster, spawning, entityDb grid |
+| `monster-movement.md` | Monster step pathing (`aiGoal_MOVE`/`calcPath`), monster clip, move lerp/relink timing, walk frames, `checkLineOfSight` |
 | `combat.md` | CombatEntity calcHit/calcDamage, weapons, table.bin/entities.bin |
+| `monster-attack.md` | Monster attack execution: `aiWeaponForTarget`, `performAttack`/`monsterSeq` timeline, monster→player hit/damage, hitscan vs missile, monster attack tables |
+| `monster-turn.md` | Monster phase: activeMonsters/combatMonsters, monsterAI, goal machine, aiWeaponForTarget, attack sequencing |
+| `player-damage.md` | Player taking damage: armor/defense math, `pain`/`painEvent`, shake, rock-back, vignette, direction arrow, weapon red tint, `died()` → `ST_DYING` fall/fade → dead menu |
 | `ui.md` | HUD, menus, dialogs, fonts |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
 | `audio.md` | sound/music |

@@ -37,7 +37,11 @@ void PlayerActions::spawnPlayer() {
 	p.viewZ = p.destZ = env_.map->heightAt(p.viewX, p.viewY) + 36;
 	p.viewAngle = p.destAngle = (dir << 7) & 0x3FF;
 	p.startRotation();
-	p.finishRotation(); // player->relink() omitted: player entity not linked in the rewrite
+	p.finishRotation();
+	env_.game->relinkPlayer(p);                            // src/Game.cpp:969
+	const Entity* pe = env_.game->db.playerEntity();
+	std::fprintf(stderr, "[spawn] player entity def=%p tile=%d,%d\n",
+		(const void*)pe->def, p.destX >> 6, p.destY >> 6);
 }
 
 void PlayerActions::finishMovement() {
@@ -99,20 +103,39 @@ int PlayerActions::flagForFacingDir(int i) const {
 
 void PlayerActions::handleAction(Action a) {
 	Player& p = *env_.player;
-	// Input drops entirely while a combat seq runs — legacy is in ST_COMBAT
-	// so no playing input matches (spec §0.C.3, src/GameStateRunner state gate).
-	if (env_.game->combat.active) return;
+	// ST_COMBAT handler (src/InputEventController.cpp:364-372): during a
+	// monster attack only turning acts, startRotation runs for every key; the
+	// player's own attack swallows all input. No idle gate here (legacy has
+	// none), so quick presses stack.
+	if (env_.game->combat.active) {
+		if (env_.game->combat.curAttacker != nullptr) {
+			if (a == Action::TurnRight) p.destAngle -= 256;
+			else if (a == Action::TurnLeft) p.destAngle += 256;
+			p.startRotation();
+		}
+		return;
+	}
 	// Legacy gate: all playing input is ignored while any animation runs
 	// (src/PlayingInputHandler.cpp:25-27).
 	bool gateBlocked = (p.viewX != p.destX || p.viewY != p.destY || p.viewAngle != p.destAngle);
 	if (gateBlocked) return;
+	// Monster gate (src/PlayingInputHandler.cpp:71-74): everything but turning
+	// waits for the monsters to be snapped and animating effects to end.
+	// snapMonsters may start a queued monster attack, which swallows the
+	// action. The activePropogators term arrives with G7.
+	if (a != Action::TurnLeft && a != Action::TurnRight &&
+	    (!env_.game->monsters.snapMonsters(false) || env_.game->lerps.animatingEffects() != 0)) {
+		return;
+	}
 
 	switch (a) {
 	case Action::TurnLeft:
+		env_.hud->setDamageTime(0);              // src/PlayingInputHandler.cpp:112-114
 		p.destAngle += 256;
 		p.startRotation();
 		break;
 	case Action::TurnRight:
+		env_.hud->setDamageTime(0);
 		p.destAngle -= 256;
 		p.startRotation();
 		break;
@@ -149,6 +172,7 @@ void PlayerActions::handleAction(Action a) {
 			p.attemptMove(tx, ty);
 			p.setDestHeight(env_.map->heightAt(tx, ty));
 			p.setZStep(p.destZ - p.viewZ);
+			env_.game->relinkPlayer(p);                    // src/MovementController.cpp:348
 		} else {
 			// TEMP [dbg] move-block audit (remove after blue-door bug fixed)
 			std::fprintf(stderr,

@@ -11,6 +11,7 @@ class EntityDb;
 class Hud;
 class Localization;
 class MapData;
+class MonsterAI;
 class Player;
 class ScriptVM;
 class SpriteLerps;
@@ -32,7 +33,7 @@ public:
 		MapData* map = nullptr;
 		const EntityDefs* defs = nullptr;
 		ScriptVM* vm = nullptr;
-		const Combat* combat = nullptr;      // shotsFired + tileDistSq
+		Combat* combat = nullptr;            // shotsFired + tileDistSq + the monster attack seq
 		const TraceSystem* trace = nullptr;  // player pos + distFrom
 		int* monstersTurn = nullptr;
 		bool* facingDirty = nullptr;
@@ -40,6 +41,8 @@ public:
 		// force-complete of a sprite's active lerps (legacy snapLerpSprites,
 		// src/Game.cpp:1149-1166).
 		SpriteLerps* lerps = nullptr;
+		MonsterAI* ai = nullptr;             // per-monster decisions (ADR 0028)
+		const Player* player = nullptr;      // health check of onMonsterAttackDone
 	};
 
 	// Wiring + per-level reset (called from Game::loadEntities).
@@ -58,13 +61,16 @@ public:
 
 	// Monster rings + combat-seq owner (legacy Game::activeMonsters /
 	// inactiveMonsters / combatMonsters / interpolatingMonsters,
-	// src/Game.cpp:884-939). combatMonsters is the Stage-2 pending-attack
-	// queue head — declared only. Nothing sets interpolatingMonsters in
-	// Stage 1, so its advanceTurn guard is a defensive log-only branch.
+	// src/Game.cpp:884-939). combatMonsters is the pending-attack LIFO
+	// (monster->nextAttacker links). Nothing sets interpolatingMonsters until
+	// monster movement lands (G6).
 	Entity* activeMonsters = nullptr;
 	Entity* inactiveMonsters = nullptr;
 	Entity* combatMonsters = nullptr;
 	bool interpolatingMonsters = false;
+	// monsterAI runs once per monster turn (Game::monstersUpdated,
+	// src/Game.cpp:880-883); reset by Game::advanceTurn.
+	bool monstersUpdated = false;
 
 	// Faithful ring moves (src/Game.cpp:752-808, :825-855). activate ports:
 	// runStaticFunc fires SCR_MONSTER_ACTIVATE on MFLAG_TRIGGERONACTIVATE,
@@ -73,14 +79,27 @@ public:
 	void activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4);
 	void deactivate(Entity* e);
 
-	// Per-frame monster phase (src/Game.cpp:2458-2474): Stage-1 stub whose
-	// only job is closing the monstersTurn window (no AI, no lerps — spec §B).
-	void updateMonsters();
+	// Pending-attack queue (ADR 0028).
+	void attack(Entity* e);          // Entity::attack     src/Entity.cpp:1160-1167 (LIFO push)
+	void undoAttack(Entity* e);      // Entity::undoAttack src/Entity.cpp:1169-1191
+
+	// Monster turn driver.
+	void monsterAI();                // src/Game.cpp:874-913
+	void monsterLerp();              // src/Game.cpp:915-939 (no invalidateRect)
+	void updateMonsters();           // src/Game.cpp:2458-2474, called per Playing tick
 	void endMonstersTurn();          // src/Game.cpp:2452-2456
-	void snapMonsters(bool b);       // Stage-1 stub (spec §0.B)
+	bool canSnapMonsters() const;    // src/Game.cpp:2374-2389
+	bool snapMonsters(bool b);       // src/Game.cpp:2391-2450
+	// The monster arm of GameStateRunner::combatState once a monster attack
+	// sequence finished (src/GameStateRunner.cpp:41-78): next attacker or end
+	// of the monster turn.
+	void onMonsterAttackDone();
 
 	// eSubType in [FIRSTBOSS..LASTBOSS] (src/Entity.cpp:1399 shape).
 	static bool isBossDef(const EntityDef* def);
+	// Entity::isBoss (src/Entity.cpp:1398-1400): bosses except mastermind parm 0.
+	static bool isBoss(const Entity* e);
+	static bool isHasteResistant(const Entity* e) { return isBoss(e); }   // src/Entity.cpp:1402-1404
 
 	// Entity::pain ET_MONSTER non-boss subset (src/Entity.cpp:281-394):
 	// MFLAG_NOKILL floor, pain/death pose overlay + frameTime hold,

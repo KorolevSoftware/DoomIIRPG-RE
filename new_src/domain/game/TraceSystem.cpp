@@ -129,11 +129,8 @@ void TraceSystem::traceEntityHits(const MapData& map, Entity* skipEnt, int mask,
 				int cx, cy;
 				// Monster goal-lerp branch (src/Game.cpp:227-237): omitted —
 				// EntityMonster does not exist yet; restore with monsters.
-				if (ent->def->eType == Enums::ET_PLAYER) {                      // :239-243
-					// Deviation (spec Conflict-2 note): legacy uses canvas DEST
-					// coords; rewrite tracks view coords. Unreachable for
-					// walking: the player is skipEnt and PLAYER ∉ PLAYERSOLID.
-					cx = playerX_; cy = playerY_;
+				if (ent->def->eType == Enums::ET_PLAYER) {                      // :238-243
+					cx = playerDestX_; cy = playerDestY_;                       // canvas->destX/Y
 				} else {                                                        // :244-247
 					cx = (sprite >= 0) ? map.mapSprites[sprite + 0 * map.numSprites] : 0; // S_X
 					cy = (sprite >= 0) ? map.mapSprites[sprite + 1 * map.numSprites] : 0; // S_Y
@@ -250,6 +247,12 @@ int TraceSystem::distFrom(const Entity* e, int x, int y) const {
 		// world slot.
 		return std::max((x - traceCollisionX_) * (x - traceCollisionX_),
 		                (y - traceCollisionY_) * (y - traceCollisionY_));
+	}
+	if (e->def->eType == Enums::ET_PLAYER) {
+		// calcPosition's ET_PLAYER branch reads canvas->destX/Y
+		// (src/Entity.cpp:1379-1382).
+		return std::max((x - playerDestX_) * (x - playerDestX_),
+		                (y - playerDestY_) * (y - playerDestY_));
 	}
 	const int sprite = e->getSprite();
 	const int ex = (sprite >= 0) ? env_.map->mapSprites[sprite + 0 * env_.map->numSprites] : 0;

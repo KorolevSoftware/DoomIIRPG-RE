@@ -9,9 +9,26 @@ class Entity;
 
 // Per-monster gameplay payload (plain struct, fixed pool on Game — ADR 0008).
 // Field-for-field mirror of src/EntityMonster.h:13-42 minus the save/load and
-// touch sentinels; Stage 1 fills wakeable/damageable/killable data while the
-// goal/AI fields stay inert until aiThink lands (Stage 2).
+// touch sentinels. The goal/AI fields are driven by MonsterAI (ADR 0028).
 struct EntityMonster {
+	// goalType values (docs/original-code/monster-turn.md §3.2; names are
+	// ours, values legacy).
+	static constexpr int kGoalNone = 0;
+	static constexpr int kGoalMoveTile = 1;
+	static constexpr int kGoalChase = 2;
+	static constexpr int kGoalAttack = 3;
+	static constexpr int kGoalFlee = 4;
+	static constexpr int kGoalRetreat = 5;
+	static constexpr int kGoalWait = 6;
+
+	// goalFlags bits (docs/original-code/monster-turn.md §1.3).
+	static constexpr int kGoalFlagLerping = 0x1;   // one-tile step lerp running
+	static constexpr int kGoalFlagRetreat = 0x8;   // evading monster retreats after its attack
+	static constexpr int kGoalFlagRepath = 0x10;   // no setter in src/
+
+	// goalParam value naming the player as the goal entity (entities[1]).
+	static constexpr int kGoalParamPlayer = 1;
+
 	CombatEntity ce;
 	Entity* nextOnList = nullptr;   // circular ring links (src/EntityMonster.h:20-21)
 	Entity* prevOnList = nullptr;
@@ -40,8 +57,10 @@ struct EntityMonster {
 		resetGoal();
 	}
 
-	// Goal-state clear (src/EntityMonster.cpp:39-46) plus target; the full
-	// legacy body is irrelevant until aiThink lands (spec §2.1).
+	// Goal-state clear (src/EntityMonster.cpp:39-46) plus target. Clearing
+	// `target` is a deviation (legacy leaves it), harmless: target is read only
+	// for monsters queued in combatMonsters, and the sole queuing path
+	// (moveToGoal, goal 3) writes it after the reset.
 	void resetGoal() {
 		goalType = 0;
 		goalFlags = 0;

@@ -212,6 +212,56 @@ bool Player::addHealth(int amount) {
 	return true;
 }
 
+Player::PainBand Player::pain(int n) {
+	if (god) return PainBand::None;                        // src/Player.cpp:654-656
+	if (n == 0) return PainBand::None;                     // :672-674
+	const int stat = ce.getStat(Enums::STAT_HEALTH);
+	const int maxHp = ce.getStat(Enums::STAT_MAX_HEALTH);
+	const int n2 = (stat << 16) / (maxHp << 8);            // :683-684
+	const int n3 = ((stat - n) << 16) / (maxHp << 8);
+	PainBand band = PainBand::None;
+	if (n3 > 0) {                                          // :685-697
+		if (n2 > 26 && n3 <= 26) {
+			band = PainBand::NearDeath;
+		} else if (n2 > 78 && n3 <= 78) {
+			band = PainBand::LowHealth;
+		} else if (n2 > 128 && n3 <= 128) {
+			band = PainBand::HalfHealth;                   // helpBitmask & 0xC00 absent
+		}
+	}
+	addHealth(-n);                                         // :701
+	return band;
+}
+
+int Player::calcDamageDir(int x1, int y1, int angle, int x2, int y2) {
+	// src/Player.cpp:576-622. Angles: E 0, NE 128, N 256, NW 384, W 512,
+	// SW 640, S 768, SE 896 (y grows south); dirs DIR_NORTHWEST 3, DIR_SOUTHEAST 7.
+	const int dx = x2 - x1;
+	const int dy = y2 - y1;
+	angle &= 1023;
+	if (dx == 0 && dy == 0) return 3;
+	int ang;
+	if (dx > 0) {
+		ang = (dy < 0) ? 128 : (dy > 0) ? 896 : 0;
+	} else if (dx < 0) {
+		ang = (dy < 0) ? 384 : (dy > 0) ? 640 : 512;
+	} else {
+		ang = (dy > 0) ? 768 : 256;
+	}
+	int dAng = (ang - angle) & 1023;
+	if (dAng > 512) dAng = -(1024 - dAng);
+	int dir = dAng / 128 + 3;
+	if (dir < 0) dir = 7;
+	return dir;
+}
+
+void Player::addArmor(int n) {
+	const int stat = ce.getStat(Enums::STAT_ARMOR);        // src/Player.cpp:1933-1946
+	if (stat >= 200 && n > 0) return;
+	if (n < 0 && god) return;
+	ce.setStat(Enums::STAT_ARMOR, std::max(0, std::min(200, stat + n)));
+}
+
 // ---- XP / leveling ----
 
 void Player::addXP(int xp) {

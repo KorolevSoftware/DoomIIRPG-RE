@@ -184,12 +184,12 @@ int ScriptVM::executeStaticFunc(int idx) {
 
 // ---- resumption ----
 
-void ScriptVM::runScriptThreads(int64_t gameTime) {
+void ScriptVM::runScriptThreads(int64_t gameTime, bool resume) {
 	if (numThreads_ == 0) return;
 	for (int i = 0; i < kMaxThreads; ++i) {
 		ScriptThread& t = threads_[i];
 		if (!t.inuse) continue;
-		if (t.state == 2) attemptResume(&t, gameTime);      // resumes only while Playing (caller gates)
+		if (resume && t.state == 2) attemptResume(&t, gameTime); // src/Game.cpp:3255-3262
 		if (t.state != 2 || t.stackPtr == 0) freeThread(&t); // src/Game.cpp:3263-3265
 	}
 }
@@ -726,10 +726,15 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
-		case Enums::EV_ADVANCETURN:
-			// snap-monsters/endMonstersTurn parts are placeholders (no monsters).
+		case Enums::EV_ADVANCETURN: {              // src/ScriptThread.cpp:1276-1288
+			MonsterSystem& monsters = env_.game->monsters;
+			if (monsters.interpolatingMonsters) monsters.snapMonsters(true);
+			while (monsters.combatMonsters != nullptr) monsters.undoAttack(monsters.combatMonsters);
+			monsters.endMonstersTurn();
+			// canvas->clearEvents(1): the pending action queue is consumed per tick.
 			env_.game->advanceTurn();
 			break;
+		}
 
 		case Enums::EV_AIGOAL: {                   // src/ScriptThread.cpp:1262-1274 + :2226-2247
 			int packed = readUShort(t);
@@ -753,11 +758,11 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			if ((ent->info & Entity::kInfoOnActiveList) == 0) {
 				env_.game->monsters.activate(ent, true, false, false, true);   // :2236-2238 silent
 			}
-			std::fprintf(stderr, "[script] AIGOAL aiThink deferred (Stage 2)\n");
-			if (goalType == 3 && env_.game->monsters.combatMonsters != nullptr) {
-				// Queued-attack re-run (:2241-2246): combatMonsters is always
-				// empty in Stage 1 — unreachable; logged for safety.
-				std::fprintf(stderr, "[script] AIGOAL type-3 queued attack skipped\n");
+			env_.game->ai.think(ent, true);                                 // :2239
+			if (goalType == EntityMonster::kGoalAttack) {                   // :2241-2246
+				m->goalFlags &= ~EntityMonster::kGoalFlagRetreat;
+				Entity* head = env_.game->monsters.combatMonsters;
+				if (head != nullptr) env_.game->combat.performMonsterAttack(head, head->monster->target);
 			}
 			break;
 		}
@@ -788,6 +793,9 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			p.destY = p.viewY = (ty << 6) + 32;
 			p.destZ = p.viewZ = env_.map->heightAt(p.viewX, p.viewY) + 36;   // :2546
 			p.destAngle = p.viewAngle = angle;     // :2543 snap
+			// Deviation D1 (spec 2026-09-22-monster-attacks §2.1): legacy does not
+			// relink here and leaves a stale player link on the old tile.
+			env_.game->relinkPlayer(p);
 			env_.ctx->actions().finishRotationFired(); // step-vector refresh + FACE event
 			std::fprintf(stderr,
 				"[targetpractice] enter tile=%d,%d dir=%d (inventory strip/score deferred)\n",
@@ -1151,11 +1159,25 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			std::fprintf(stderr, "[script] ENABLE_HELP skipped (no help system)\n");
 			break;
 
-		case Enums::EV_DAMAGEPLAYER: {
-			int dmg = readByte(t);
-			int arm = readByte(t);
-			readByte(t);                  // direction
-			std::fprintf(stderr, "[script] DAMAGEPLAYER dmg=%d armor=%d skipped (no combat)\n", dmg, arm);
+		case Enums::EV_DAMAGEPLAYER: {    // src/ScriptThread.cpp:725-744
+			const int8_t dmg = readByte(t);
+			const int8_t arm = readByte(t);
+			const int8_t ang = readByte(t);
+			std::fprintf(stderr, "[script] DAMAGEPLAYER dmg=%d armor=%d ang=%d\n", dmg, arm, ang);
+			Combat& combat = env_.game->combat;
+			Player& player = *env_.player;
+			if (dmg > 0) {
+				combat.playerPainEvent(nullptr, false);
+				env_.hud->setDamageTime(env_.ctx->upTimeMs + 1000);
+				if (ang != -1) {
+					env_.hud->setDamageDir(((uint8_t)ang + ((256 - (player.viewAngle & 0x3FF)) >> 7) + 1) & 7);
+				}
+				combat.totalDamage = 1;
+				combat.playerPain(dmg, nullptr, true);
+			} else if (dmg < 0) {
+				player.addHealth(-dmg);
+			}
+			player.addArmor(-arm);
 			break;
 		}
 
@@ -1302,9 +1324,9 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				if (env_.ctx->state() != StateId::Camera) p.startRotation(); // (:646-649)
 				env_.ctx->actions().gotoTriggered = true; // destination events next tick (:653)
 			}
-			// relink()/clearEvents(1)/updateFacingEntity/invalidateRect
-			// (:656-659) n/a — player entity is unlinked and input events are
-			// consumed per tick already.
+			env_.game->relinkPlayer(p);                        // (:656)
+			// clearEvents(1)/updateFacingEntity/invalidateRect (:657-659) n/a —
+			// input events are consumed per tick already.
 			break;
 		}
 

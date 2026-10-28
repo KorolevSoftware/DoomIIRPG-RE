@@ -38,6 +38,9 @@ struct ViewWeaponModel {
 	// view keeps its verbatim `scrY - (poseY + shakeY)`.
 	int shakeX = 0;
 	int shakeY = 0;
+	// RENDER_FLAG_BRIGHTREDSHIFT on the gun art while the damage vignette is
+	// up (src/Combat.cpp:710-712).
+	bool brightRed = false;
 };
 
 // First-person view weapon + muzzle flash (spec 2026-08-26-decomposition

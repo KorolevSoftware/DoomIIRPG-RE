@@ -289,6 +289,23 @@ void SpriteLerps::snap(int sprite) {
 	}
 }
 
+int SpriteLerps::animatingEffects() const {
+	int n = 0;
+	for (const SpriteLerp& ls : spriteLerps_) {
+		if (ls.hSprite != 0 && (ls.flags & SpriteLerp::kFlagAnimatingEffect) != 0) ++n;
+	}
+	return n;
+}
+
+bool SpriteLerps::animatingEffectsAreMonsters() const {
+	for (const SpriteLerp& ls : spriteLerps_) {
+		if (ls.hSprite == 0 || (ls.flags & SpriteLerp::kFlagAnimatingEffect) == 0) continue;
+		const Entity* e = env_.db->findEntityBySprite(ls.hSprite - 1);   // S_ENT == -1 -> false (:2400-2402)
+		if (e == nullptr || e->def->eType != Enums::ET_MONSTER) return false;   // :2403-2405
+	}
+	return true;
+}
+
 void SpriteLerps::update(int dtMs) {
 	lerpClock_ += dtMs;
 	// updateLerpSprites sweep (src/Game.cpp:2985-3021): completed blocking

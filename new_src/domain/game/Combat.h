@@ -17,6 +17,7 @@ class Hud;
 class Localization;
 class MapData;
 class Player;
+struct EntityDef;
 struct Tables;
 
 // Peer combat subsystem mirroring legacy app->combat (src/Combat.h:12-176):
@@ -47,12 +48,18 @@ public:
 		const Tables* tables = nullptr;
 		MapData* map = nullptr;
 		const int64_t* gameTime = nullptr;   // ctx->gameTime
+		const int64_t* upTimeMs = nullptr;   // ctx->upTimeMs: legacy app->time for HUD/camera effects
 	};
 
 	void init(const Env& env);         // builds tileDistances + monsterTemplates[51]
 
 	// --- state (subset of src/Combat.h:61-139 used by the hitscan path) ---
 	bool active = false;               // rewrite-only: "we are in ST_COMBAT"
+	// Attacking monster; nullptr = the player's own attack (runFrame dispatch,
+	// src/Combat.cpp:857-862, ADR 0028).
+	Entity* curAttacker = nullptr;
+	EntityMonster* attackerMonster = nullptr;
+	int attackFrame = 64;              // MANIM_ATTACK1 / MANIM_ATTACK2 pose (src/Combat.cpp:89-101)
 	Entity* curTarget = nullptr;
 	int targetType = 0, targetSubType = 0;
 	EntityMonster* targetMonster = nullptr;
@@ -76,6 +83,7 @@ public:
 	// Degenerate-projectile state (src/Combat.h:99,105 exploded/missileAnim).
 	bool exploded = false;
 	int missileAnim = 0;
+	int numActiveMissiles = 0;         // src/Combat.h:81; stays 0 until flying missiles (G7)
 	int tileDistances[kMaxTileDistances] = {};
 	std::vector<CombatEntity> monsterTemplates;   // 51 entries (src/Combat.cpp:37-39)
 	int loadMapID = 1;                 // miss-guard gate (b||mapID<8||tileDist>1); map00 => <8
@@ -84,9 +92,20 @@ public:
 	// melee-lunge block omitted — weapon 18 unreachable Stage 1).
 	void performAttack(Entity* target, int attackX, int attackY, bool scripted);
 
-	// Two-stage playerSeq timer (src/Combat.cpp:178-425 hitscan reduction);
-	// returns true while the seq still runs. Called once per Playing tick.
+	// performAttack with curAttacker != nullptr (src/Combat.cpp:54-166). The
+	// weapon-18 lunge (:131-164) is deferred; the attack then runs as a plain
+	// melee attack.
+	void performMonsterAttack(Entity* attacker, Entity* target);
+
+	// runFrame (src/Combat.cpp:857-862): playerSeq or monsterSeq by
+	// curAttacker; returns true while the seq still runs. Called once per
+	// Playing tick.
 	bool tick();
+
+	// src/Combat.cpp:1058-1060: monsterAttacks[sub*9 + parm*3 + k]
+	// (k 0 = primary, 1 = secondary weapon, 2 = primary chance); out of range
+	// reads 0 ("no weapon").
+	int getMonsterField(const EntityDef* def, int k) const;
 
 	// Non-monster target hit gate (src/Combat.cpp:864-883).
 	int calcHitEntity(Entity* e);
@@ -130,7 +149,26 @@ public:
 	// (spec §3.3): composes kTextMain str with %NN args via Game::composeArgs.
 	void centerMessage(int mainStrId, const std::string* args = nullptr, int numArgs = 0) const;
 
+	// Player::painEvent (src/Player.cpp:624-650): HUD damage flag, pain sound
+	// log, and the screen shake for non-monster damage.
+	void playerPainEvent(Entity* src, bool fromMonster);
+	// Presentation half of Player::pain (src/Player.cpp:652-709): optional
+	// damage message, the health-band warnings, then Player::pain.
+	void playerPain(int n, Entity* src, bool showMsg);
+
 private:
+	// Two-stage playerSeq timer (src/Combat.cpp:178-425 hitscan reduction).
+	bool playerSeq();
+	// src/Combat.cpp:427-610: attack poses, hit roll and per-shot timing.
+	bool monsterSeq();
+	// Monster hit/miss applied to the player (src/Combat.cpp:948-1056).
+	void explodeOnPlayer();
+	// Game::getMonsterSound (src/Game.cpp:3771-3845) for the attack types
+	// (MSOUND_ATTACK1/2) only, which never roll.
+	int monsterSound(int sub, int parm, int soundType) const;
+	// Ingame name of an entity's def (legacy Entity::name, def->name | 0x400).
+	std::string entityName(const Entity* e) const;
+
 	Env env_;
 };
 

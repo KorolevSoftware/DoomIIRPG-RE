@@ -115,6 +115,19 @@ public:
 
 	bool addHealth(int amount);
 
+	// Health-fraction crossing reported by pain(); the caller shows the message.
+	enum class PainBand { None, NearDeath, LowHealth, HalfHealth };
+	// Player::pain state half (src/Player.cpp:652-709): god / n == 0 early
+	// outs, the 1/256 crossing bands, then addHealth(-n). noDeathFlag is never
+	// set in src/ and isFamiliar is absent. Death is NOT handled here (ADR 0028
+	// decision 4): the caller checks getHealth().
+	PainBand pain(int n);
+	// src/Player.cpp:576-622: compass direction 0..7 (3 = ahead) of (x2,y2)
+	// seen from (x1,y1) facing `angle`, for the HUD damage arrow/vignette.
+	static int calcDamageDir(int x1, int y1, int angle, int x2, int y2);
+	// src/Player.cpp:1933-1946: god blocks negatives; clamp [0,200] on STAT_ARMOR.
+	void addArmor(int n);
+
 	int getHealth() const { return ce.getStat(Enums::STAT_HEALTH); }
 	int getMaxHealth() const { return ce.getStat(Enums::STAT_MAX_HEALTH); }
 

@@ -42,12 +42,12 @@ public:
 		MapData* map = nullptr;
 	};
 
-	// Wiring (called from Game::loadEntities). The tile heads are NOT cleared
-	// here: the pre-P2-GF code never cleared them on load either.
+	// Wiring (called from Game::loadEntities).
 	void init(const Env& env) { env_ = env; }
 
 	// Per-level entity array reset (was the entities_.clear()/resize pair at
-	// the head of Game::loadEntities).
+	// the head of Game::loadEntities); also clears the 1024 tile heads so a
+	// second load cannot keep pointers into the old array (ADR 0027).
 	void resetEntities();
 
 	// removeEntity's facingEntity clear (src/Game.cpp:192); set through
@@ -73,7 +73,8 @@ public:
 	// reads it as eType 0 (spec 2026-08-26-combat-stage1 deviation 13).
 	Entity* worldEntity() { return entities_.empty() ? nullptr : &entities_[0]; }
 
-	// Entity bound to a map sprite (legacy S_ENT lookup analog).
+	// Entity bound to a map sprite (legacy S_ENT lookup analog); nullptr for
+	// sprite < 0.
 	Entity* findEntityBySprite(int sprite);
 
 	// Port of Game::removeEntity (src/Game.cpp:183-193): hide the bound

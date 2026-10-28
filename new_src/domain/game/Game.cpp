@@ -28,11 +28,20 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	trace.init({ &db, &map });                     // peer subsystem wiring (spec §P2-GA)
 	doors.init({ &db, &map, vm_, &trace });        // peer subsystem wiring (spec §P2-GB)
 	monsters.init({ &db, &map, &defs, vm_, &combat, &trace, &monstersTurn,
-	                &facingDirty, &lerps });                            // spec §P2-GC
+	                &facingDirty, &lerps, &ai, player_ });              // spec §P2-GC
+	ai.init({ &db, &map, &trace, &combat, &monsters, player_ });       // ADR 0028
 	lerps.init({ &db, &map, vm_ });                     // peer subsystem wiring (spec §P2-GD)
 	loot.init({ &db, &defs });                          // peer subsystem wiring (spec §P2-GE)
 	db.resetEntities();
+	Entity* pe = db.playerEntity();
+	pe->def = defs.find(Enums::ET_PLAYER, 0);      // src/Game.cpp:366-367
+	pe->info = Entity::kInfoActive;                 // src/Game.cpp:369 (0x20000)
+	if (pe->def == nullptr) std::fprintf(stderr, "[spawn] ERROR no ET_PLAYER def\n");
 	monstersTurn = 0;
+	combat.active = false;                         // ST_COMBAT is left by the load state change
+	combat.curTarget = nullptr;                    // src/Game.cpp:652 (unloadMapData)
+	combat.curAttacker = nullptr;                  // src/Game.cpp:653
+	combat.attackerMonster = nullptr;
 	lootFound = 0;                                 // src/Game.cpp:681 (unloadMap)
 	lootSource = -1;
 	showingLoot = false;
@@ -274,6 +283,17 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 		census[Enums::ET_DECOR_NOCLIP], numDeflessWalls);
 }
 
+// Player::relink = unlink + link (src/Player.cpp:1425-1445); see Game.h.
+void Game::relinkPlayer(const Player& p) {
+	Entity* pe = db.playerEntity();
+	if (pe == nullptr) return;
+	if ((pe->info & Entity::kInfoLinked) != 0) db.unlinkEntity(pe);       // :1430-1437
+	if (p.destX >= 0 && p.destX <= 2047 && p.destY >= 0 && p.destY <= 2047) { // :1439-1445
+		db.linkEntity(pe, p.destX >> 6, p.destY >> 6);
+	}
+	trace.setPlayerDest(p.destX, p.destY);
+}
+
 // ---- Phase 5: script-facing services ----
 
 // Faithful port (src/Game.cpp:2477-2498): flip bit0 of the sprite-info
@@ -298,8 +318,8 @@ void Game::setLineLocked(Entity* e, bool locked) {
 void Game::advanceTurn() {
 	queueAdvanceTurn = false;                  // (:1240)
 	if (monsters.interpolatingMonsters) {      // (:1241-1243) Error 95 guard:
-		// nothing sets interpolatingMonsters in Stage 1 (no lerps), so this
-		// is defensive only.
+		// nothing sets interpolatingMonsters until monster movement (G6), so
+		// this is defensive only.
 		std::fprintf(stderr, "[turn] ERR_NONSNAPPEDMONSTERS (95)\n");
 		monsters.snapMonsters(true);
 	}
@@ -307,6 +327,7 @@ void Game::advanceTurn() {
 	// monstersTurn = 1 always. Player-side ticks (poison/infection/combat
 	// decay) deferred with citation src/Player.cpp:51-92.
 	monstersTurn = 1;                          // arm the monster phase (:1257-1264); Playing tick step disarms
+	monsters.monstersUpdated = false;          // (:1263)
 	facingDirty = true;                        // updateFacingEntity latch (src/Game.cpp:1269; no haste -> b always true)
 	doors.advanceTurnDoors();                  // auto-close sweep (:1271-1278)
 	if (vm_) vm_->executeStaticFunc(Enums::SCR_PER_TURN); // PER_TURN hook (:1279)

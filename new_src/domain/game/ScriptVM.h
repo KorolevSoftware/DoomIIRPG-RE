@@ -73,9 +73,10 @@ public:
 	// Runs staticFuncs[idx] synchronously; sentinel 65535 / idx >= 12 -> 0.
 	int executeStaticFunc(int idx);
 
-	// Per-frame resumption pass (src/Game.cpp:3246-3268); only called while
-	// ST_PLAYING in the subset.
-	void runScriptThreads(int64_t gameTime);
+	// Per-frame resumption pass (src/Game.cpp:3246-3268). resume=false keeps
+	// only the free sweep: legacy resumes in ST_PLAYING/ST_CAMERA only
+	// (:3259-3261) but sweeps in every state it is called from.
+	void runScriptThreads(int64_t gameTime, bool resume);
 
 	// Any inuse thread whose trigger mask carries EVFL_FLAG_BLOCKINPUT
 	// (src/Game.cpp:3447-3459).

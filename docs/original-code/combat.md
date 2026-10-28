@@ -215,7 +215,8 @@ for the flash (currently a plain alpha blit), BRIGHTREDSHIFT damage tint.
   crit = chance/20 → CR 0x2; sniper-zoom (wp 9) uses pixel body-part bboxes instead
   (`:173-216`).
 * Damage `CombatEntity::calcDamage` (`src/CombatEntity.cpp:300-378`): base
-  STRMIN..STRMAX of `weapons[w*9+{0,1}]`; crit → ×2 STRMAX, far → STRMAX/2;
+  `STRMIN + nextByte() % (STRMAX − STRMIN)` of `weapons[w*9+{0,1}]` — STRMAX is
+  **exclusive** (`src/CombatEntity.cpp:322-325`; monster side in `monster-attack.md` §6); crit → ×2 STRMAX, far → STRMAX/2;
   difficulty 4 −25% first; strength bonus applied only when CR 0x20 is **clear**
   (`src/CombatEntity.cpp:326-332`, player gets `3*(strPct*dmg>>8)`), and 0x20 is set for every
   **non-chainsaw** hit on a MONSTER (`src/Combat.cpp:223-226`) ⇒ the strength stat boosts
@@ -252,6 +253,9 @@ during the window drops unless monsters are snappable (which itself advances the
 lerps/attacks) except turn/weapon-switch (`src/PlayingInputHandler.cpp:71-74`).
 A player attack consumes its turn only after the combat seq finishes
 (`src/GameStateRunner.cpp:26-38`).
+
+Full monster-phase detail (goal machine, weapon choice, `monsterAttacks` table,
+attack sequencing): `docs/original-code/monster-turn.md`.
 
 ## 7. Facing entity (`player->facingEntity`) and the monster health bar
 (added 2026-08-26; raw log `docs/research/2026-08-26-facing-entity-health-bar.md`)

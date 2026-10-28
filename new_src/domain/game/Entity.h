@@ -37,6 +37,12 @@ public:
 	// (src/Render.cpp:3054).
 	static constexpr int kInfoNoBreathe = 0x20000000;
 	static constexpr int kInfoHidden = 0x10000;      // hidden/dead sprite flag
+	// Write-only in the original (set by performAttack on attacker and target,
+	// src/Combat.cpp:66-71, never read); meaning unknown.
+	static constexpr int kInfoCombatMark = 0x200000;
+	// This monster's step lerp is on screen and cannot be snapped
+	// (src/Entity.cpp:1095-1097, read by canSnapMonsters src/Game.cpp:2380).
+	static constexpr int kInfoOnScreenStep = 0x10000000;
 
 	Entity() = default;
 

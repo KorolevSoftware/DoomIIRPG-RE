@@ -413,6 +413,10 @@ belongs to the corpse branch this group implements: `targetType == 9 && targetSu
 
 ## 6. Group G5 — real projectiles (positive `PROJTYPE`), the big step
 
+> **2026-09-22:** G5.1-G5.3 and G5.5 for the monster missile types 6/7 are specified in
+> `2026-09-22-monster-attacks.md` group G7 (runtime sprite slots: ADR 0030). Player-side
+> projectile types and splash (G5.4, G5.6) remain here.
+
 Not to be started before G1-G4 are accepted. Scope sketch, in sub-groups; each needs its own
 spec section when it comes up:
 

@@ -11,6 +11,7 @@
 #include "domain/game/EntityDb.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/ItemPickup.h"
+#include "domain/game/MonsterAI.h"
 #include "domain/game/MonsterSystem.h"
 #include "domain/game/Player.h"
 #include "domain/game/SpriteLerps.h"
@@ -108,9 +109,14 @@ public:
 	// facingEntity clear (spec §P2-GF). Game owns both peers, so it owns the
 	// pairing.
 	void setXPSystems(Player* player, const Localization* loc, Hud* hud) {
+		player_ = player;
 		monsters.setXPSystems(player, loc, hud);
 		db.setPlayer(player);
 	}
+
+	// Player::relink (src/Player.cpp:1425-1445): unlink entities[1] if linked, then link it at
+	// (destX>>6, destY>>6) when 0 <= destX,destY <= 2047; mirror the destination into the trace.
+	void relinkPlayer(const Player& p);
 
 	// Turn/script coordination fields (legacy Game members).
 	int monstersTurn = 0;
@@ -136,6 +142,7 @@ public:
 	TraceSystem trace;              // peer subsystem (spec §P2-GA); wired in loadEntities
 	DoorSystem doors;               // peer subsystem (spec §P2-GB); wired in loadEntities
 	MonsterSystem monsters;         // peer subsystem (spec §P2-GC); wired in loadEntities
+	MonsterAI ai;                   // peer subsystem (ADR 0028); wired in loadEntities
 	SpriteLerps lerps;              // peer subsystem (spec §P2-GD); wired in loadEntities
 	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
 	ItemPickup items;               // peer subsystem (spec 2026-08-29-world-item-pickup §G2); wired in Main
@@ -148,6 +155,7 @@ private:
 	MapData* map_ = nullptr;
 	const EntityDefs* defs_ = nullptr;     // set in loadEntities
 	ScriptVM* vm_ = nullptr;
+	Player* player_ = nullptr;             // set in setXPSystems
 };
 
 } // namespace newcore

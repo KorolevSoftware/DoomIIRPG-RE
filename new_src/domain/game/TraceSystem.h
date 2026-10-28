@@ -62,16 +62,23 @@ public:
 	int distFrom(const TraceHit& h, int x, int y) const;
 	int distFrom(const Entity* e, int x, int y) const;
 
-	// Player position (canvas units) read by the trace's ET_PLAYER branch,
-	// the door auto-close checks and the monster activate range check.
+	// Player view position (canvas units) read by the door auto-close checks
+	// and the monster activate range check.
 	void setPlayerPos(int x, int y) { playerX_ = x; playerY_ = y; }
 	int playerX() const { return playerX_; }
 	int playerY() const { return playerY_; }
+
+	// Player destination (legacy canvas->destX/Y, ADR 0027) read by the
+	// ET_PLAYER trace branch and distFrom(player entity).
+	void setPlayerDest(int x, int y) { playerDestX_ = x; playerDestY_ = y; }
+	int playerDestX() const { return playerDestX_; }
+	int playerDestY() const { return playerDestY_; }
 
 private:
 	Env env_;
 
 	int playerX_ = -1, playerY_ = -1;
+	int playerDestX_ = -1, playerDestY_ = -1;
 
 	// Trace scratch (reused buffers; single-threaded GL loop).
 	int tracePoints_[4] = { 0, 0, 0, 0 };              // x0,y0,x1,y1 (src/Game.cpp:208-211)
