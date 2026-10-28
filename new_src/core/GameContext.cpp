@@ -56,6 +56,7 @@ void GameContext::init(const Init& sys) {
 	menuEnv.player = sys_.player;
 	menuEnv.host = this;
 	menuEnv.upTimeMs = &upTimeMs;
+	menuEnv.restartLevel = [this] { restartLevel(); };
 	menu_.init(menuEnv);
 	Targeting::Env tgtEnv;
 	tgtEnv.game = sys_.game;
@@ -146,11 +147,19 @@ void GameContext::enterState_(StateId s) {
 		sys_.hud->clearCinematicText();
 		break;
 	case StateId::Dying:
-		deathTimeMs_ = upTimeMs; // unused this phase (src/Canvas.cpp:1125-1131 analog)
-		// Player::died tail (src/Player.cpp:711-733); counters, sound and
-		// shake arrive with G8a.
+		// Player::died (src/Player.cpp:711-733). The hero is the marine
+		// (characterChoice 1, ScriptVM::updateScriptVars), hence sound 1092 (:720-722).
+		++sys_.player->currentLevelDeaths;
+		++sys_.player->totalDeaths;
+		std::fprintf(stderr, "[sound] 1092\n");
+		sys_.hud->startShake(upTimeMs, 350, 10);   // startShake(350, 5, 500): intensity 2*5 (:729)
+		sys_.player->ce.setStat(Enums::STAT_HEALTH, 0);
 		sys_.game->monsters.combatMonsters = nullptr;
 		sys_.game->combat.active = false;
+		// ST_DYING entry (src/Canvas.cpp:1113-1129): destPitch has no analog,
+		// tickDying writes the pitch directly.
+		deathTimeMs_ = upTimeMs;
+		sys_.dialogs->clearHelpQueue();
 		std::fprintf(stderr, "[player] died\n");
 		break;
 	case StateId::Looting:
@@ -161,10 +170,11 @@ void GameContext::enterState_(StateId s) {
 		break;
 	case StateId::Menu:
 		// src/Canvas.cpp:1192-1206 analog: the queued events are cleared and the
-		// menu system is set to MENU_INGAME with a fresh stack. The legacy
+		// menu system is set to nextMenuId_ with a fresh stack. The legacy
 		// pausePlayer() has no rewrite counterpart (no pause flag).
 		pendingActions_.clear();
-		menu_.begin();
+		menu_.begin(nextMenuId_);
+		nextMenuId_ = kMenuInGame;
 		break;
 	case StateId::Loading:
 		loadingPhase_ = 0;     // arm the loading-phase counter
@@ -356,6 +366,43 @@ void GameContext::tickLoading() {
 		state_ == StateId::Camera ? "ST_CAMERA (kept)" : "ST_PLAYING");
 }
 
+// ---- Restart Level (spec 2026-09-22-monster-attacks §10) ----
+
+// Deviation D6: legacy reloads the level-start brief save (loadState(2),
+// src/MenuSystem.cpp:3106, src/LoadingManager.cpp:38-45); without a save
+// system the level starts fresh, which on map00 is the same state. Resets what
+// a fresh boot initialises outside the Loading tail; the tail itself (VM pool
+// and state vars, loadEntities re-initialising every Game peer, spawn,
+// SCR_INIT_MAP) runs again from ST_LOADING.
+void GameContext::restartLevel() {
+	Player& p = *sys_.player;
+	p.reset();                                           // map00 level start = new-game stats and inventory
+	p.currentLevelDeaths = 0;                            // loadState(2) (src/Game.cpp:2200-2202); totalDeaths kept
+	p.viewPitch = 0;                                     // death tilt (tickDying)
+	p.viewRoll = 0;
+	p.viewZ = p.destZ;                                   // death drop; spawnPlayer re-derives both
+	actions_.gotoThread = nullptr;                       // VM pool is freed by tickLoading
+	actions_.gotoTriggered = false;
+	cinematic_.reset();                                  // activeCameraView = false (src/Game.cpp:649)
+	Combat& c = sys_.game->combat;
+	c.active = false;
+	c.curAttacker = nullptr;                             // (src/Game.cpp:652-653)
+	c.attackerMonster = nullptr;
+	c.curTarget = nullptr;
+	c.targetMonster = nullptr;
+	c.numActiveMissiles = 0;
+	for (GameSprites::Sprite*& m : c.activeMissiles) m = nullptr;
+	c.totalDamage = 0;
+	sys_.game->sprites.clear(GameSprites::kFlagInUse);   // (src/Game.cpp:655-659), before the map is replaced
+	sys_.game->visibility = ViewVisibility{};            // last frame was drawn from the death pose
+	if (sys_.reloadMap && !sys_.reloadMap()) std::fprintf(stderr, "[restart] map reload FAILED\n");
+	sys_.hud->clearMessages();                           // msgCount = 0 (src/LoadingManager.cpp:659)
+	sys_.hud->clearScreenEffects();                      // endFade (src/Canvas.cpp:1380)
+	sys_.dialogs->clearHelpQueue();
+	std::fprintf(stderr, "[restart] level restart -> ST_LOADING\n");
+	setState(StateId::Loading);
+}
+
 // ---- Playing (fixed order, spec §6) ----
 
 void GameContext::tickPlaying() {
@@ -365,6 +412,13 @@ void GameContext::tickPlaying() {
 	if (sys_.game->queueAdvanceTurn && !sys_.game->combat.active) {
 		sys_.game->queueAdvanceTurn = false;
 		sys_.game->advanceTurn();
+	}
+	// 2.5 wall-push raise (src/GameStateRunner.cpp:166-169); playingState
+	//     only, so not while an attack seq runs (ST_COMBAT analog).
+	Combat& c = sys_.game->combat;
+	if (!c.active && c.pushedWall && c.pushedTime <= gameTime) {
+		c.shiftWeapon(false);
+		c.pushedWall = false;
 	}
 	// 3. death check (src/GameStateRunner.cpp:170-173).
 	if (sys_.player->getHealth() <= 0) {
@@ -384,7 +438,6 @@ void GameContext::tickPlaying() {
 	// Sight wake of the last rendered frame, seen with shotsFired == false
 	// like the legacy render pass (ADR 0029, src/Render.cpp:2351, :1576-1583).
 	sys_.game->monsters.renderActivate(sys_.game->visibility);
-	Combat& c = sys_.game->combat;
 	const bool inCombat = c.active;               // ST_COMBAT for the whole tick
 	if (c.active) {
 		// monsterLerp + the lerp tick already ran in the globals section in
@@ -501,9 +554,30 @@ void GameContext::tickPlaying() {
 	}
 }
 
+// GameStateRunner::dyingState (src/GameStateRunner.cpp:257-281). The pitch is
+// ported unnegated: the rewrite camera uses the legacy view matrix and sign
+// (positive = up, cf. the loot crouch's -64 looking down).
 void GameContext::tickDying() {
-	// ST_DYING stub: legacy runs the fall/fade timeline then the dead menu
-	// (spec §11 out of scope). Health can only reach 0 via future combat.
+	Player& p = *sys_.player;
+	const int t = (int)(upTimeMs - deathTimeMs_);
+	if (t < 750) {
+		const int n = ((750 - t) << 16) / 750;
+		p.viewZ = sys_.map->heightAt(p.destX, p.destY) + 18 + ((20 * n) >> 16);
+		p.viewPitch = 96 + ((-96 * n) >> 16);
+		p.viewRoll = 16 + ((-16 * n) >> 16);
+		// updateView (:266). Legacy steps viewZ by a zero zStep, i.e. leaves
+		// it; Player::updateView snaps viewZ = destZ instead, so keep the drop.
+		const int z = p.viewZ;
+		p.updateView();
+		if (p.zStep == 0) p.viewZ = z;
+	} else if (t < 2750) {
+		if (!sys_.hud->isFading()) sys_.hud->startFade(upTimeMs, 2000, Hud::kFadeOut);
+		p.viewRoll = 16;
+	} else {
+		// baseDizzy/destDizzy (:278) have no rewrite counterpart.
+		nextMenuId_ = kMenuInGameDead;
+		setState(StateId::Menu);
+	}
 }
 
 // ---- cinematic camera (docs/original-code/cutscenes-camera.md §1-§3) ----
@@ -647,7 +721,8 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 	int wpX = idleX, wpY = idleY;
 	bool flash = false;
 	const Combat& c = sys_.game->combat;
-	if (c.active && c.curAttacker == nullptr && c.attackerWeaponId == w) {
+	const bool attackPose = c.playerAttackPose(w);
+	if (attackPose) {
 		wpX = atkX;
 		wpY = atkY;
 		if (!c.flashDone) {
@@ -663,6 +738,20 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 			wpY = atkY + (((idleY - atkY) * t) >> 16);
 		}
 	}
+	// Lowered weapon: steady when down (src/Combat.cpp:672-674); the lerp
+	// only outside the attack pose (:769-784), its finished branch reading
+	// the same value the latch then leaves for the steady term.
+	int lowerY = 0;
+	if (!c.lerpingWeapon && c.weaponDown) lowerY = Combat::kLoweredWeaponY;
+	if (!attackPose && c.lerpingWeapon) {
+		const int gt = (int)gameTime;
+		if (c.lerpWpStartTime + c.lerpWpDur > gt) {
+			const int f = ((gt - c.lerpWpStartTime) << 16) / c.lerpWpDur;
+			lowerY = (c.lerpWpDown ? f : 65536 - f) * Combat::kLoweredWeaponY >> 16;
+		} else if (c.lerpWpDown) {
+			lowerY = Combat::kLoweredWeaponY;
+		}
+	}
 
 	m.visible = true;
 	m.weapon = w;
@@ -670,6 +759,7 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 	m.flashTile = Combat::getWeaponTileNum(0);                 // (:826-834)
 	m.poseX = wpX;
 	m.poseY = wpY;
+	m.lowerY = lowerY;
 	// The second legacy flash gate sat at the blit (:826); both are ANDed here
 	// so the view only reads a bool. Neither condition is dropped or merged.
 	m.muzzleFlash = flash && ((1 << w) & 0x181) != 0;
@@ -781,6 +871,10 @@ void GameContext::render(AppContext& app) {
 	if (cinePose == nullptr && !cinematic_.active() && gameplayView) {
 		ViewWeaponModel wp;
 		buildViewWeaponModel(wp);
+		// Legacy latches the finished lower/raise inside drawWeapon
+		// (src/Combat.cpp:776-782); latching right after the const build, under
+		// the same draw gates, keeps both the frame and the tick ordering.
+		if (wp.visible) sys_.game->combat.latchWeaponLerp(wp.weapon);
 		viewWeapon_.draw(g, scene_.camera(), wp);
 	}
 
@@ -878,6 +972,10 @@ void GameContext::render(AppContext& app) {
 			applyUiAction(r.action, r.index);
 		}
 	}
+
+	// Screen fade, painted over the whole frame whenever one is set
+	// (src/Render.cpp:2954-2956); the opaque menu below covers it.
+	sys_.hud->drawFade(g, upTimeMs);
 
 	// In-game menu (spec 2026-08-28-menu §7.1): drawn last because it OWNS the
 	// frame — its 480x320 background is opaque, so the world pass above (which

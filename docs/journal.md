@@ -1782,3 +1782,43 @@ D14: исчерпание 48 слотов / 8 снарядов — лог и м�
 все 5 тайлов есть в медиа map00. Ревью PASS с первого раза. Золотые кадры идентичны (6 из 7 прогонов;
 один сбой — не пропустилось вступление, к G7 не относится). Пользователь проверил на экране — всё работает.
 Поиск пути на map00: 9–57 мкс на монстра.
+
+## 2026-10-28 — атака монстров G8a: смерть игрока и меню «Try Again?»
+
+R1 (researcher, `docs/research/2026-10-28-dead-menu-back.md`): BACK/MENU в меню 51 — только звук 1122,
+кнопок «назад»/«в игру» нет. G8a: затемнение Hud (`src/Render.cpp:2548-2587`), viewRoll в камеру,
+счётчики смертей, вход в Dying (`src/Player.cpp:711-733`, звук 1092 для морпеха), `tickDying`
+(`src/GameStateRunner.cpp:257-281`, `new_src/core/GameContext.cpp:516-537`), меню 51 по центру без
+софт-клавиш. Спека §9.2 исправлена: положительный наклон в оригинале смотрит ВВЕРХ. Временный лог
+`[ai] path ... us` удалён. Ревью PASS с первого раза; золотые кадры идентичны. Пользователь проверил на экране — всё работает.
+
+## 2026-10-28 — атака монстров G8b: перезапуск уровня
+
+`GameContext::restartLevel()` (`new_src/core/GameContext.cpp:377-403`): сброс игрока (уровень map00 =
+новая игра, currentLevelDeaths=0 по `src/Game.cpp:2200-2202`), вида, кинокамеры, боя, рантайм-спрайтов,
+видимости, эффектов Hud, подсказок; перечитывание карты (`Init::reloadMap`, `new_src/core/Main.cpp:326-339`,
+разбор в новый MapData и move — адрес g_map сохраняется), затем Loading. «Restart Level» в меню 51 и в
+подтверждении 52 (`src/MenuSystem.cpp:3105-3111`). D6 дополнено. Ревью: FAIL (не обнулялся
+currentLevelDeaths) → исправлено (проверено оркестратором). Безэкранный прогон смерть→перезапуск×2 без
+зависаний; золотые кадры идентичны. Пользователь проверил на экране — работает.
+
+## 2026-10-28 — толчок о стену (wall push)
+
+Исследование: `docs/original-code/wall-push.md` (`src/PlayingInputHandler.cpp:467-487`). Флаг клетки 0x4 —
+не толчок, а секретная дверь (`:461-466`, ветки в переписи нет — секретные стены сейчас дают толчок).
+Порт: звук 1073 (лог), `Combat::shiftWeapon` (`src/Combat.cpp:846-855`), опускание оружия на 38 px
+200/500/200 мс (`new_src/core/GameContext.cpp:741-754`, `new_src/ui/ViewWeapon.cpp:97`), rockView 1000 мс к
+стене, подъём по pushedTime (`src/GameStateRunner.cpp:166-169`), запрет стрельбы при опущенном оружии
+(`src/Player.cpp:761-771`), сброс при загрузке уровня. Сброс pushedWall в advanceTurn (`src/Game.cpp:1254`)
+не перенесён до порта checkFacingEntity. Ревью PASS с первого раза; золотые кадры идентичны. Пользователь проверил на экране — работает.
+
+## 2026-10-28 — секретные двери (mapFlags 0x4)
+
+Исследование `docs/original-code/secret-doors.md`, спека `docs/architecture/specs/2026-10-28-secret-doors.md`.
+G1: `SpriteLerps::startSecretWall` + хвосты freeLerpSprite — две фазы по 750 мс (вглубь 32, затем вбок 32 со
+сжатием до 0), unlink и HIDDEN в конце, ввод заблокирован через animatingEffects (`src/Game.cpp:1081-1129,
+3127-3135, 3170-3199`; `new_src/domain/game/SpriteLerps.cpp:23-51, 312-337`). G2: `Game::awardSecret`
+(msg 119, mapSecretsFound, +5 XP / все секреты +10 XP и бит foundSecretsLevels; `src/Game.cpp:3473-3491`).
+G3: ветка в PlayerActions до толчка о стену (`src/PlayingInputHandler.cpp:461-466`), EV_AWARDSECRET,
+блок help-диалогов при secretActive. Рендер без изменений. Ревью PASS с первого раза; золотые кадры
+идентичны. Пользователь проверил обе стены map00 на экране — всё работает.

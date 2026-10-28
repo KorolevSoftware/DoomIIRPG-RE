@@ -323,9 +323,20 @@ int main(int argc, char* argv[]) {
 	game.items.init({          // Env: db, defs, map, player, hud, loc, tables, vm, game (§G2.3)
 		&game.db, &g_entityDefs, &g_map, &player, &hud, &loc, &tables, &vm, &game });
 	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges
-	ctx.init({                 // Init: map, defs, tables, loc, font, g2d, media, game, player, vm, hud, world, dialogs, ui, menus
+	// Restart Level: reparse into a fresh MapData (parse appends to some
+	// vectors) and move it over g_map, so every borrowed &g_map stays valid.
+	// Same file, same media: World3D's textures and the GameSprites slot
+	// layout (numMapSprites + 48 hidden slots) are unchanged.
+	const auto reloadMap = [&app, &g_map] {
+		std::vector<uint8_t> mapData;
+		MapData fresh;
+		if (!app.readResource("map00.bin", mapData) || !MapParser::parse(mapData, fresh)) return false;
+		g_map = std::move(fresh);
+		return true;
+	};
+	ctx.init({                 // Init: map, defs, tables, loc, font, g2d, media, game, player, vm, hud, world, dialogs, ui, menus, reloadMap
 		&g_map, &g_entityDefs, &tables, &loc, &font, &app.g2d(), &g_media,
-		&game, &player, &vm, &hud, &world, &dialogs, &ui, &menus });
+		&game, &player, &vm, &hud, &world, &dialogs, &ui, &menus, reloadMap });
 	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
 		&ctx, &vm, &game, &loc, &hud, &font, &tables });
 

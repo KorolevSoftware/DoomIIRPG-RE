@@ -94,8 +94,7 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel&
 	// magnification.
 	int scrX = 196;                        // 480/2 - 44                (:627)
 	int scrY = 131;                        // 320/2 - 29                (:628)
-	// weaponDown lower/raise lerp absent -> skip scrY += LOWEREDWEAPON_Y(38)
-	// (:672-674); shiftWeapon/LOWERWEAPON_TIME=200 stays unported.
+	scrY += m.lowerY;                      // LOWEREDWEAPON_Y lerp (:672-674, :769-784)
 	// Per-weapon scrY bias (:679-693).
 	scrY += (w == 1) ? 3 : (w == 2) ? 10 : (w >= 3 && w <= 6) ? 12 : 0;
 

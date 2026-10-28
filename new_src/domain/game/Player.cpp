@@ -101,6 +101,7 @@ void Player::reset() {
 	currentXP = 0;
 	nextLevelXP = calcLevelXP(level);
 	xpGained = 0;
+	foundSecretsLevels = 0;            // src/Player.cpp:557
 	disabledWeapons = 0;
 	facingEntity = nullptr;
 	god = false;
@@ -293,16 +294,20 @@ void Player::addLevel() {
 }
 
 bool Player::fireWeapon(Combat& combat, Entity* target, int x, int y) {
-	// src/Player.cpp:754-799. The weaponDown / lower-raise lerp system is
-	// absent from the rewrite (:761-771 skipped with citation).
+	// src/Player.cpp:754-799.
 	// Explicit unowned/no-weapon guard first — legacy reads 1 << -1 (UB).
 	if (weapon < 0 || (weapons & (1 << weapon)) == 0) return false;
 	if (weapon == 13 /*WP_SOUL_CUBE*/ &&
 	    (target == nullptr || target->monster == nullptr)) {
 		return false;                                          // :757-759
 	}
-	if (disabledWeapons != 0 && (weapons & (1 << weapon)) == 0) {
-		return false;                                          // :761-763 op-60 mask
+	if (combat.weaponDown || (disabledWeapons != 0 && (weapons & (1 << weapon)) == 0)) {
+		return false;                                          // :761-763 lowered / op-60 mask
+	}
+	if (combat.lerpingWeapon) {                                // :765-771
+		if (combat.lerpWpDown) return false;                   // still lowering
+		combat.lerpingWeapon = false;                          // snap a raise to finished
+		combat.weaponDown = false;
 	}
 	// Target flag clear (:773-775): flags &= 0xfff7 clears bit 0x8 only,
 	// MFLAG_NOACTIVATE (src/Player.cpp:774, new_src/domain/game/Enums.h:279).

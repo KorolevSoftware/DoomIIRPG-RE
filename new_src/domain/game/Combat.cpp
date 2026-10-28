@@ -71,6 +71,22 @@ int Combat::tileDistSq(int tiles) const {
 	return tileDistances[idx];
 }
 
+void Combat::shiftWeapon(bool down) {
+	if (down == lerpWpDown || down == weaponDown) return;     // src/Combat.cpp:848-850
+	lerpingWeapon = true;
+	lerpWpDown = down;
+	lerpWpStartTime = (int)*env_.gameTime;
+	lerpWpDur = kLowerWeaponTime;
+}
+
+void Combat::latchWeaponLerp(int w) {
+	if (!lerpingWeapon || playerAttackPose(w) ||
+	    lerpWpStartTime + lerpWpDur > (int)*env_.gameTime) return;
+	lerpWpStartTime = 0;
+	lerpingWeapon = false;
+	weaponDown = lerpWpDown;
+}
+
 int Combat::getWeaponTileNum(int n) {
 	// src/Combat.cpp:1766-1784.
 	if (n < 5) return 1 + n;

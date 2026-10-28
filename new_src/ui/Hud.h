@@ -83,6 +83,26 @@ public:
 		rockView_ = RockView{ nowMs, durMs, x << 4, y << 4, z << 4 };
 	}
 	const RockView& rockView() const { return rockView_; }
+	// Render::startFade / isFading / fadeScene (src/Render.cpp:2527-2587).
+	// Only FADEOUT is drawn; it stays fully black once finished.
+	static constexpr int kFadeOut = 1;   // FADE_FLAG_FADEOUT
+	void startFade(int64_t nowMs, int durMs, int flags) {
+		fadeStartMs_ = nowMs;
+		fadeDurMs_ = durMs;
+		fadeFlags_ = flags;
+	}
+	bool isFading() const { return fadeFlags_ != 0; }
+	void drawFade(Graphics2D& g, int64_t nowMs);
+	// Level restart: Render::endFade (src/Render.cpp:2543-2546) plus the shake,
+	// rock and damage-indicator state a fresh boot starts without.
+	void clearScreenEffects() {
+		fadeFlags_ = 0;
+		stopShake();
+		rockView_ = RockView{};
+		damageDir_ = 0;
+		damageTime_ = 0;
+		damageCount_ = 0;
+	}
 	void drawHudOverdraw(Graphics2D& g, int hudX, int hudY, int hudW, int hudH);
 	void setArrowPressed(int a) { arrowPressed_ = a; }
 	void setShowArrows(bool on) { showArrows_ = on; }
@@ -211,6 +231,10 @@ private:
 	int64_t damageTime_ = 0;
 	int damageCount_ = 0;
 	RockView rockView_;
+	// Render fadeTime / fadeDuration / fadeFlags.
+	int64_t fadeStartMs_ = 0;
+	int fadeDurMs_ = 0;
+	int fadeFlags_ = 0;
 
 	// Cinematic text state (subTitleID/subTitleTime + cinTitleID/
 	// cinTitleTime analogs; duration-counted instead of gameTime-stamped).

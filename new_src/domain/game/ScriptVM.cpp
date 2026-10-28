@@ -1496,6 +1496,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
+		case Enums::EV_AWARDSECRET:                // op 50, no operands (src/ScriptThread.cpp:1256-1259)
+			env_.game->awardSecret(false);         // chime 1020
+			break;
+
 		case Enums::EV_END: {                    // byte value 255
 			if (t->stackPtr != 0) {
 				std::fprintf(stderr, "[script] EV_END with stackPtr=%d (legacy Error 102)\n", t->stackPtr);

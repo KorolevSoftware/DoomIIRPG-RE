@@ -112,6 +112,8 @@ public:
 	// pairing.
 	void setXPSystems(Player* player, const Localization* loc, Hud* hud) {
 		player_ = player;
+		loc_ = loc;
+		hud_ = hud;
 		monsters.setXPSystems(player, loc, hud);
 		db.setPlayer(player);
 	}
@@ -138,6 +140,12 @@ public:
 	bool showingLoot = false;       // a GIVELOOT dialog is on screen; cleared by DialogSystem::closeDialog (src/DialogSystem.cpp:526)
 	int numDestroyableObj = 0;      // map-completion stat: props spawned (src/Game.cpp:448-450)
 	int destroyedObj = 0;           // props destroyed so far (src/Game.cpp:3545-3547)
+	uint8_t mapSecretsFound = 0;    // secrets found on this map (src/Game.h:130)
+
+	// src/Game.cpp:3473-3491: "Found Secret!", chime (1103 push wall /
+	// 1020 script), then +5 XP or, for the map's last secret the first
+	// time, the achievement +10 XP and the foundSecretsLevels bit.
+	void awardSecret(bool pushWall);
 
 	Combat combat;                  // peer subsystem (ADR 0008)
 	EntityDb db;                    // peer subsystem (spec §P2-GF); wired in loadEntities
@@ -162,6 +170,10 @@ private:
 	const EntityDefs* defs_ = nullptr;     // set in loadEntities
 	ScriptVM* vm_ = nullptr;
 	Player* player_ = nullptr;             // set in setXPSystems
+	const Localization* loc_ = nullptr;    // set in setXPSystems
+	Hud* hud_ = nullptr;                   // set in setXPSystems
+
+	void addXPMessage(int xp);
 };
 
 } // namespace newcore

@@ -2,6 +2,7 @@
 #define NEW_CORE_GAMECONTEXT_H
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "core/CinematicCamera.h"
@@ -65,9 +66,16 @@ public:
 		Ui* ui = nullptr;
 		// Parsed menus.bin (ADR 0013), built in Main.cpp next to Tables.
 		const MenuData* menus = nullptr;
+		// Re-reads the current map file into *map (Main.cpp); textures stay
+		// valid because the media set is the same. False = read/parse failed.
+		std::function<bool()> reloadMap;
 	};
 
 	void init(const Init& sys);
+
+	// ACTION_RESTARTLEVEL (src/MenuSystem.cpp:3105-3111): fresh start of the
+	// current level, then ST_LOADING re-runs the load tail. Deviation D6.
+	void restartLevel();
 
 	// Single mutator, mirrors Canvas::setState (src/Canvas.cpp:1020-1217):
 	// latch stateChanged, zero stateVars[9], exit hooks, swap, enter hooks.
@@ -168,6 +176,9 @@ private:
 
 	// ST_MENU screen state (spec 2026-08-28-menu §4).
 	MenuSession menu_;
+	// Screen the next ST_MENU entry opens; set by the caller right before
+	// setState(Menu), consumed and reset by enterState_.
+	int nextMenuId_ = kMenuInGame;
 
 	// View forward / facing probe / fire election (spec §P1-G4).
 	Targeting targeting_;

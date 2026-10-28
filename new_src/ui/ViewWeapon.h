@@ -29,6 +29,8 @@ struct ViewWeaponModel {
 	// (src/Combat.cpp:735-767).
 	int poseX = 0;
 	int poseY = 0;
+	// Lowered-weapon scrY term, 0..38 (src/Combat.cpp:672-674, :769-784).
+	int lowerY = 0;
 	// Both legacy flash gates already applied (src/Combat.cpp:741 and :826).
 	bool muzzleFlash = false;
 	int flashX = 0;

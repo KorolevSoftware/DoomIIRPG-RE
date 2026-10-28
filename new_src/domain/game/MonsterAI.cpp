@@ -1,6 +1,5 @@
 #include "domain/game/MonsterAI.h"
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -374,12 +373,7 @@ bool MonsterAI::goalMove(Entity* e) {
 		m->goalY = ps.findEnt->linkIndex / 32;
 	}
 	if (b) ps.closestPathDist = 0;                             // :1075-1077
-	const auto t0 = std::chrono::steady_clock::now();
 	bool ok = calcPath(sX >> 6, sY >> 6, m->goalX, m->goalY, Contents::MONSTERSOLID, b);
-	const long long us = std::chrono::duration_cast<std::chrono::microseconds>(
-		std::chrono::steady_clock::now() - t0).count();
-	std::fprintf(stderr, "[ai] spr=%d path goal=%d,%d found=%d depth=%d best=%d %lldus\n", sprite,
-		m->goalX, m->goalY, ok ? 1 : 0, ps.pathDepth, ps.closestPathDepth, us);   // §7.6 watch item
 	if (!ok && ps.closestPathDist < 999999999) {               // :1079-1083
 		ok = true;
 		ps.curPath = ps.closestPath;

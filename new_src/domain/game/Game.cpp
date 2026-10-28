@@ -8,6 +8,7 @@
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapBits.h"
 #include "io/Localization.h"
+#include "ui/Hud.h"
 
 namespace newcore {
 
@@ -31,7 +32,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	                &facingDirty, &lerps, &ai, player_, &sprites });    // spec §P2-GC
 	ai.init({ &db, &map, &trace, &combat, &monsters, player_, &lerps, &doors,
 	          &visibility });                                           // ADR 0028
-	lerps.init({ &db, &map, vm_, &ai });                // peer subsystem wiring (spec §P2-GD)
+	lerps.init({ &db, &map, vm_, &ai, &facingDirty });             // peer subsystem wiring (spec §P2-GD)
 	sprites.init({ &map, &lerps, player_ });            // ADR 0030
 	loot.init({ &db, &defs });                          // peer subsystem wiring (spec §P2-GE)
 	db.resetEntities();
@@ -44,7 +45,10 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	combat.curTarget = nullptr;                    // src/Game.cpp:652 (unloadMapData)
 	combat.curAttacker = nullptr;                  // src/Game.cpp:653
 	combat.attackerMonster = nullptr;
-	lootFound = 0;                                 // src/Game.cpp:681 (unloadMap)
+	combat.lerpWpDown = false;                     // src/Game.cpp:677-678 (unloadMapData)
+	combat.weaponDown = false;
+	lootFound = 0;                                // src/Game.cpp:681 (unloadMap)
+	mapSecretsFound = 0;                          // src/Render.cpp:306 (unload)
 	lootSource = -1;
 	showingLoot = false;
 	queueAdvanceTurn = false;
@@ -481,6 +485,42 @@ void Game::turnEntityIntoWaterSpout(Entity* e) {
 
 int Game::difficulty() const {
 	return vm_ != nullptr ? vm_->vars[12] : 2;
+}
+
+// ---- Secrets (docs/original-code/secret-doors.md) ----
+
+// src/Player.cpp:264-276: legacy addXP posts msg 103 (102 for xp<0) with flags 0.
+void Game::addXPMessage(int xp) {
+	if (hud_ != nullptr && loc_ != nullptr) {
+		std::string msg = loc_->get(kTextMain, xp < 0 ? 102 : 103);
+		std::string a[1] = { std::to_string(xp) };
+		composeArgs(msg, a, 1);
+		hud_->addMessage(msg, 0xAA000000, 0);
+	}
+	if (player_ != nullptr) player_->addXP(xp);
+}
+
+// src/Game.cpp:3473-3491
+void Game::awardSecret(bool pushWall) {
+	if (hud_ != nullptr && loc_ != nullptr)
+		hud_->addMessage(loc_->get(kTextMain, 119), 0xAA000000, 0);   // "Found Secret!" :3476
+	++mapSecretsFound;                                                 // :3477
+	std::fprintf(stderr, "[sound] %d\n", pushWall ? 1103 : 1020);      // :3479-3484
+	const int bit = 1 << (combat.loadMapID - 1);
+	if (player_ != nullptr && map_ != nullptr && mapSecretsFound == map_->totalSecrets &&
+	    (player_->foundSecretsLevels & bit) == 0) {                    // :3486
+		// showAchievementMessage(1) (src/Player.cpp:1953-1989): help dialog
+		// type 3 (raw text) is not supported by DialogSystem -> logged.
+		std::string text = loc_ != nullptr ? loc_->get(kTextMain, 135) : std::string();
+		std::string a[1] = { loc_ != nullptr ? loc_->get(kTextMain, 137) : std::string() };
+		composeArgs(text, a, 1);
+		std::fprintf(stderr, "[help] achievement (deferred dialog): %s\n", text.c_str());
+		addXPMessage(10);
+		std::fprintf(stderr, "[sound] 1020\n");
+		player_->foundSecretsLevels |= bit;                            // :3488
+	} else {
+		addXPMessage(5);                                               // :3490
+	}
 }
 
 // %NN arg substitution, decode rules of Localization composeText

@@ -9,6 +9,7 @@
 #include "domain/game/Enums.h"
 #include "domain/game/MonsterAI.h"
 #include "domain/game/ScriptVM.h"
+#include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 
 namespace newcore {
@@ -16,6 +17,37 @@ namespace newcore {
 void SpriteLerps::init(const Env& env) {
 	env_ = env;
 	for (auto& ls : spriteLerps_) ls.hSprite = 0;
+	secretActive_ = false;                     // src/Game.cpp:351
+}
+
+// performDoorEvent(0, e, 1, true) (src/Game.cpp:1047-1157, b=true path).
+// No DOORLERP, no sound, no snap (n2=1, :1153-1155).
+bool SpriteLerps::startSecretWall(Entity* e) {
+	if (e == nullptr || e->def == nullptr || env_.map == nullptr) return false;
+	if (e->def->eSubType == 1) return false;                  // :1059-1061
+	const int sprite = e->getSprite();
+	if (sprite < 0) return false;
+	SpriteLerp* ls = allocLerpSprite(nullptr, sprite, true);  // :1081
+	if (ls == nullptr) return false;
+	const int n = env_.map->numSprites;
+	const int info = env_.map->mapSpriteInfo[sprite];
+	env_.map->mapSpriteInfo[sprite] = info & ~Enums::SPRITE_FLAG_HIDDEN;   // :1082
+	secretActive_ = true;                                     // :1084
+	// :1085, :1129 (S_NORELINK: no sprite relink in the rewrite)
+	ls->flags |= SpriteLerp::kFlagSecretOpen | SpriteLerp::kFlagEntNoRelink;
+	const int sx = env_.map->mapSprites[sprite + 0 * n];
+	const int sy = env_.map->mapSprites[sprite + 1 * n];
+	ls->srcX = ls->dstX = sx;                                 // :1092-1095
+	ls->srcY = ls->dstY = sy;
+	ls->srcZ = ls->dstZ = env_.map->mapSprites[sprite + 2 * n] + spriteZBias(sprite, sx, sy);
+	ls->srcScale = ls->dstScale = env_.map->mapSprites[sprite + 8 * n];
+	if (info & SpriteInfo::HORIZONTAL)                        // :1101-1108
+		ls->dstY += (info & Enums::SPRITE_FLAG_NORTH) ? 32 : -32;
+	else if (info & SpriteInfo::VERTICAL)                     // :1114-1121
+		ls->dstX += (info & Enums::SPRITE_FLAG_WEST) ? 32 : -32;
+	ls->startTime = lerpClock_;                               // :1127-1128
+	ls->travelTime = 750;
+	return true;
 }
 
 // ---- Script sprite lerps (docs/original-code/lerp-opcodes.md) ----
@@ -244,7 +276,8 @@ int SpriteLerps::updateLerpSprite(SpriteLerp* ls) {
 
 // Completion snap (freeLerpSprite head, src/Game.cpp:3078-3119, subset):
 // dst X/Y/(Z)/scale written back, entity relinked to the dst tile, slot
-// freed. Door/secret/chicken tails are not ported (door lerps use DoorAnim).
+// freed, plus the two secret push-wall tails. Door/chicken tails are not
+// ported (door lerps use DoorAnim).
 void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 	const int sprite = ls->hSprite - 1;
 	Entity* ent = nullptr;
@@ -275,6 +308,32 @@ void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 			env_.map->mapSpriteInfo[sprite] =
 				(env_.map->mapSpriteInfo[sprite] & 0xFFFF00FF) | restore;
 			dbgLerpAnimAudit(sprite, env_.map->mapSpriteInfo[sprite]);
+		}
+		if (ls->flags & SpriteLerp::kFlagSecretHide) {
+			// End of secret phase 2 (src/Game.cpp:3127-3135): the wall
+			// vanishes, its tile becomes passable; slot freed below.
+			if (env_.facingDirty) *env_.facingDirty = true;
+			secretActive_ = false;
+			if (ent != nullptr && (ent->info & Entity::kInfoLinked) != 0) env_.db->unlinkEntity(ent);
+			if (ent != nullptr && ent->def != nullptr && ent->def->eType != Enums::ET_DOOR)
+				env_.map->mapSpriteInfo[sprite] |= Enums::SPRITE_FLAG_HIDDEN;
+		} else if (ls->flags & SpriteLerp::kFlagSecretOpen) {
+			// Phase 1 -> phase 2 re-arm (src/Game.cpp:3170-3199): slide sideways
+			// while collapsing; the slot stays, input stays blocked.
+			ls->flags = (ls->flags & ~SpriteLerp::kFlagSecretOpen) | SpriteLerp::kFlagSecretHide;
+			ls->srcX = ls->dstX;
+			ls->srcY = ls->dstY;
+			env_.map->mapSpriteInfo[sprite] |= Enums::SPRITE_FLAG_DOORLERP;
+			ls->dstScale = 0;                      // S_SCALEFACTOR = dstScale written above (:3176)
+			ls->startTime = lerpClock_;
+			switch (env_.map->mapSpriteInfo[sprite] & SpriteInfo::ORIENTED) {
+				case Enums::SPRITE_FLAG_EAST: ls->dstY += 32; break;
+				case Enums::SPRITE_FLAG_NORTH: ls->dstX += 32; break;
+				case Enums::SPRITE_FLAG_WEST: ls->dstY -= 32; break;
+				case Enums::SPRITE_FLAG_SOUTH: ls->dstX -= 32; break;
+			}
+			ls->travelTime = 750;
+			return;
 		}
 	}
 	ls->hSprite = 0;

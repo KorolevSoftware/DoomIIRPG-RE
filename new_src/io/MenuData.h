@@ -18,7 +18,7 @@ enum MenuId : int {
 	kMenuHelpPowerUp   = 61,
 	kMenuExit          = 42,
 	kMenuQuestLog      = 46,
-	kMenuLoad          = 49, kMenuLoadNoSave = 50,
+	kMenuLoad          = 49, kMenuLoadNoSave = 50, kMenuInGameDead = 51,
 	kMenuRestartLvl    = 52, kMenuSaveQuit = 53,
 	kMenuSpecialExit   = 58,
 	kMenuControls      = 62,

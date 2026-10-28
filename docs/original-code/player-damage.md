@@ -234,6 +234,32 @@ Type 6, 5 items (strings file 3): "Try Again?" (header, flags 9), blank,
 `loadState` saves config, sets the loading-bar text and enters `ST_LOADING`
 (`src/LoadingManager.cpp:38-45`).
 
+Cancel inputs while menu 51 is open (verified 2026-10-28, see
+`docs/research/2026-10-28-dead-menu-back.md`): ST_MENU routes every key to
+`MenuSystem::handleMenuEvents` (`src/InputEventController.cpp:314-315`).
+* BACK (`AVK_CLR` / key 18 → `ACTION_BACK`, `src/InputEventController.cpp:25,136-137`)
+  and left soft key / menu key (`ACTION_MENU`, `:27,41,130-131`) both reach
+  `this->back()` for menu 51 — no per-menu exception covers 51
+  (`src/MenuSystem.cpp:2921-2957`).
+* `back()` (`src/MenuSystem.cpp:568-611`): plays sound 1122 if not already
+  playing (`:577-581`); the stack is empty (any exit from ST_MENU runs
+  `clearStack()` in `Canvas::setState`, `src/Canvas.cpp:1033-1035`, and death
+  starts from gameplay), and 51 is not in the `returnToGame()` list (`:603-606`)
+  nor the `MENU_MAIN` list (`:607-609`) → **nothing happens; the dead menu stays**.
+* Right soft key (`ACTION_AUTOMAP`, `:26,133-134`) calls `back()` only when
+  `moreGamesPage == 3` (`src/MenuSystem.cpp:2918-2920`); that field is never
+  assigned anywhere in `src/` (`src/MenuSystem.h:150`) → effectively nothing.
+* Touch: `updateTouchButtonState` leaves 51 on the `default` branch, so the
+  back-arrow (button 11) and return-to-game (button 15) soft keys are hidden
+  and untappable (`src/MenuSystem.cpp:4499-4509`; taps handled only if
+  `drawButton`, `:4781-4789`).
+* Type 6 is neither 5 nor 7, so FIRE runs the row action instead of `back()`
+  (`src/MenuSystem.cpp:3004-3011`).
+* Layout: same centred option-button panel as the other in-game confirm menus
+  (`setMenuSettings`, `src/MenuSystem.cpp:4329-4348`); the "Try Again?" header
+  is just the first non-selectable row from `menus.bin`.
+The only ways out are the three rows.
+
 ## 4. Other callers of `pain` / `painEvent` (list)
 * `Entity::touched` `ET_ENV_DAMAGE`: fire (not if `BUFF_ANTIFIRE`) → painEvent +
   `pain(20, ent, true)` + burn status 13; spikes → painEvent + `pain(20, ent, true)`

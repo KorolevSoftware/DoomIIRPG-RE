@@ -148,7 +148,7 @@ docs/architecture/README.md; журнал: docs/journal.md)._
         `else if`: промах пилой больше не будит монстра.
         НЕ сделано: G2 (рост силы, тряска), G4 (гибы трупов), G5 (настоящие
         снаряды: святая вода, плазма, ракеты, BFG, куб душ, брошенный предмет).
-      - [ ] Атака монстров (спека docs/architecture/specs/2026-09-22-monster-attacks.md,
+      - [x] Атака монстров (спека docs/architecture/specs/2026-09-22-monster-attacks.md,
         ADR-0027..0030; факты: docs/original-code/monster-{turn,attack,movement}.md,
         player-damage.md). Группы:
         - [x] G1 игрок — связанная сущность в entityDb; сложность по умолчанию 1 (2026-09-23)
@@ -158,7 +158,8 @@ docs/architecture/README.md; журнал: docs/journal.md)._
         - [x] G5 пробуждение по видимости на экране (ADR-0029, ADR-0031 колоночное отсечение) (2026-10-28)
         - [x] G6 передвижение монстров (calcPath, шаги 275 мс, двери) (2026-10-28)
         - [x] G7 рантайм-слоты спрайтов, снаряды 6/7, следы когтей (ADR-0030) (2026-10-28)
-        - [ ] G8a смерть игрока + меню «Try Again?»; G8b перезапуск уровня
+        - [x] G8a смерть игрока + меню «Try Again?» (2026-10-28)
+        - [x] G8b перезапуск уровня (2026-10-28)
       - [x] Оружие/combat (CombatEntity::calcHit/calcDamage): domain/game/Combat +
         CombatEntity, выбор цели лучом на 6 клеток (domain/game/Targeting),
         полоса HP цели, отдача и вспышка оружия вида (ui/ViewWeapon).
@@ -189,6 +190,8 @@ docs/architecture/README.md; журнал: docs/journal.md)._
         кокпита), поездки лифта. core/CinematicCamera. Подтверждено на экране.
       - [x] Лут: EV_MAKE_CORPSE, пул лута, выдача, UI списка
         (core/LootSession + domain/game/CorpseLoot).
+      - [x] Толчок о стену (wall push): shiftWeapon + rockView, docs/original-code/wall-push.md (2026-10-28).
+      - [x] Секретные двери (mapFlags 0x4) + awardSecret + EV_AWARDSECRET, docs/original-code/secret-doors.md (2026-10-28).
       - [ ] Полная система диалогов (стили/говорящие).
       - [ ] Виджеты нижней панели HUD: код есть (Hud::draw/drawBottomBar), но
         у него НЕТ вызывающего в игровом рендере — щит/здоровье/портрет/слот

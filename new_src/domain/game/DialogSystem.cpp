@@ -223,7 +223,7 @@ void DialogSystem::dequeueHelpDialog(bool force) {
 	if (env_.ctx->state() == StateId::Dialog || closing_) return;    // (760-762)
 	// INTER_CAMERA also passes in legacy (:763-765); it arrives with GROUP 2.
 	if (!force && env_.ctx->state() != StateId::Playing) return;
-	// secretActive guard (:766-768): secrets not implemented.
+	if (env_.game->lerps.secretActive()) return;   // help waits until the secret wall vanished (:766-768)
 
 	type_ = helpTypes_[0];
 	int id = helpIds_[0];

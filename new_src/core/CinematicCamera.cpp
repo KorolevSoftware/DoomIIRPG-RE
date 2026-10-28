@@ -16,6 +16,12 @@ void CinematicCamera::init(const Env& env) {
 	env_ = env;
 }
 
+void CinematicCamera::reset() {
+	const Env env = env_;
+	*this = CinematicCamera{};
+	env_ = env;
+}
+
 void CinematicCamera::startCinematic(int camIdx) {
 	Player& p = *env_.player;
 	MayaPose pose;                     // map units; <<4 applied post-inherit

@@ -246,13 +246,14 @@ ScreenGeom geometryFor(int menuId) {
 	switch (menuId) {
 	// One case group in the original (:4330-4349): w = the 296 px option
 	// button, x = (480 - w) >> 1 = 92, y = 0, h = 320. Its remaining members
-	// (INGAME_CONTROLLER / OPTIONS_SOUND / OPTIONS_INPUT / INGAME_DEAD /
+	// (INGAME_CONTROLLER / OPTIONS_SOUND / OPTIONS_INPUT /
 	// ITEMS_CONFIRM / the three ITEMS_*MSG screens) have no MenuId in the
 	// rewrite. LOADNOSAVE 50 and SPECIAL_EXIT 58 are deliberately absent: they
 	// are NOT in that group and keep the default rect.
 	case kMenuOptions:
 	case kMenuExit:
 	case kMenuLoad:
+	case kMenuInGameDead:
 	case kMenuRestartLvl:
 	case kMenuSaveQuit:
 	case kMenuControls:
@@ -300,17 +301,20 @@ UiRect MenuSession::barRect() const {
 	return UiRect{ kBarX, (initRectH - kBarH) >> 1, kBarW, kBarH };
 }
 
-// ST_MENU entry hook: setMenu(MENU_INGAME), which clears the navigation stack
-// (src/MenuSystem.cpp:619-621). The state change itself is the caller's
-// business here — the legacy setMenu pushes ST_MENU onto the canvas (:650-653),
-// the rewrite arrives from GameContext::enterState_.
-void MenuSession::begin() {
+// ST_MENU entry hook: setMenu(menuId) — MENU_INGAME from gameplay, MENU_INGAME_DEAD
+// from the death sequence (src/GameStateRunner.cpp:279). The state change itself
+// is the caller's business here — the legacy setMenu pushes ST_MENU onto the
+// canvas (:650-653), the rewrite arrives from GameContext::enterState_.
+void MenuSession::begin(int menuId) {
 	// The popup cannot survive a screen change (it swallows every action while
 	// it is up), but the entry hook resets it anyway, exactly as the legacy
 	// constructor leaves it (:159-160).
 	helpIndex_ = -1;
 	infoIndex_ = -1;
-	setMenu(kMenuInGame);
+	// Legacy clears the stack on every ST_MENU exit (src/Canvas.cpp:1033-1035),
+	// so it is empty on entry; setMenu clears it only for MENU_INGAME (:619-621).
+	clearStack();
+	setMenu(menuId);
 }
 
 void MenuSession::setMenu(int menuId) {
@@ -453,9 +457,6 @@ void MenuSession::initMenu(int menuId) {
 		// instead, which is G7's business (spec §11.2 row 3).
 		case kActionChangeState:
 			disableRow(i, "no ST_AUTOMAP / ST_CREDITS state");
-			break;
-		case kActionRestartLevel:
-			disableRow(i, "no map reload");
 			break;
 		case kActionBackToMain:
 			disableRow(i, "no main menu");
@@ -1330,6 +1331,14 @@ void MenuSession::select(int i) {
 			returnToGame();
 		}
 		break;
+	case kActionRestartLevel:
+		// (:3105-3111) loadState(2) = the level-start brief save; deviation D6:
+		// no save system, so the level starts fresh (spec 2026-09-22 §10). The
+		// "level restarted" message legacy adds outside MENU_INGAME_DEAD is not
+		// ported: loadMedia zeroes msgCount before it can show
+		// (src/LoadingManager.cpp:659).
+		if (env_.restartLevel) env_.restartLevel();
+		break;
 	default:
 		std::fprintf(stderr, "[menu] action %d (param %d) has no rewrite path\n",
 			items_[i].def.action, items_[i].def.param);
@@ -1391,8 +1400,10 @@ int MenuSession::popMenu(int& selectedIndex, int& scrollIndex) {
 
 // back() (:591-607). MENU_ITEMS_DRINKS and MENU_INGAME_SNIPER have no rewrite
 // counterpart (spec §4.1), and MENU_MAIN_MINIGAME / MENU_COMIC_BOOK are
-// main-menu ids that cannot be reached from ST_MENU.
+// main-menu ids that cannot be reached from ST_MENU. On MENU_INGAME_DEAD the
+// stack is empty and 51 is in neither list, so only the sound remains.
 void MenuSession::back() {
+	std::fprintf(stderr, "[sound] 1122\n");                // (:577-581)
 	if (stackCount_ != 0) {
 		int idx = 0;
 		int scroll = 0;
@@ -1544,15 +1555,19 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 		m.statusLine = &statusText_;
 	}
 
-	// Soft keys (:5238-5240 left label, :5286-5289 right label).
-	softLeftText_.setLength(0);
-	if (env_.loc != nullptr) softLeftText_.append(env_.loc->get(kTextIngame2, 80));
-	softLeftText_.dehyphenate();
-	m.softLeft = &softLeftText_;
-	softRightText_.setLength(0);
-	softRightText_.append("Resume");      // ASCII literal in the original
-	softRightText_.dehyphenate();
-	m.softRight = &softRightText_;
+	// Soft keys (:5238-5240 left label, :5286-5289 right label). MENU_INGAME_DEAD
+	// shows neither: updateTouchButtonState leaves buttons 11 and 15 hidden for
+	// it (:4499-4509), so there is no Back and no Resume to tap.
+	if (menu_ != kMenuInGameDead) {
+		softLeftText_.setLength(0);
+		if (env_.loc != nullptr) softLeftText_.append(env_.loc->get(kTextIngame2, 80));
+		softLeftText_.dehyphenate();
+		m.softLeft = &softLeftText_;
+		softRightText_.setLength(0);
+		softRightText_.append("Resume");      // ASCII literal in the original
+		softRightText_.dehyphenate();
+		m.softRight = &softRightText_;
+	}
 
 	// The torn page, drawn over everything else while selectedHelpIndex is set
 	// (:1135-1173). The text is wrapped once, in showHelp(), because nothing can

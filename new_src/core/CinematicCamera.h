@@ -33,6 +33,9 @@ public:
 	};
 
 	void init(const Env& env);
+	// Back to the boot state (idle, nothing parked), keeping the wiring; the
+	// maya camera's map pointer would dangle after a map reparse.
+	void reset();
 
 	// EV_STARTCINEMATIC target: bind map camera camIdx, capture the player
 	// pose for -2 sentinel channels, enter ST_CAMERA with the 1 s skip

@@ -11,8 +11,8 @@ namespace newcore {
 // MapData::mapFlags[tileY * 32 + tileX] — one byte per tile, the low nibble
 // read verbatim from the packed table (src/LoadingManager.cpp:558-563), the
 // high bits set at runtime. Only the bits used by the rewrite are named;
-// the remaining readers in the original (0x4 wall push, 0x8/0x80
-// automap, 0x10/0x20 player) are still literals at their own call sites.
+// the remaining readers in the original (0x8/0x80 automap, 0x10/0x20
+// player) are still literals at their own call sites.
 namespace TileFlag {
 
 // File bit 0; the world entity is linked on these tiles at load, which also
@@ -24,6 +24,11 @@ constexpr int SOLID_AT_LOAD = 0x1;
 // an opaque spritewall ends the scan (src/MovementController.cpp:61,
 // docs/research/2026-08-26-facing-entity-health-bar.md §2).
 constexpr int BLOCKS_SIGHT = 0x2;
+
+// Secret push wall: fire on an ET_SPRITEWALL facing this tile opens it.
+// File-only bit, never written at runtime; single reader
+// src/PlayingInputHandler.cpp:461 (docs/original-code/secret-doors.md §4).
+constexpr int SECRET_DOOR = 0x4;
 
 // Tile carries a tileEvents entry. Set while parsing the event table
 // (src/LoadingManager.cpp:548) and tested before running the event

@@ -41,6 +41,7 @@ public:
 	int currentXP = 0;
 	int nextLevelXP = 0;
 	int xpGained = 0;
+	int foundSecretsLevels = 0;     // bit mapID-1: all secrets found (src/Game.cpp:3486-3488)
 	bool god = false;
 
 	// ---- Discrete movement (legacy Canvas) ----
@@ -57,6 +58,8 @@ public:
 	// terrain-slope target machinery is not ported yet
 	// (src/MovementController.cpp:230-281).
 	int viewPitch = 0;
+	// View roll; only the death sequence writes it (src/GameStateRunner.cpp:265, :274).
+	int viewRoll = 0;
 	int animFrames = 10;
 	int animPos = 0;   // step per frame in X/Y
 	int animAngle = 0; // step per frame in angle
@@ -127,6 +130,10 @@ public:
 	static int calcDamageDir(int x1, int y1, int angle, int x2, int y2);
 	// src/Player.cpp:1933-1946: god blocks negatives; clamp [0,200] on STAT_ARMOR.
 	void addArmor(int n);
+
+	// Player::died counters (src/Player.cpp:717-718), zeroed at startup (:34-35).
+	int currentLevelDeaths = 0;
+	int totalDeaths = 0;
 
 	int getHealth() const { return ce.getStat(Enums::STAT_HEALTH); }
 	int getMaxHealth() const { return ce.getStat(Enums::STAT_MAX_HEALTH); }

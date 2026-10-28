@@ -67,6 +67,8 @@ public:
 	void dequeueHelpDialog(bool force = false);
 	// Queued help popups; gates the monster phase (src/GameStateRunner.cpp:181-183).
 	int numHelpMessages() const { return numHelpMessages_; }
+	// Drops the queued popups on ST_DYING entry (src/Canvas.cpp:1128).
+	void clearHelpQueue() { numHelpMessages_ = 0; }
 
 	// ACTION_* dispatch while ST_DIALOG (src/DialogSystem.cpp:29-112).
 	void handleInput(Action action);

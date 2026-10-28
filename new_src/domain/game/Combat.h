@@ -90,6 +90,15 @@ public:
 	int tileDistances[kMaxTileDistances] = {};
 	std::vector<CombatEntity> monsterTemplates;   // 51 entries (src/Combat.cpp:37-39)
 	int loadMapID = 1;                 // miss-guard gate (b||mapID<8||tileDist>1); map00 => <8
+	// View-weapon lower/raise lerp (src/Combat.h:46-47 constants, :846-855).
+	static constexpr int kLoweredWeaponY = 38;    // LOWEREDWEAPON_Y, GL path value
+	static constexpr int kLowerWeaponTime = 200;  // LOWERWEAPON_TIME (ms, gameTime)
+	bool lerpingWeapon = false, weaponDown = false, lerpWpDown = false;
+	int lerpWpStartTime = 0, lerpWpDur = 0;
+	// Canvas pushedWall/pushedTime (src/Canvas.h:277-278), kept beside the
+	// lerp they drive.
+	bool pushedWall = false;
+	int pushedTime = 0;
 
 	// Player attack entry (src/Combat.cpp:54-166, curAttacker==nullptr form;
 	// melee-lunge block omitted — weapon 18 unreachable Stage 1).
@@ -125,6 +134,17 @@ public:
 	// Missile arrival + melee overlay + the exploded dispatch tail
 	// (src/Combat.cpp:1249-1431), for the ported projectile types.
 	void updateProjectile();
+
+	// src/Combat.cpp:846-855: start lowering (true) / raising (false).
+	void shiftWeapon(bool down);
+	// drawWeapon's b5: the player's own seq drives the pose of weapon w
+	// (src/Combat.cpp:735; punchingMonster is always 0 here).
+	bool playerAttackPose(int w) const {
+		return active && curAttacker == nullptr && attackerWeaponId == w;
+	}
+	// drawWeapon's end-of-lerp latch (src/Combat.cpp:776-782); called at the
+	// view-weapon draw site because the model builder is const.
+	void latchWeaponLerp(int w);
 
 	static int getWeaponTileNum(int n);       // src/Combat.cpp:1766-1784
 	short getWeaponWeakness(int w, int sub, int parm) const;  // src/Combat.cpp:29-31

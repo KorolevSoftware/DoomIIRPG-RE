@@ -8,6 +8,7 @@
 #include "domain/game/ScriptVM.h"
 #include "domain/game/Targeting.h"
 #include "domain/game/TraceSystem.h"
+#include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
@@ -262,6 +263,17 @@ void PlayerActions::handleAction(Action a) {
 			}
 		}
 		if (consumed) break;   // fire election only when nothing consumed the press
+		// Secret push wall (src/PlayingInputHandler.cpp:461-466): elected
+		// ET_SPRITEWALL within one tile AND the FACING tile carries 0x4. No turn.
+		// shortcut: `elected` is only filled when weapon2 >= 0, so with no
+		// weapon the secret cannot be opened; upgrade if an unarmed state
+		// becomes reachable in play.
+		if (elected.isEntity() && elected.eType == Enums::ET_SPRITEWALL &&
+		    electedDist <= env_.game->combat.tileDistSq(1) &&
+		    (env_.map->mapFlags[ty * 32 + tx] & TileFlag::SECRET_DOOR) != 0) {
+			if (env_.game->lerps.startSecretWall(elected.entity)) env_.game->awardSecret(true);
+			break;
+		}
 		// ---- fire (legacy probe src/PlayingInputHandler.cpp:189-548) ----
 		// Order preserved: loot -> tile event -> door -> fire; reached ONLY
 		// when nothing above consumed the press (legacy return-true chain).
@@ -288,10 +300,17 @@ void PlayerActions::handleAction(Action a) {
 				outcome = kWallPush;
 			}
 			if (outcome == kWallPush) {
-				// Within 1 tile of a wall: legacy shiftWeapon(true)+rockView
-				// and NO turn consumed (:467-487). The lower/raise lerp system
-				// is absent -> log only.
-				std::fprintf(stderr, "[combat] wall push (shiftWeapon/rockView deferred)\n");
+				// Within 1 tile of a wall: lower the weapon, jolt the view 2
+				// units toward the wall, NO turn consumed (:467-487). Zoom
+				// guard (:468-470) moot: no zoom in the rewrite. Hero is
+				// forced to characterChoice 1 -> no_use2 (:472-480).
+				Combat& c = env_.game->combat;
+				std::fprintf(stderr, "[sound] 1073\n");
+				c.shiftWeapon(true);                                   // :482
+				c.pushedWall = true;                                   // :483-484
+				c.pushedTime = (int)*c.env().gameTime + 500;
+				env_.hud->startRockView(*c.env().upTimeMs, 1000,       // :485
+					p.viewX + (p.viewStepX >> 6) * 2, p.viewY + (p.viewStepY >> 6) * 2, p.viewZ);
 			} else {
 				// Zoom entry (mask 512 -> initZoom): consumes the input like
 				// legacy (:504-507); deferred here, log once.

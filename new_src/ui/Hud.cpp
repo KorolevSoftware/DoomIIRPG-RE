@@ -122,6 +122,16 @@ void Hud::stopShake() {
 	shakeY_ = 0;
 }
 
+// Render::fadeScene (src/Render.cpp:2548-2587), FADEOUT branch only. Legacy
+// passes 256 - a as the scene weight; the black overlay alpha is therefore a.
+void Hud::drawFade(Graphics2D& g, int64_t nowMs) {
+	if ((fadeFlags_ & kFadeOut) == 0) return;
+	int t = static_cast<int>(nowMs - fadeStartMs_);
+	if (t >= fadeDurMs_ - 50) t = fadeDurMs_;                   // :2553-2555
+	const int a = 65280 * ((t << 16) / (fadeDurMs_ << 8)) >> 16;  // :2581
+	g.fillRect(0, 0, 480, 320, 0, 0, 0, static_cast<uint8_t>(a));
+}
+
 void Hud::drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositive) {
 	// Attack arrow (src/Hud.cpp:507-524), y = screenRect[3] - 20 - 25.
 	if (nowMs < damageTime_ && damageCount_ > 0 && totalDamagePositive) {

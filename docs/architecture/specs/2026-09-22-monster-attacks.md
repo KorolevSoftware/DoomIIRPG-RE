@@ -1358,7 +1358,7 @@ no-ops (the renderer recomputes leaves every frame). `destroy` sets the hidden b
   `SceneRenderer` passes `viewRoll` into `camera_.setView(..., roll, ...)` for the player branch
   (today a literal 0, `SceneRenderer.cpp:108`).
 * **`enterState_(Dying)`** (`src/Canvas.cpp:1113-1129` + `src/Player.cpp:711-733`): counters++,
-  log `[sound] 1090`, `hud->startShake(upTimeMs, 350, 10)`, health 0, clear queue (G3), stateVars
+  log `[sound] 1092` (hero 1 = marine, `src/Player.cpp:720-722`; corrected 2026-10-28), `hud->startShake(upTimeMs, 350, 10)`, health 0, clear queue (G3), stateVars
   already zeroed, `deathTimeMs_ = upTimeMs`, `player->destPitch`-analog: none (pitch driven
   below), `dialogs->clearHelpQueue()` (new: `numHelpMessages_ = 0`).
 * **`tickDying()`** (`src/GameStateRunner.cpp:257-281`), `t = upTimeMs - deathTimeMs_`:
@@ -1367,7 +1367,7 @@ no-ops (the renderer recomputes leaves every frame). `destroy` sets the hidden b
   * `t < 2750`: first time → `hud->startFade(now, 2000, 1)`; `viewRoll = 16`.
   * else: `setState(StateId::Menu)` with menu 51: add `MenuSession::begin(int menuId =
     kMenuInGame)`; `enterState_(Menu)` passes the id through a member set by the caller.
-  * The pitch sign: legacy positive pitch looks down; confirm against the rewrite's
+  * The pitch sign (corrected 2026-10-28, G8a review): legacy positive pitch looks UP (`src/MovementController.cpp:269-281`, `src/TinyGL.cpp:68-98`), same as the rewrite — +96 is used unnegated. Original note: confirm against the rewrite's
     `viewPitch` ("positive = up", `Player.h`) — if opposite, negate here (coder verifies with the
     loot crouch, which is known to look down).
 * **Render in Dying**: world from the player view (fov 290), no HUD, no weapon (already the
@@ -1388,6 +1388,7 @@ is a fresh start, so:
 
 * `GameContext::Init` gains `std::function<bool()> reloadMap` (Main: re-read `map00.bin` and
   `MapParser::parse` into `g_map`; textures stay valid — same media).
+* (Added 2026-10-28 from the G8a review) restartLevel must also reset `viewRoll = viewPitch = 0`, `viewZ`, and clear the Hud fade (`fadeFlags_`; legacy `endFade` in `backToMain`, `src/Canvas.cpp:1380`), otherwise the screen stays black and tilted.
 * New `GameContext::restartLevel()`: `player->reset(); reloadMap(); hud->clearMessages();
   cinematic_.reset-equivalent; combat state reset (active=false, curAttacker=nullptr,
   numActiveMissiles=0); setState(StateId::Loading)`. `tickLoading` does the rest (VM pool reset,
@@ -1410,7 +1411,7 @@ intro/level scripts run again, all monsters asleep at their original places.
 | D3 | Sight-wake trace is 2D (no Z check) | rewrite trace has no Z variant (`src/Game.cpp:277-283`) |
 | D4 | "On-screen step" = `tileVisible(src) || tileVisible(dst)`, where a tile bit is legacy `checkTileVisibilty` (§6.5). Legacy culls the ±16-unit union box of the step instead (`src/Entity.cpp:1095`). That box lies inside the two tiles, so the rewrite errs toward animating | ADR 0029, ADR 0031 |
 | D5 | Sight wake one frame late. Sight-wake lists from frames drawn in Dialog are consumed only on the next Playing tick and only the last frame's list counts (legacy wakes during the dialog frames); the trace origin is the current tick's player view, not the rendered frame's | ADR 0029 |
-| D6 | Restart Level = fresh level start | no save system |
+| D6 | Restart Level = fresh level start (`GameContext::restartLevel`): no ST_TRAVELMAP level-name card on restart; `vars[15]` survives via `clearStateVars(15)` (only written by the travel map); `currentLevelDeaths` zeroed as legacy `loadState(2)` does (`src/Game.cpp:2200-2202`), `totalDeaths` kept | no save system |
 | D7 | `dodgeDir` roll only on the missile path | ADR 0028 decision 5 |
 | D8 | Weapon 18 lunge lerps absent; CHARGE runs as a plain melee attack | not on map00 |
 | D9 | Script threads are swept (finished slots freed) only in Playing/Camera; legacy sweeps in every state except the sound-enable menu (`src/Canvas.cpp:791-796`), so a finished BLOCKINPUT thread may hold its slot through Dialog/Looting/Menu until the next Playing tick | pre-existing; no observable effect found (orchestrator decision, G3) |
@@ -1418,6 +1419,7 @@ intro/level scripts run again, all monsters asleep at their original places.
 | D12 | (G5, residual after §6.5 / ADR 0031) Visibility follows the legacy cull exactly (CPU column-occlusion port), but (a) within one leaf `drawnSprites` is in ascending sprite index instead of legacy depth order, which matters only if two monsters of one leaf wake in the same frame and the first starts an animating effect; (b) the draw walk itself is still unculled (the GPU draws leaves the original skipped, which is invisible because they are occluded or off-screen) | golden frames stay byte-identical; ADR 0031 |
 | D13 | (G6) Lerp pool exhausted on a monster step → instant placement on the goal tile (X/Y/stored Z as `freeLerpSprite` would write) + `reachedGoalMove`, `kGoalFlagLerping` stays clear (`new_src/domain/game/MonsterAI.cpp` `initLerp`); legacy is fatal Error 36 (`src/Game.cpp:3064-3066`, `src/Entity.cpp:856`) | no fatal errors in the rewrite; clears `kInfoOnScreenStep` so input cannot deadlock |
 | D14 | (G7) Runtime sprite pool exhausted (48 slots, legacy fatal Error 34, `src/Game.cpp:1299-1302`) or 8 missiles in flight (ERR_MAX_MISSILES, `src/Combat.cpp:1672-1675`) → `GameSprites::alloc` / `Combat::allocMissile` log and return `nullptr`; a failed missile launch falls back to the instant hit (`missileAnim = 0, exploded = true`), a failed impact/claw effect is simply not shown (`new_src/domain/game/Combat.cpp`) | no fatal errors in the rewrite |
+| D15 | (G8a) `tickDying` calls `Player::updateView` only; the arrival tails legacy `updateView` runs afterwards (`finishMovement` / `finishRotation` / instant-GOTO events, `src/MovementController.cpp:503-516`) are not fired in Dying, and the second `renderScene` with `canvas->viewRoll` (`:545`) is subsumed by the single render from the player pose; legacy `updateView` also nudges viewPitch toward `destPitch = 64` by the leftover `pitchStep` (no `pitchStep` in the rewrite; 0 when the last step started on flat ground) | death is entered between steps (monster turn), so view == dest; the rewrite's arrival hooks live in `tickPlaying` (`new_src/core/GameContext.cpp`) |
 
 ---------------------------------------------------------------------------------------------
 ## 12. Open questions for the user

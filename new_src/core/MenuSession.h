@@ -2,6 +2,7 @@
 #define NEW_CORE_MENUSESSION_H
 
 #include <cstdint>
+#include <functional>
 
 #include "core/GameStates.h"
 #include "io/MenuData.h"
@@ -50,10 +51,11 @@ public:
 		Player* player = nullptr;
 		StateHost* host = nullptr;
 		const int64_t* upTimeMs = nullptr;   // cursor oscillation clock
+		std::function<void()> restartLevel;  // ACTION_RESTARTLEVEL target (GameContext::restartLevel)
 	};
 	void init(const Env& env);
 
-	void begin();                     // ST_MENU entry hook (setMenu(MENU_INGAME))
+	void begin(int menuId = kMenuInGame);  // ST_MENU entry hook (setMenu(menuId))
 	void handleAction(Action a);      // port of handleMenuEvents (src/MenuSystem.cpp:2826-2969)
 	void setSelectedIndex(int i);     // mouse latch (:4787-4792)
 	// Info-button latch (:4802-4805). Separate from the selection on purpose:

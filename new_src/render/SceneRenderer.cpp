@@ -116,7 +116,7 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 	// |pitch| only on the mvp2D billboard path (src/TinyGL.cpp:195-200), the
 	// world/GL projection kept viewFov — the rewrite has a single projection.
 	// viewAspect over the 478x248 world viewport (src/Render.cpp:2223).
-	camera_.setView(rvx, rvy, rvz, env_.player->viewAngle, env_.player->viewPitch, 0, 290,
+	camera_.setView(rvx, rvy, rvz, env_.player->viewAngle, env_.player->viewPitch, env_.player->viewRoll, 290,
 		(290 << 14) / ((478 << 14) / 248));
 	}
 
