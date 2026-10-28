@@ -10,6 +10,7 @@
 #include "domain/game/Entity.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/EntityMonster.h"
+#include "domain/game/GameSprites.h"
 #include "domain/game/ItemPickup.h"
 #include "domain/game/MonsterAI.h"
 #include "domain/game/MonsterSystem.h"
@@ -145,6 +146,7 @@ public:
 	MonsterSystem monsters;         // peer subsystem (spec §P2-GC); wired in loadEntities
 	MonsterAI ai;                   // peer subsystem (ADR 0028); wired in loadEntities
 	SpriteLerps lerps;              // peer subsystem (spec §P2-GD); wired in loadEntities
+	GameSprites sprites;            // runtime sprites (ADR 0030); wired in loadEntities, ticked by GameContext
 	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
 	ItemPickup items;               // peer subsystem (spec 2026-08-29-world-item-pickup §G2); wired in Main
 

@@ -6,6 +6,7 @@
 #include "domain/game/Combat.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
+#include "domain/game/GameSprites.h"
 #include "domain/game/MonsterAI.h"
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
@@ -117,12 +118,12 @@ void MonsterSystem::activate(Entity* e, bool runStaticFunc, bool rangeCheck, boo
 // Port of the renderSpriteObject sight wake (src/Render.cpp:1576-1583) over
 // the sprites the last world frame drew. The gates are re-read per sprite
 // like legacy: activate() may run SCR_MONSTER_ACTIVATE and start lerps.
-// activePropogators (G7), noclip and disableAI are always 0 in the rewrite.
+// noclip and disableAI are always 0 in the rewrite.
 // The trace is 2D (spec deviation D3, src/Game.cpp:277-283 has a Z check).
 void MonsterSystem::renderActivate(ViewVisibility& vis) {
 	if (vis.valid && !vis.cinematic) {         // disableRenderActivate in ST_CAMERA
 		for (int s : vis.drawnSprites) {
-			if (env_.lerps->animatingEffects() != 0) break;
+			if (env_.sprites->activePropogators() != 0 || env_.lerps->animatingEffects() != 0) break;
 			Entity* e = env_.db->findEntityBySprite(s);
 			if (e == nullptr || e->monster == nullptr) continue;
 			if ((e->info & (Entity::kInfoCorpse | Entity::kInfoOnActiveList | Entity::kInfoHidden)) != 0) continue;

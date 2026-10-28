@@ -74,7 +74,12 @@ public:
 	// packed flags (see Render::postProcessSprites).
 	std::vector<int16_t> mapSprites;    // numSprites * 10 (9 fields + slack)
 	std::vector<int32_t> mapSpriteInfo; // numSprites * 2 (low word + high word)
+	// numSprites = the file's sprites (numMapSprites) + kMaxCustomSprites
+	// hidden runtime slots appended after them (src/Render.cpp:2497-2508, ADR 0030).
+	static constexpr int kMaxCustomSprites = 48;   // src/Render.h:53
+	int numMapSprites = 0;
 	int numSprites = 0;
+	int firstCustomSprite() const { return numMapSprites; }
 
 	// ---- Misc ----
 	std::vector<uint32_t> staticFuncs; // 12 ints

@@ -235,8 +235,9 @@ void GameContext::tick() {
 	}
 	pendingActions_.clear();
 
-	// Globals each tick: UpdatePlayerVars + runScriptThreads
-	// (src/Canvas.cpp:791-796); gsprite_update has no counterpart.
+	// Globals each tick: UpdatePlayerVars + gsprite_update + runScriptThreads
+	// (src/Canvas.cpp:791-796); ST_COMBAT's second gsprite_update is in step 6
+	// of tickPlaying.
 	// Threads tick in PLAYING and CAMERA only (src/Game.cpp:3259): during a
 	// cinematic the scripts keep running — input is what's parked. Playing
 	// with combat.active is ST_COMBAT: runScriptThreads is still called
@@ -245,6 +246,7 @@ void GameContext::tick() {
 	// threads via updateLerpSprites (src/GameStateRunner.cpp:25), ticked below.
 	sys_.game->trace.setPlayerPos(sys_.player->viewX, sys_.player->viewY);
 	sys_.game->trace.setPlayerDest(sys_.player->destX, sys_.player->destY);
+	sys_.game->sprites.update(upTimeMs);
 	if (state_ == StateId::Playing || state_ == StateId::Camera) {
 		const bool resume = state_ == StateId::Camera || !sys_.game->combat.active;
 		sys_.vm->runScriptThreads(gameTime, resume);
@@ -374,7 +376,7 @@ void GameContext::tickPlaying() {
 	//    player attack consumes the turn, a finished monster attack hands
 	//    over to the next queued attacker (src/GameStateRunner.cpp:41-78).
 	//    Otherwise the monster phase runs under the legacy playingState gate
-	//    (knockbackDist and activePropogators are always 0 here).
+	//    (src/GameStateRunner.cpp:181; knockbackDist is always 0 here).
 	//    Per-tick shotsFired reset (spec §C step 4): legacy clears the latch
 	//    once per rendered frame (src/Render.cpp:2351) so activate()'s
 	//    back-turned wake guard is bypassed only during shot frames.
@@ -395,7 +397,8 @@ void GameContext::tickPlaying() {
 				sys_.game->monsters.onMonsterAttackDone();
 			}
 		}
-	} else if (sys_.game->lerps.animatingEffects() == 0 &&
+	} else if (sys_.game->sprites.activePropogators() == 0 &&
+	           sys_.game->lerps.animatingEffects() == 0 &&
 	           sys_.game->monstersTurn != 0 &&
 	           sys_.dialogs->numHelpMessages() == 0) {
 		sys_.game->monsters.updateMonsters();
@@ -423,6 +426,9 @@ void GameContext::tickPlaying() {
 	bool posIdle = (sys_.player->viewX == sys_.player->destX && sys_.player->viewY == sys_.player->destY);
 	bool angleIdle = (sys_.player->viewAngle == sys_.player->destAngle);
 	sys_.player->updateView();                             // interpolate X/Y/Z/angle
+	// Second gsprite_update of ST_COMBAT (src/MovementController.cpp:500-502):
+	// recounts after runFrame destroyed/allocated sprites this tick.
+	if (inCombat) sys_.game->sprites.update(upTimeMs);
 	if (actions_.gotoTriggered) {
 		// Instant-GOTO deferred destination events: fresh default direction
 		// mask, ENTER then FACE (src/MovementController.cpp:503-509). Runs

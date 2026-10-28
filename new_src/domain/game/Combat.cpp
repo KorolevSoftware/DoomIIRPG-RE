@@ -332,7 +332,7 @@ bool Combat::monsterSeq() {
 		env_.hud->setDamageDir(0);
 		env_.hud->setDamageTime(0);
 		attackerMonster->flags |= Enums::MFLAG_ATTACKING;        // :594
-		// [G7: gsprite_clear(64)] (:595)
+		env_.game->sprites.clear(GameSprites::kFlagAnim);       // gsprite_clear(64) (:595)
 		return false;
 	} else if (stage == -1) {                                    // :599-604
 		if (numActiveMissiles != 0 || exploded) updateProjectile();
@@ -709,22 +709,209 @@ void Combat::explodeOnMonster() {
 }
 
 void Combat::launchProjectile() {
-	// src/Combat.cpp:1433-1600, default: arm only (ADR 0017). PROJTYPE -1 and 0
-	// have no case in the legacy switch either: they allocate no missile and
-	// detonate on the target in the same frame (src/Combat.cpp:1566-1570).
-	missileAnim = 0;
-	exploded = true;
-	if (attackerWeaponProj > 0) {
-		// Unreachable while Player::fireWeapon refuses proj > 0; kept so a
-		// future caller that bypasses that guard stays visible in the log.
-		std::fprintf(stderr, "[combat] projType %d not implemented, treated as instant\n",
-			attackerWeaponProj);
+	// src/Combat.cpp:1433-1668, cases 6 and 7 (:1527-1538). Every other type
+	// takes the default: arm (ADR 0017, :1572-1576): no missile, detonate on
+	// the target in the same frame. The dodgeDir roll (:1444) runs on the
+	// missile path only (spec D7); it has no reader besides n5 below.
+	int renderMode;
+	if (attackerWeaponProj == 6) {
+		renderMode = 0;
+		missileAnim = Enums::TILENUM_FLESH;
+	} else if (attackerWeaponProj == 7) {
+		renderMode = 3;
+		missileAnim = Enums::TILENUM_FIRE_BALL;
+	} else {
+		missileAnim = 0;
+		exploded = true;
+		if (attackerWeaponProj > 0) {
+			std::fprintf(stderr, "[combat] projType %d not implemented, treated as instant\n",
+				attackerWeaponProj);
+		}
+		return;
 	}
+	const int dodgeDir = (std::rand() & 0x7FFFFFFF) > 0x3FFFFFF ? 1 : 0;   // nextInt (:1444)
+	int n5 = (dodgeDir * 2 - 1) * 16;                                   // :1445
+	int n3 = 16;
+	const int n = 256;                                                  // missile speed, units/s
+	const int ns = env_.map->numSprites;
+	int x1, y1, z1, n2;                                                 // :1449-1461
+	if (curAttacker == nullptr) {
+		x1 = env_.player->viewX;
+		y1 = env_.player->viewY;
+		z1 = env_.map->heightAt(x1, y1) + 32;
+		n2 = 0;
+	} else {
+		const int sprite = curAttacker->getSprite();
+		x1 = env_.map->mapSprites[sprite + 0 * ns];
+		y1 = env_.map->mapSprites[sprite + 1 * ns];
+		z1 = env_.map->mapSprites[sprite + 2 * ns] + env_.game->lerps.spriteZBias(sprite, x1, y1);
+		n2 = 16;
+	}
+	// The targetType 0 world hit point (:1470-1474) needs a player shot,
+	// and Player::fireWeapon refuses projType > 0.
+	int x2, y2, z2;                                                     // :1465-1479
+	if (curTarget == nullptr) {
+		x2 = env_.player->viewX;
+		y2 = env_.player->viewY;
+		z2 = env_.map->heightAt(x2, y2) + 32;
+	} else {
+		const int sprite = curTarget->getSprite();
+		x2 = env_.map->mapSprites[sprite + 0 * ns];
+		y2 = env_.map->mapSprites[sprite + 1 * ns];
+		z2 = env_.map->mapSprites[sprite + 2 * ns] + env_.game->lerps.spriteZBias(sprite, x2, y2);
+	}
+	int dx = std::abs(x2 - x1);
+	int dy = std::abs(y2 - y1);
+	if ((crFlags & 0x400) != 0) {                                       // :1580-1592 out of range
+		const int n11 = weaponDef(attackerWeaponId).rangeMax * 64;
+		n3 = 0;
+		if (dx != 0 && dx > dy) {
+			x2 = x1 + (x2 - x1) * n11 / dx;
+		} else if (dy != 0) {
+			y2 = y1 + (y2 - y1) * n11 / dy;
+		}
+		dx = std::abs(x2 - x1);
+		dy = std::abs(y2 - y1);
+		n5 = 0;
+	} else if (hitType == 0) {                                          // :1593-1600 miss
+		if (targetType == Enums::ET_MONSTER || curTarget == nullptr) {
+			n3 = 0;
+		} else {
+			n5 = 0;
+		}
+	} else {
+		n5 = 0;
+	}
+	if (dy > dx) {                                                      // :1605-1616 major-axis push-out
+		const int sy = (y2 - y1 < 0) ? -1 : 1;
+		y1 += n2 * sy;
+		y2 += -(n3 * sy);
+		x2 += n5;
+	} else {
+		const int sx = (x2 - x1 < 0) ? -1 : 1;
+		x1 += n2 * sx;
+		x2 += -(n3 * sx);
+		y2 += n5;
+	}
+	if (allocMissile(x1, y1, z1, x2, y2, z2, 1000 * std::max(dx, dy) / n, renderMode) == nullptr) {
+		missileAnim = 0;                       // legacy fatal (Error 34 / ERR_MAX_MISSILES): hit at once
+		exploded = true;
+		return;
+	}
+	// The frame count and AUTO_ANIMATE of allocMissile (:1676, :1687) and the
+	// 242 frame (:1639-1641) are all cleared again by the !b mask (:1663-1666),
+	// so for types 6/7 the sprite info stays the bare tile written by alloc.
+	exploded = false;                                                   // :1667
+}
+
+GameSprites::Sprite* Combat::allocMissile(int x1, int y1, int z1, int x2, int y2, int z2,
+                                          int duration, int renderMode) {
+	// src/Combat.cpp:1670-1717 for projType 6/7 (no 0x4000 arc, missileAnim != 0).
+	if (numActiveMissiles == kMaxActiveMissiles) {
+		std::fprintf(stderr, "[combat] ERR_MAX_MISSILES: %d missiles in flight\n", kMaxActiveMissiles);
+		return nullptr;
+	}
+	GameSprites::Sprite* s = env_.game->sprites.alloc(missileAnim, 0,
+		GameSprites::kFlagUnlink | GameSprites::kFlagNoExpire | GameSprites::kFlagPropagate,
+		*env_.upTimeMs);                                                // gsprite_alloc(.., 2562) (:1678)
+	if (s == nullptr) return nullptr;
+	activeMissiles[numActiveMissiles++] = s;
+	env_.map->mapSprites[s->slot + 3 * env_.map->numSprites] = (int16_t)renderMode;
+	s->pos[0] = (int16_t)x1;
+	s->pos[1] = (int16_t)y1;
+	s->pos[2] = (int16_t)z1;
+	env_.game->sprites.write(*s, s->pos[0], s->pos[1], s->pos[2]);
+	s->pos[3] = (int16_t)x2;
+	s->pos[4] = (int16_t)y2;
+	s->pos[5] = (int16_t)z2;
+	s->duration = duration;
+	if (duration != 0) {                                                // :1703-1710
+		s->vel[0] = 1000 * (s->pos[3] - s->pos[0]) / duration;
+		s->vel[1] = 1000 * (s->pos[4] - s->pos[1]) / duration;
+		s->vel[2] = 1000 * (s->pos[5] - s->pos[2]) / duration;
+	} else {
+		s->vel[0] = s->vel[1] = s->vel[2] = 0;
+	}
+	return s;
+}
+
+bool Combat::isInFront(int tx, int ty) const {
+	// src/Game.cpp:3583-3594.
+	const int n3 = 256 - (env_.player->viewAngle & 0x3FF);
+	const int n4 = (tx << 6) + 32 - env_.player->viewX;
+	const int n5 = (ty << 6) + 32 - env_.player->viewY;
+	if (n4 == 0 && n5 == 0) return true;
+	const int n6 = (SpriteLerps::vecToDir(n4, n5) + n3) & 0x3FF;
+	return n6 >= 128 && n6 <= 384;
 }
 
 void Combat::updateProjectile() {
-	// src/Combat.cpp:1249-1431. The missile stepping head is group G5; only the
-	// exploded dispatch tail (:1421-1430) exists today.
+	// src/Combat.cpp:1249-1431 for the ported projectile types.
+	GameSprites& gs = env_.game->sprites;
+	const int ns = env_.map->numSprites;
+	if (numActiveMissiles > 0) {                                        // :1251-1400
+		int renderMode = 0;
+		for (int i = 0; i < numActiveMissiles; ++i) {
+			GameSprites::Sprite* m = activeMissiles[i];
+			// In flight: only the 248 / 171 branches act (:1255-1284), not ported.
+			if ((m->flags & GameSprites::kFlagPropagate) != 0) continue;
+			const int x = m->pos[3];                                    // :1287-1291 (b = true)
+			const int y = m->pos[4];
+			const int z = m->pos[5];
+			if (attackerWeaponProj == 7) {                              // :1329-1340
+				std::fprintf(stderr, "[sound] 1034\n");
+				// antifire buffs[9] fog branch (:1331-1337): buffs absent.
+				missileAnim = Enums::TILENUM_FIRE_BALL;
+				renderMode = 4;
+			} else {
+				missileAnim = 0;                                        // default: (:1369-1372)
+			}
+			gs.destroy(m);                                              // :1379
+			if (missileAnim != 0 &&
+			    (curAttacker == nullptr || (curTarget == nullptr && hitType != 0))) {   // :1380-1391
+				GameSprites::Sprite* fx = gs.allocAnim(missileAnim, x, y, z, *env_.upTimeMs);
+				if (fx != nullptr) {
+					fx->flags |= GameSprites::kFlagUnlink;
+					nextStageTime = (int)*env_.gameTime + fx->duration;
+					env_.map->mapSprites[fx->slot + 3 * ns] = (int16_t)renderMode;
+					env_.map->mapSprites[fx->slot + 8 * ns] = 64;
+					if (curAttacker != nullptr &&
+					    (env_.map->mapSpriteInfo[curAttacker->getSprite()] & Enums::SPRITE_FLAG_FLIP_HORIZONTAL) != 0) {
+						env_.map->mapSpriteInfo[fx->slot] |= Enums::SPRITE_FLAG_FLIP_HORIZONTAL;
+					}
+				}
+			}
+			for (int k = i + 1; k < numActiveMissiles; ++k) {           // :1393-1397
+				activeMissiles[k - 1] = activeMissiles[k];
+			}
+			--numActiveMissiles;
+			exploded = true;
+		}
+	} else if (gotHit && (totalDamage > 0 || totalArmorDamage > 0) && exploded &&
+	           (attackerWeaponId == 16 || attackerWeaponId == 15 ||
+	            attackerWeaponId == 18 || attackerWeaponId == 17)) {        // :1401-1420 melee overlay
+		if (attackerWeaponId == 16) {
+			missileAnim = Enums::TILENUM_MONSTER_CLAW;
+		} else if (attackerWeaponId == 15) {
+			missileAnim = Enums::TILENUM_MONSTER_BITE;
+		} else {
+			missileAnim = Enums::TILENUM_MONSTER_BLUNT_TRAUMA;
+		}
+		const int sprite = curAttacker->getSprite();                    // calcPosition (src/Entity.cpp:1383-1386)
+		if (isInFront(env_.map->mapSprites[sprite + 0 * ns] >> 6, env_.map->mapSprites[sprite + 1 * ns] >> 6)) {
+			// (destZ, destY, destZ) is verbatim; the face-player case overwrites X/Y.
+			GameSprites::Sprite* fx = gs.allocAnim(missileAnim, env_.player->destZ,
+				env_.player->destY, env_.player->destZ, *env_.upTimeMs);
+			if (fx != nullptr) {
+				fx->flags |= GameSprites::kFlagUnlink;
+				env_.map->mapSprites[fx->slot + 3 * ns] = 5;
+				if ((env_.map->mapSpriteInfo[sprite] & Enums::SPRITE_FLAG_FLIP_HORIZONTAL) != 0 &&
+				    missileAnim == Enums::TILENUM_MONSTER_CLAW) {
+					env_.map->mapSpriteInfo[fx->slot] |= Enums::SPRITE_FLAG_FLIP_HORIZONTAL;
+				}
+			}
+		}
+	}
 	if (!exploded) return;
 	// Legacy clears the flag inside each arm AFTER the explode call (:1424,:1428);
 	// clearing it up front is equivalent (neither arm re-reads it) and safe

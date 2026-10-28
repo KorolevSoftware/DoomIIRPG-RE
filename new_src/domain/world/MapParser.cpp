@@ -92,7 +92,8 @@ bool MapParser::parse(const std::vector<uint8_t>& data, MapData& out) {
 	skipMarker(r);
 
 	// ---- Sprites ----
-	out.numSprites = numMapSprites;
+	out.numMapSprites = numMapSprites;
+	out.numSprites = numMapSprites + MapData::kMaxCustomSprites;
 	out.mapSprites.assign(out.numSprites * 10, 0);
 
 	// S_X and S_Y are stored as coords (byte * 8).
@@ -132,6 +133,22 @@ bool MapParser::parse(const std::vector<uint8_t>& data, MapData& out) {
 		out.mapSpriteInfo[idx] |= r.readUByte() << 8;
 	}
 	skipMarker(r);
+
+	// Custom runtime slots (src/Render.cpp:2497-2508). Legacy unlinks them
+	// (S_NODE = -1, info 0); the rewrite has no unlink, so a free slot stays
+	// invisible through the hidden bit.
+	for (int i = numMapSprites; i < out.numSprites; ++i) {
+		out.mapSpriteInfo[i] = 0x10000;
+		out.mapSprites[i + 0 * out.numSprites] = 0;  // X
+		out.mapSprites[i + 1 * out.numSprites] = 0;  // Y
+		out.mapSprites[i + 2 * out.numSprites] = 32; // Z
+		out.mapSprites[i + 3 * out.numSprites] = 0;  // RENDERMODE
+		out.mapSprites[i + 4 * out.numSprites] = -1; // NODE
+		out.mapSprites[i + 5 * out.numSprites] = -1; // NODENEXT
+		out.mapSprites[i + 6 * out.numSprites] = -1; // VIEWNEXT
+		out.mapSprites[i + 7 * out.numSprites] = -1; // ENT
+		out.mapSprites[i + 8 * out.numSprites] = 64; // SCALEFACTOR
+	}
 
 	// ---- Misc ----
 	out.staticFuncs.resize(12);

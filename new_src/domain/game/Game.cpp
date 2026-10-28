@@ -28,10 +28,11 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	trace.init({ &db, &map });                     // peer subsystem wiring (spec §P2-GA)
 	doors.init({ &db, &map, vm_, &trace });        // peer subsystem wiring (spec §P2-GB)
 	monsters.init({ &db, &map, &defs, vm_, &combat, &trace, &monstersTurn,
-	                &facingDirty, &lerps, &ai, player_ });              // spec §P2-GC
+	                &facingDirty, &lerps, &ai, player_, &sprites });    // spec §P2-GC
 	ai.init({ &db, &map, &trace, &combat, &monsters, player_, &lerps, &doors,
 	          &visibility });                                           // ADR 0028
 	lerps.init({ &db, &map, vm_, &ai });                // peer subsystem wiring (spec §P2-GD)
+	sprites.init({ &map, &lerps, player_ });            // ADR 0030
 	loot.init({ &db, &defs });                          // peer subsystem wiring (spec §P2-GE)
 	db.resetEntities();
 	Entity* pe = db.playerEntity();
@@ -59,7 +60,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	// the postProcessSprites port below writes the same value for that tile.
 	// Invariant (src/Render.cpp:1545): 0x80000 with a zero count divides by
 	// zero, so every branch here must produce frameCount >= 1.
-	for (int i = 0; i < map.numSprites; ++i) {
+	for (int i = 0; i < map.numMapSprites; ++i) {
 		const int info = map.mapSpriteInfo[i];
 		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
@@ -77,7 +78,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	// Per-sprite render mode (src/Render.cpp:2459-2495 postProcessSprites):
 	// effective tileNum (+257 for wall-tile sprites) selects the blend mode,
 	// written to S_RENDERMODE; everything else stays RENDER_NORMAL.
-	for (int i = 0; i < map.numSprites; ++i) {
+	for (int i = 0; i < map.numMapSprites; ++i) {
 		const int info = map.mapSpriteInfo[i];
 		int tileNum = info & SpriteInfo::kTileNumMask;
 		if (info & Enums::SPRITE_FLAG_TILE) tileNum += 257;
@@ -102,7 +103,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	int numLinked = 0;
 	int numDeflessWalls = 0;
 	int nextSlot = 2; // entities[0]=world, entities[1]=player (reserved)
-	for (int i = 0; i < map.numSprites; ++i) {
+	for (int i = 0; i < map.numMapSprites; ++i) {
 		int info = map.mapSpriteInfo[i];
 		// No-entity sprites: legacy clears the bit and skips (src/Game.cpp:397-400).
 		if (info & Enums::SPRITE_FLAG_NOENTITY) {

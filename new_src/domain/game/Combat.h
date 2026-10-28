@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "domain/game/CombatEntity.h"
+#include "domain/game/GameSprites.h"
 #include "domain/game/WeaponTable.h"
 
 namespace newcore {
@@ -83,7 +84,9 @@ public:
 	// Degenerate-projectile state (src/Combat.h:99,105 exploded/missileAnim).
 	bool exploded = false;
 	int missileAnim = 0;
-	int numActiveMissiles = 0;         // src/Combat.h:81; stays 0 until flying missiles (G7)
+	static constexpr int kMaxActiveMissiles = 8;   // MAX_ACTIVE_MISSILES (src/Combat.h:21)
+	GameSprites::Sprite* activeMissiles[kMaxActiveMissiles] = {};
+	int numActiveMissiles = 0;         // src/Combat.h:81
 	int tileDistances[kMaxTileDistances] = {};
 	std::vector<CombatEntity> monsterTemplates;   // 51 entries (src/Combat.cpp:37-39)
 	int loadMapID = 1;                 // miss-guard gate (b||mapID<8||tileDist>1); map00 => <8
@@ -113,13 +116,14 @@ public:
 	// Hitscan impact application (src/Combat.cpp:885-946 subset).
 	void explodeOnMonster();
 
-	// Projectile launch (src/Combat.cpp:1433-1600). Only the default: arm is
-	// implemented (ADR 0017): PROJTYPE -1 and 0 allocate no missile and set
-	// exploded = true, so updateProjectile applies the hit in the same frame.
+	// Projectile launch (src/Combat.cpp:1433-1668). Flying missiles for
+	// projType 6 (flesh) and 7 (fireball); every other type takes the default:
+	// arm (ADR 0017): no missile, exploded = true, so updateProjectile applies
+	// the hit in the same frame.
 	void launchProjectile();
 
-	// Missile stepping + the exploded dispatch tail (src/Combat.cpp:1249-1431).
-	// Today only the tail exists; the missile loop arrives with group G5.
+	// Missile arrival + melee overlay + the exploded dispatch tail
+	// (src/Combat.cpp:1249-1431), for the ported projectile types.
 	void updateProjectile();
 
 	static int getWeaponTileNum(int n);       // src/Combat.cpp:1766-1784
@@ -163,6 +167,11 @@ private:
 	bool monsterSeq();
 	// Monster hit/miss applied to the player (src/Combat.cpp:948-1056).
 	void explodeOnPlayer();
+	// src/Combat.cpp:1670-1717; nullptr when no missile or sprite slot is free.
+	GameSprites::Sprite* allocMissile(int x1, int y1, int z1, int x2, int y2, int z2,
+	                                  int duration, int renderMode);
+	// Game::isInFront (src/Game.cpp:3583-3594): tile (tx,ty) within ±90° of the view.
+	bool isInFront(int tx, int ty) const;
 	// Game::getMonsterSound (src/Game.cpp:3771-3845) for the attack types
 	// (MSOUND_ATTACK1/2) only, which never roll.
 	int monsterSound(int sub, int parm, int soundType) const;

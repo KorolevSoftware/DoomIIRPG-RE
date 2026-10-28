@@ -122,9 +122,10 @@ void PlayerActions::handleAction(Action a) {
 	// Monster gate (src/PlayingInputHandler.cpp:71-74): everything but turning
 	// waits for the monsters to be snapped and animating effects to end.
 	// snapMonsters may start a queued monster attack, which swallows the
-	// action. The activePropogators term arrives with G7.
+	// action. activePropogators is tested first: it short-circuits snapMonsters.
 	if (a != Action::TurnLeft && a != Action::TurnRight &&
-	    (!env_.game->monsters.snapMonsters(false) || env_.game->lerps.animatingEffects() != 0)) {
+	    (env_.game->sprites.activePropogators() != 0 ||
+	     !env_.game->monsters.snapMonsters(false) || env_.game->lerps.animatingEffects() != 0)) {
 		return;
 	}
 

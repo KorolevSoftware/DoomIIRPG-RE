@@ -209,6 +209,13 @@ static constexpr int TILENUM_ANIM_FIRE = 234;
 static constexpr int TILENUM_AIR_VENT = 236;
 static constexpr int TILENUM_WATER_STREAM = 240;
 
+// Runtime sprite tiles: missiles and hit overlays (src/Enums.h:810-820).
+static constexpr int TILENUM_FLESH = 227;
+static constexpr int TILENUM_FIRE_BALL = 242;
+static constexpr int TILENUM_MONSTER_CLAW = 245;
+static constexpr int TILENUM_MONSTER_BITE = 246;
+static constexpr int TILENUM_MONSTER_BLUNT_TRAUMA = 247;
+
 // Sprites in this tile range hide themselves right after spawning
 // (src/Game.cpp:455-457).
 static constexpr int TILENUM_HIDE_AFTER_SPAWN_MIN = 140;

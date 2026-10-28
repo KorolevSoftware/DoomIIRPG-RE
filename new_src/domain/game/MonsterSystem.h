@@ -8,6 +8,7 @@ namespace newcore {
 
 class Combat;
 class EntityDb;
+class GameSprites;
 class Hud;
 class Localization;
 class MapData;
@@ -44,6 +45,7 @@ public:
 		SpriteLerps* lerps = nullptr;
 		MonsterAI* ai = nullptr;             // per-monster decisions (ADR 0028)
 		const Player* player = nullptr;      // health check of onMonsterAttackDone
+		const GameSprites* sprites = nullptr; // activePropogators gate of renderActivate
 	};
 
 	// Wiring + per-level reset (called from Game::loadEntities).
