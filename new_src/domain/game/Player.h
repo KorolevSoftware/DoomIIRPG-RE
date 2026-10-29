@@ -11,6 +11,13 @@ namespace newcore {
 
 class Combat;
 class Entity;
+class Hud;
+class Localization;
+
+// useItem outcome. Used = the legacy `b == true` tail: the caller must call
+// Game::advanceTurn() (src/Player.cpp:956-958). UsedNoTurn = success without a
+// turn (slot 23). Refused = legacy `return false` (nothing changed).
+enum class UseResult { Refused, Used, UsedNoTurn };
 
 // The player character: stats, inventory, keys, position/heading. Modern
 // minimal port of the legacy Player. Inventory slots match legacy indices
@@ -116,7 +123,14 @@ public:
 	// requireItem(kind, slot, min, max): inventory count check or weapon bit.
 	bool requireItem(int kind, int slot, int min, int max) const;
 
-	bool addHealth(int amount);
+	// Messaging sinks for addHealth's msg 111 (ADR 0032). Wired in core/Main.cpp.
+	void setMessaging(Hud* hud, const Localization* loc) { hud_ = hud; loc_ = loc; }
+
+	// src/Player.cpp:416-449 (legacy `b` = showMessage gates msg 111).
+	bool addHealth(int amount, bool showMessage = true);
+
+	// src/Player.cpp:801-959; n = inventory slot, 22 = holy water.
+	UseResult useItem(int n);
 
 	// Health-fraction crossing reported by pain(); the caller shows the message.
 	enum class PainBand { None, NearDeath, LowHealth, HalfHealth };
@@ -129,7 +143,7 @@ public:
 	// seen from (x1,y1) facing `angle`, for the HUD damage arrow/vignette.
 	static int calcDamageDir(int x1, int y1, int angle, int x2, int y2);
 	// src/Player.cpp:1933-1946: god blocks negatives; clamp [0,200] on STAT_ARMOR.
-	void addArmor(int n);
+	bool addArmor(int n);
 
 	// Player::died counters (src/Player.cpp:717-718), zeroed at startup (:34-35).
 	int currentLevelDeaths = 0;
@@ -156,6 +170,8 @@ public:
 
 private:
 	const EntityDefs* defs_ = nullptr;
+	Hud* hud_ = nullptr;
+	const Localization* loc_ = nullptr;
 };
 
 } // namespace newcore

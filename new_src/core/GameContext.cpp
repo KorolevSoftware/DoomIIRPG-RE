@@ -54,6 +54,7 @@ void GameContext::init(const Init& sys) {
 	menuEnv.tables = sys_.tables;
 	menuEnv.defs = sys_.defs;
 	menuEnv.player = sys_.player;
+	menuEnv.game = sys_.game;
 	menuEnv.host = this;
 	menuEnv.upTimeMs = &upTimeMs;
 	menuEnv.restartLevel = [this] { restartLevel(); };
@@ -89,6 +90,7 @@ void GameContext::init(const Init& sys) {
 	actEnv.loc = sys_.loc;
 	actEnv.targeting = &targeting_;
 	actEnv.host = this;
+	actEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
 	actions_.init(actEnv);
 	if (sys_.tables) {
 		sys_.game->lerps.setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (SpriteLerps.h)

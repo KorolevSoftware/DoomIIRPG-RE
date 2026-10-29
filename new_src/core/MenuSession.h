@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 
 #include "core/GameStates.h"
 #include "io/MenuData.h"
@@ -13,6 +14,7 @@
 namespace newcore {
 
 class EntityDefs;
+class Game;
 class Localization;
 class Player;
 class Tables;
@@ -30,8 +32,9 @@ class Tables;
 // SAVEQUIT 53) through setYesNo, the port of SetYESNO.
 // GROUP 6 adds the ten type-5 HELP leaves and the PDA shell (QUESTLOG 46).
 // GROUP 8 adds the per-row info buttons and the torn-page help popup.
-// The remaining code-built screens (the item-use confirm 77, the drinks list 75,
-// the ITEM_SHOWDETAILS details screen 71) have no group yet.
+// The item-use confirm 77 is built from spec 2026-10-28-use-item G1b on. The
+// remaining code-built screens (the drinks list 75, the ITEM_SHOWDETAILS
+// details screen 71) have no group yet.
 class MenuSession {
 public:
 	// maxItems: [GEC] hard-set to 4 at src/MenuSystem.cpp:1231; what the J2ME
@@ -49,6 +52,7 @@ public:
 		const Tables* tables = nullptr;      // oscCycle (cursor wobble), weaponDef
 		const EntityDefs* defs = nullptr;    // item/weapon names on the item screens
 		Player* player = nullptr;
+		Game* game = nullptr;                // item use: advanceTurn + the in-menu monster turn
 		StateHost* host = nullptr;
 		const int64_t* upTimeMs = nullptr;   // cursor oscillation clock
 		std::function<void()> restartLevel;  // ACTION_RESTARTLEVEL target (GameContext::restartLevel)
@@ -109,8 +113,10 @@ private:
 	void loadNotebook();
 	// SetYESNO(short, int, int, int[, int, int]) (:3611-3660): the message rows,
 	// the blank row, the Yes row and the No row of a type-6 confirm screen.
+	// args: the text args the legacy composes the string with (:3611-3618).
 	void setYesNo(int strId, int preselect, int yesAction, int yesParam,
-		int noAction = kActionBack, int noParam = 0);
+		int noAction = kActionBack, int noParam = 0,
+		const std::string* args = nullptr, int numArgs = 0);
 	// One message line of setYesNo, taken verbatim from [beg, end) of `src`.
 	int  addMessageRow(int srcStrId, const Text& src, int beg, int end);
 	// drawHelpText / selectedHelpIndex (:159-160, :4802-4813, :2840-2857): the
@@ -149,6 +155,9 @@ private:
 	int numItems_ = 0;
 	int selectedIndex_ = 0;
 	int scrollIndex_ = 0;
+	// menuParam: the inventory slot set by ACTION_CONFIRMUSE, read by 77 and
+	// by actions 20/21 (src/MenuSystem.cpp:3149-3197).
+	int menuParam_ = 0;
 	// LoadHelpResource's side effect on the canvas rect: `menuRect[2] -= 27`
 	// before the narrower re-wrap (:3697). setMenuSettings runs at the top of
 	// every initMenu (:1242), so the mutation never outlives one screen — this

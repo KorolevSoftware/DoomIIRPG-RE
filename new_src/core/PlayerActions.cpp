@@ -12,6 +12,7 @@
 #include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
+#include "io/MenuData.h"
 #include "ui/Hud.h"
 
 namespace newcore {
@@ -360,6 +361,10 @@ void PlayerActions::handleAction(Action a) {
 		// emptied first (hud->msgCount = 0, :146 and :155).
 		env_.hud->clearMessages();
 		env_.host->requestState(StateId::Menu);
+		break;
+	case Action::Items:                       // src/PlayingInputHandler.cpp:159-168
+		env_.hud->clearMessages();            // msgCount = 0 (:165)
+		if (env_.openMenu) env_.openMenu(kMenuItems);
 		break;
 	default:
 		break;

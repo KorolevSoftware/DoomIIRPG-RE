@@ -763,6 +763,148 @@ hint `showHelp(3)` fires (`src/MovementController.cpp:98-105`).
   test for parm 2 is sprite frame `== 0` (`src/Hud.cpp:326-335`), i.e. scripts flip the frame
   with `EV_ENTITY_FRAME` instead of the crate's built-in animator.
 
+## 8. Using items (`Player::useItem`, status effects / buffs)
+
+Verified 2026-10-28 (raw log: `docs/research/2026-10-28-use-item.md`).
+
+### 8.1 Entry: menu only
+- `Player::useItem(int n)` (`src/Player.cpp:801-959`); `n` = **inventory slot index**
+  (`INV_*`, `src/Enums.h:196-232`), except the pseudo-slot 22 (holy water) which is paid
+  from `ammo[3]`. Its only caller is `MenuSystem::select` (`src/MenuSystem.cpp:3149-3151`).
+- Flow: list row (action 24 `ACTION_CONFIRMUSE`, param = slot) →
+  `menuParam = items[i].param; gotoMenu(MENU_ITEMS_CONFIRM 77)`, saving indexes 2 (drinks) /
+  4 (items) (`src/MenuSystem.cpp:3188-3197`) → screen 77 built in code: menu string 184
+  `"Use %01?"` with the def name (`find(6,0,menuParam)`), `SetYESNO(184, 1, 20|21, menuParam)`
+  — YES action 20 `ACTION_USEITEMSYRING` when the parent is MENU_ITEMS_DRINKS (75), else 21
+  `ACTION_USEITEMOTHER`; default cursor on YES; NO = `ACTION_BACK` (`src/MenuSystem.cpp:2047-2059`,
+  `SetYESNO` `:3611-3660`). Actions 20/21 are handled identically (`:3149-3178`).
+- After `useItem` returns (`src/MenuSystem.cpp:3151-3178`):
+  1. `game->animatingEffects != 0` → `returnToGame()`;
+  2. else `game->snapMonsters(true)` + `snapLerpSprites(-1)` — the monster turn armed by
+     `advanceTurn` runs **instantly while still in the menu** (`snapMonsters` runs
+     `monsterAI()` when `monstersTurn != 0`, `src/Game.cpp:2391-2431`);
+  3. if the canvas left ST_MENU → stop; success → `back()` (to the list);
+  4. failure → message screen: slot 22 → `MENU_ITEMS_HOLY_WATER_MAX` 82; 16..17 →
+     `MENU_ITEMS_HEALTHMSG` 79; 11..12 → `MENU_ITEMS_ARMORMSG` 80; everything else (drinks) →
+     `MENU_ITEMS_SYRINGEMSG` 81. Those screens are data menus (`loadMenuItems(menu,0,-1)`,
+     `src/MenuSystem.cpp:2298-2301`); their text lives in `menus.bin` (not decoded here).
+- Which slots are listed: MENU_ITEMS (72) = header menu-str 112 "HEALTH" + slots 16,17 if >0;
+  holy water row (slot 22) if `ammo[3] >= 25 && (weapons & 0x4)`; header 113 "ARMOR" + 11,12;
+  "Nano Drinks" submenu row (menu-str 178/179) if `hasANanoDrink()` (any of 0..10 > 0,
+  `src/Player.cpp:2655-2662`); credits slot 24 with action 16 SHOWDETAILS (not usable)
+  (`src/MenuSystem.cpp:1930-1985`). MENU_ITEMS_DRINKS (75) = slots 0..10 if >0, else "[None]"
+  (`:2024-2044`). Slots 13,18-21,23,25 are never offered.
+- Openers: `ACTION_ITEMS` → MENU_ITEMS, `ACTION_ITEMS_DRINKS` → MENU_ITEMS_DRINKS
+  (`src/PlayingInputHandler.cpp:159-178`; both exit target practice instead if active);
+  keys `AVK_ITEMS_INFO` / `AVK_DRINKS`, blocked when `isFamiliar`
+  (`src/InputEventController.cpp:79-86`); HUD touch buttons id 5 (health plate) → ITEMS,
+  id 4 (shield plate) → DRINKS (`src/Hud.cpp:1346-1351`). **No quick-use / hotkey
+  consumption and no auto-use** anywhere: the only other `inventory[...]` reads are the
+  low-health help hint (`src/Player.cpp:693`) and armor-shard repair (`src/ArmorRepairSystem.cpp:23`).
+  Bottled water (13) is converted at pickup, not used (§4.2).
+
+### 8.2 `useItem` body (`src/Player.cpp:801-959`)
+- Guard: `inventory[n] == 0 && n != 22` → false (`:804-806`). Locals `b` (advance turn) and
+  `b2` (consume one) both start true (`:807-808`).
+- On success (common tail `:950-958`): `sound->playSound(1124,0,3,false)` (1124 →
+  `Sounds::RESOURCE_FILE_NAMES[124]` = `use_item.wav`, `src/Sound.cpp:180`, `src/Sounds.h:132`);
+  `if (b2) --inventory[n]`; `if (b) game->advanceTurn()` → using an item **costs the turn**
+  (monsters act) except the Smoothie. Return true.
+- Failure returns false before the tail: no sound, nothing consumed, no turn.
+
+| slot | item (entity str) | effect call(s) | refused when |
+|---|---|---|---|
+| 16 | Snack (145) | `addHealth(20)` | HP == max |
+| 17 | Health Pack (147) | `addHealth(80)` | HP == max |
+| 11 | Flak Jacket (72) | `addArmor(50)` | armor ≥ 200 |
+| 12 | Armor Shard (74) | `addArmor(10)` | armor ≥ 200 |
+| 0 | Energy Blast (111) | `addStatusEffect(10 FORTITUDE, 20, 31)`, translate, then `addHealth(20)` (result ignored) | fortitude stacks full |
+| 1 | Focus Juice (99) | `addStatusEffect(7 FOCUS, 5, 31)` | stacks full |
+| 2 | Super Quench (102) | `addStatusEffect(9 ANTIFIRE, 0, 11)`, `removeStatusEffect(13 FIRE)` | antifire already active (cap 1) |
+| 3 | Power Punch (119) | `addStatusEffect(8 ANGER, 25, 31)` \| `addStatusEffect(5, 20, 31)` | both full |
+| 4 | Snake Venom (122) | `addStatusEffect(12 WP_POISON, 10, 11)` | poison already active (cap 1) |
+| 5 | Youth Serum (114) | `addStatusEffect(3 REGEN, 5, 31)` | stacks full |
+| 6 | Caffeine Block (96) | `addStatusEffect(4 DEFENSE, 25, 31)` | stacks full |
+| 7 | Diet Might (108) | `addStatusEffect(6, 25, 31)` | stacks full |
+| 8 | Smoothie (93) | `addStatusEffect(2 HASTE, 0, 21)`; **`b = false` → no advanceTurn** | `statusEffects[2] != 0` |
+| 9 | Monster Shot (105) | `addStatusEffect(8 ANGER, 100, 31)` | stacks full |
+| 10 | Hell Knight Sweat (117) | effects 6(25,31), 8(25,31), 4(25,31), 7(5,31) — success if any | all four full |
+| 22 | Holy Water (86, ammo def `find(6,2,3)`) | `addHealth(25) \| addStatusEffect(11 FEAR, 100, 3)`; `b2 = false`, instead `ammo[3] -= 25` | HP full and fear stacks full |
+| 23 | Pack | `return true` immediately — no sound, no consume, no turn (never listed in a menu) | — |
+| other | 13,18-21,24,25 | `default: return false` | always |
+(case lines `:810-948`; names = `entities.bin` defs `(6,0,parm)` name byte → entity string table,
+read from the shipped IPA.) Every status-effect arm calls `translateStatusEffects()` on success.
+- The amounts/durations are **hard-coded in this switch**; `entities.bin` only gives the
+  name/description string ids (the description strings restate the same numbers, e.g.
+  "Gives +25 to your Defense for 30 turns."). Nothing comes from `EntityDef::parm`.
+
+### 8.3 Health / armor helpers
+- `addHealth(i)` = `addHealth(i, true)` (`src/Player.cpp:412-414`). `addHealth(i,b)`
+  (`:416-449`): sets `hud->repaintFlags |= 0x4`; positive with `HP == MAX` → false; negative
+  with `god` → false; `hud->playerStartHealth = old`; `ce->addStat(HEALTH, i)`; if `b` and the
+  value rose, HUD message common-str 111 `"Gained %01 health"` with the real delta. No overheal:
+  `setStat(0, v)` clamps to `stats[1]` (max HP) (`src/CombatEntity.cpp:72-89`).
+- `addArmor(n)` (`src/Player.cpp:1933-1946`): `n > 0 && armor >= 200` → false; negative with
+  `god` → false; repaint 0x4; clamp `[0,200]`. **No message.**
+
+### 8.4 Status-effect storage
+- `int statusEffects[54]` = three 18-wide planes: `[0+i]` turns left, `[18+i]` amount,
+  `[36+i]` stack count (`src/Player.h:109`, offsets `OFS_STATUSEFFECT_*` `src/Enums.h:1174-1176`);
+  `int numStatusEffects` = active count (`src/Player.h:107`).
+- `short buffs[30]`: `[0+k]` turns, `[15+k]` amount, k < 15 (`BUFF_*`, `src/Enums.h:1178-1193`);
+  `int numbuffs` (`src/Player.h:111-113`). `buffs` is derived — always rebuilt from
+  `statusEffects` by `translateStatusEffects()`.
+- Index naming trap: `STATUS_EFFECT_*` (`src/Enums.h:1154-1171`) and `BUFF_*` disagree for
+  2/5/6 (AGILITY/ADRENALINE/EVADE vs HASTE/STRENGTH/AGILITY). Code behaviour follows the
+  **BUFF_* meaning** because translate maps effect j → buff j (see below).
+- `addStatusEffect(n, amount, turns)` (`src/Player.cpp:1562-1595`): familiar → false; n==13
+  FIRE → false if `buffs[9]` (antifire) else sound 1034; `count = [36+n]+1`; if `count > 3`
+  or (n ∈ {9,12} and count > 1) → false (n==14 refreshes turns). First stack →
+  `numStatusEffects++` (n==17 starts fog lerp). Then `[18+n] += amount` (amounts **stack**),
+  `[0+n] = turns` (duration **resets**, not added), `[36+n] = count`; true.
+- `removeStatusEffect(n)` (`:1534-1560`): n==18 clears all; else no-op if count==0, zero the
+  three planes, `numStatusEffects--` (n==17 fog lerp back); then translate.
+- `updateStatusEffects()` (`:1458-1472`), called from `Player::advanceTurn` (`:56`): skip if
+  `numStatusEffects == 0`; for each active effect: turns == 1 → remove, else `--turns`;
+  translate. With `turns = 31` set and `useItem` immediately calling `advanceTurn`, the HUD
+  first shows 30 and the effect is removed on the 31st following turn → "30 turns" in the
+  descriptions (21 → 20, 11 → 10, 3 → 2).
+- `translateStatusEffects()` (`:1474-1531`): zero buffs; for each effect j with turns > 0:
+  j=14 DISEASE / 15,17 DRUNK,COLD / 16 DIZZY have special mixes; **default: `buffs[15+j] +=
+  amount; buffs[j] = turns`**. Then a buff whose amount is 0 is dropped unless its bit is in
+  `BUFF_NO_AMOUNT = 0x1A07` (reflect, purify, haste, antifire, fear, wp_poison;
+  `src/Enums.h:1194`); survivors counted in `numbuffs`. Ends with `updateStats()`.
+- `updateStats()` (`:1448-1456`): `MAX_HEALTH = base + buffs[25]`, re-clamp HEALTH,
+  `STRENGTH = base + buffs[20]`, `ACCURACY = base + buffs[22] - buffs[28]`,
+  `DEFENSE = base + buffs[19]`, `AGILITY = base + buffs[21]`.
+
+### 8.5 What each item buff does (consumers)
+| buff k | item(s) | consumer |
+|---|---|---|
+| 2 HASTE | Smoothie | `Game::advanceTurn`: while `statusEffects[2] > 0`, `++statusEffects[20]` and monsters only get a turn when it is even — they act every other player turn (`src/Game.cpp:1244-1264`); player move/turn step ×1.5 (`src/MovementController.cpp:407-410`); attack anim time ×5 instead of ×10 (`src/Combat.cpp:312-317`) |
+| 3 REGEN | Youth Serum | `Player::advanceTurn`: `addHealth(buffs[18], false)` each turn, silent (`src/Player.cpp:59-61`) |
+| 4 DEFENSE | Caffeine Block, HK Sweat | STAT_DEFENSE +amount (`:1453`); damage reduction `damage - (defPct*damage>>8)` (`src/CombatEntity.cpp:372`) |
+| 5 STRENGTH | Power Punch (+20) | STAT_STRENGTH +amount (`:1451`), used in the damage roll (`src/CombatEntity.cpp:326-333`) |
+| 6 AGILITY | Diet Might, HK Sweat | STAT_AGILITY +amount (`:1454`) |
+| 7 FOCUS | Focus Juice, HK Sweat | STAT_ACCURACY +amount (`:1452`) |
+| 8 ANGER | Power Punch (25), Monster Shot (100), HK Sweat (25) | player damage `+= (buffs[23]<<8)/100 * dmg >> 8` i.e. +amount % (`src/CombatEntity.cpp:337-339`); HUD shows `%N` (`src/Player.cpp:1603-1606`) |
+| 9 ANTIFIRE | Super Quench | blocks FIRE effect (`src/Player.cpp:1568-1573`), fire floor damage (`src/Entity.cpp:136`), fire-weapon damage zeroed (`src/CombatEntity.cpp:367-370`), missile visual (`src/Combat.cpp:1331`) |
+| 10 FORTITUDE | Energy Blast | MAX_HEALTH +amount (`:1449`); on expiry health is re-clamped down by `updateStats` |
+| 11 FEAR | Holy Water | non-immune monsters' AI goal becomes flee (`goalType 4`) (`src/Entity.cpp:541-545`; immune mask `FEAR_IMMUNE_MONSTERS = 0x1F801`, `src/Enums.h:83`) |
+| 12 WP_POISON | Snake Venom | on hit, target `monsterEffects |= (statusEffects[30]-1)<<5 \| 1` (`src/Combat.cpp:168-175`) |
+
+### 8.6 HUD for buffs
+- `Player::drawBuffs` (`src/Player.cpp:1209-1260`), called from Hud world overlay unless
+  ST_DYING (`src/Hud.cpp:505-507`); skipped when `numbuffs == 0` or ST_DIALOG. Box at the
+  right edge of `viewRect`, top +2, up to 6 rows × 31 px (overflow → `'\x85'` ellipsis), width
+  grows with amount digits. Each row `drawStatusEffectIcon` (`:1597-1620`): amount text
+  (`%N` for anger, `+N`/`-N` unless bit in `0x3A07`), icon from `Icons_Buffs.bmp` 30×30 at
+  row `k*30` (`src/Graphics.cpp:665-668`, loaded `src/Canvas.cpp:172`), and the turns count
+  for 600 ms after `turnTime` (`app->time - turnTime < 600`).
+- Scripts also grant effects: `EV_STATUS_EFFECT` (op 70) with fixed durations 30 (default),
+  20 (haste), 10 (antifire, purify), 6 (fear), 5 (cold); bit 0x80 = remove
+  (`src/ScriptThread.cpp:1576-1603`).
+
 ## Port checklist (minimal viable loop)
 
 1. **Corpse entity**: def-swap `find(9, eSubType, parm)` + keep Monster struct; corpse visual

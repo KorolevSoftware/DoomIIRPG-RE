@@ -79,7 +79,7 @@ public:
 	int updateLerpSprite(SpriteLerp* ls);
 
 	// snapLerpSprites(sprite) (src/Game.cpp:1149-1166): force-complete every
-	// active lerp of one sprite.
+	// active lerp of one sprite; -1 = every active lerp (src/Game.cpp:2958-2978).
 	void snap(int sprite);
 
 	// performDoorEvent(0, e, 1, true) (src/Game.cpp:1047-1157, b=true path):

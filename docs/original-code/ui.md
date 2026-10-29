@@ -305,7 +305,7 @@ disabled.
 
 | Menu | type | Content | Notes |
 |---|---|---|---|
-| `MENU_ITEMS` 72 | 1 LIST | header + "Weapons" → `MENU_ITEMS_WEAPONS` 73 | inventory root; drink/other pages are built in code (`:1930-2046`) |
+| `MENU_ITEMS` 72 | 1 LIST | header + "Weapons" → `MENU_ITEMS_WEAPONS` 73 | inventory root; drink/other pages are built in code (`:1930-2046`); see §17a |
 | `MENU_INGAME_QUESTLOG` 46 | 7 NOTEBOOK | built by `LoadNotebook()` (`:3777-3809`): map name, divider, one wrapped line per notebook entry | not in `menus.bin` |
 | `MENU_INGAME_LOAD` 49 | 6 VCENTER | `SetYESNO(136, 1, ACTION_LOAD, 0)` (`:1714-1719`) | plain confirm; **no slot list** |
 | `MENU_INGAME_LOADNOSAVE` 50 | 6 VCENTER | "No Saved Game" + Back | |
@@ -650,6 +650,175 @@ useful only as the semantic intent. String values decoded from
 `Canvas::menuRect[4]` / `setMenuDimentions` (`src/Canvas.cpp:1558-1564`) has no
 counterpart either; the rewrite would need it (or its constants inlined) for
 §12.
+
+## 17a. Items menu and use confirm
+
+Verified 2026-10-28 (raw log: `docs/research/2026-10-28-items-menu.md`).
+All line numbers below are `src/MenuSystem.cpp` unless a file is named.
+
+### 17a.1 Entry
+
+| Trigger | Code |
+|---|---|
+| `ACTION_ITEMS` (key `AVK_ITEMS_INFO` in play, `src/InputEventController.cpp:79-81`; HUD button 5, `src/Hud.cpp:1349-1350`) | `setMenu(MENU_ITEMS)` (72), stack untouched (`src/PlayingInputHandler.cpp:159-168`) |
+| `ACTION_ITEMS_DRINKS` (key `AVK_DRINKS`, `src/InputEventController.cpp:84-86`; HUD button 4, `src/Hud.cpp:1346-1347`) | `setMenu(MENU_ITEMS_DRINKS)` (75) directly (`src/PlayingInputHandler.cpp:169-178`) |
+| root row 0 "Inventory" | `ACTION_GOTO 72` (§11.1) |
+
+Every ST_MENU exit clears the stack (`src/Canvas.cpp:1033-1035`), so a list
+opened from play has an empty stack and `back()` on it returns to the game
+(`:604-607`, which names `MENU_ITEMS` and `MENU_ITEMS_DRINKS`).
+
+### 17a.2 What `menus.bin` contributes (decoded from the shipped file)
+
+| id | type | rows |
+|---|---|---|
+| 72 `MENU_ITEMS` | 1 | [0] blank flags 9; [1] "IN-VEN-TO-RY" (str 111) flags 73; [2] "Weap-ons" (175) flags 0 GOTO 73, help 176 "Your weap-ons" |
+| 73 `MENU_ITEMS_WEAPONS` | 1 | [0] blank flags 9; [1] "WEAP-ONS" (66) flags 73 |
+| 75 `MENU_ITEMS_DRINKS` | 1 | [0] blank flags 9; [1] "NA-NO DRINKS" (177) flags 73 |
+| 77 `MENU_ITEMS_CONFIRM` | — | **absent**; built entirely in code |
+| 79 `HEALTHMSG` | 6 | "Your health is" / "at its max-i-mum." / blank / "Ok" flags 8 action 26 |
+| 80 `ARMORMSG` | 6 | "Your ar-mor is" / "at its max-i-mum." / blank / "Ok" action 26 |
+| 81 `SYRINGEMSG` | 6 | "Can-not con-sume drink." / "Ef-fects at max-i-mum." / blank / "Ok" action 26 |
+| 82 `HOLY_WATER_MAX` | 6 | "Can-not drink any more." / "Ef-fects at max-i-mum." / blank / "Ok" action 26 |
+
+79 has its own `initMenu` case that is just `loadMenuItems(menu,0,-1)`
+(`:2298-2302`); 80-82 use the `default:` branch, also `loadMenuItems(menu,0,-1)`
+(`:2724-2727`). Action 26 = `ACTION_BACKTWO` (`src/Menus.h:162`).
+Flags: 73 = `ITEM_DIVIDER|ITEM_ALIGN_CENTER|ITEM_NOSELECT`, 9 =
+`ALIGN_CENTER|NOSELECT`, 32 = `ITEM_SHOWDETAILS` (`src/Menus.h:16-34`).
+
+### 17a.3 Row construction (all item rows are built in code)
+
+`initMenu` resets every row and calls `resetTextArgs()` first
+(`:1232-1238`). Each item row is
+`addItem(STRINGID(1, def->name), getLastArgString(), flags, action, param, STRINGID(1, def->description))`
+after `addTextArg(<count as decimal>)`: the **value column** (`textField2`)
+is `ARGUMENT<k>` = the k-th accumulated text arg (`:4090-4098`), i.e. the
+plain count, no "x" prefix. Label = entity-def name, help popup text = entity-def
+description (strings file 1 = `FILE_ENTITYSTRINGS`, `src/MenuStrings.h:21`).
+Defs come from `entityDefManager->find(6, subtype, parm)` (eType 6 = item).
+
+**`MENU_ITEMS` (72)**, in this exact order (`:1930-1986`):
+
+1. Health group: for `n5 = 16..17` with `inventory[n5] > 0`; before the first
+   such row, a divider "HEALTH" (str 3/112) flags 73 (`:1932-1946`). Row:
+   def `(6,0,n5)`, flags 32, action 24 `ACTION_CONFIRMUSE`, **param = inventory
+   index n5**.
+2. Holy water: if `ammo[3] >= 25 && (weapons & 0x4)` — name/description from
+   the **ammo** def `(6,2,3)`, count = `ammo[3]`, flags 32, action 24,
+   **param = 22** (`INV_OTHER_HOLY_WATER`, a virtual slot; `:1947-1953`). No
+   divider of its own: it follows the health group, or stands alone if that
+   group is empty.
+3. Armor group: `n8 = 11..12`, lazy divider "AR-MOR" (3/113), rows as in (1)
+   with param n8 (`:1954-1968`).
+4. `loadMenuItems(72, 1, 1)`: the "IN-VEN-TO-RY" divider (`:1970`).
+5. If `player->hasANanoDrink()` (any `inventory[0..10] > 0`,
+   `src/Player.cpp:2655-2662`): "Na-no Drinks" (3/178), value `STRINGID(3,0)`
+   (empty), flags 0, `ACTION_GOTO 75`, help 3/179 "Your na-no drinks" (`:1971-1973`).
+6. `loadMenuItems(72, 2, -1)`: "Weap-ons" GOTO 73 (`:1974`).
+7. Credits: def `(6,0,24)`, count `inventory[24]`, flags 32, **action 16
+   `ACTION_SHOWDETAILS`**, param 24 — always present (`:1977-1981`).
+   (`showDetailsMenu()` is an empty stub in this port, `:3993-3995`.)
+
+Then `loadIndexes(4)` and `selectedIndex = 0` (`// [GEC]`, `:1982-1984`); the
+`initMenu` tail moves the cursor off the non-selectable row 0 (`:2732-2737`).
+Menus.bin row 0 (blank) is never loaded (the BREW call is commented, `:1931`).
+
+**`MENU_ITEMS_DRINKS` (75)** (`:2024-2045`): `loadMenuItems(75,0,-1)` (blank +
+divider), `loadIndexes(2)`, `selectedIndex = 0`, then for `n13 = 0..10`
+ascending with `inventory[n13] > 0`: def `(6,0,n13)`, flags 32, action 24,
+param n13. If none: a single "[None]" (3/1) row flags 9.
+
+**`MENU_ITEMS_WEAPONS` (73)** (`:1988-2021`): not a use-item path; rows use
+`ACTION_USEITEMWEAPON` (18), see §17a.5.
+
+Never listed anywhere: count-0 slots, 13 bottled water (converted to holy
+water on pickup, `src/Player.cpp:1023-1025`), 18 journal, 19/20 keys,
+21 syringe, 23 pack, 25. No sorting beyond the fixed index loops; no
+disabled-row rules on 72/75 (no `ITEM_DISABLED` is ever set there).
+
+### 17a.4 `ACTION_CONFIRMUSE` → `MENU_ITEMS_CONFIRM` (77)
+
+`select` case 24 (`:3188-3198`): `saveIndexes(2)` on 75 / `saveIndexes(4)` on
+72, `menuParam = items[i].param` (the inventory index, or 22),
+`gotoMenu(77)` (pushes the list with its cursor).
+
+`initMenu` case 77 (`:2047-2059`): `type = 6`, `scrollIndex = 0`;
+`composeText(1, find(6,0,menuParam)->name)` → `addTextArg` (arg 1); then
+`SetYESNO((short)184, 1, A, menuParam)` with **A = 20
+(`ACTION_USEITEMSYRING`) if `peekMenu() == 75`, else 21
+(`ACTION_USEITEMOTHER`)**. String 3/184 = `"Use %01?"`, so `%01` is the item
+name. Note: for param 22 the name comes from `find(6,0,22)` — the
+**inventory** def for slot 22, not the ammo def used in the list row.
+
+SetYESNO plumbing (`:3611-3660`): the 4-arg overload composes string 184 *with
+the current text args* and forwards `(text, 1, A, menuParam, 2, 0)`. The Text
+overload resets args, emits one flags-9 row per `\n`-line (here one: "Use
+<name>?"), a flags-9 blank row, **YES** (3/197) flags 8 action A param
+menuParam, **NO** (3/198) flags 8 action 2 `ACTION_BACK` param 0, and with
+preselect 1 puts the cursor on YES (`numItems - 2`).
+
+NO, or `ACTION_MENU`/`ACTION_BACK` keys (`:2919-2955`) → `back()` → pops to
+the list, which `setMenu` **rebuilds** (`:591-603`); cursor restored from the
+stack after the rebuild.
+
+### 17a.5 YES: `select` case 20/21 (`:3149-3179`, identical bodies)
+
+```
+bool ok = player->useItem((short)menuParam);
+if (game->animatingEffects != 0) { returnToGame(); break; }
+game->snapMonsters(true); game->snapLerpSprites(-1);
+if (canvas->state != ST_MENU) break;
+if (ok) { back(); break; }                         // to the rebuilt list
+if (menuParam == 22)            gotoMenu(82);      // HOLY_WATER_MAX
+else if (16 <= menuParam < 18)  gotoMenu(79);      // HEALTHMSG
+else if (11 <= menuParam < 13)  gotoMenu(80);      // ARMORMSG
+else                            gotoMenu(81);      // SYRINGEMSG (drinks)
+```
+
+The "Ok" row of 79-82 is `ACTION_BACKTWO` (`:3203-3207`): `popMenu` discards
+the confirm's stack entry, then `back()` pops to the list (rebuilt).
+
+So a successful use **keeps the menu open** and returns to the list with
+fresh counts, unless (a) a lerp-sprite animating effect is running → menu
+closes, or (b) `snapMonsters(true)` started a monster attack:
+`snapMonsters` with `monstersTurn != 0` runs `monsterAI()` immediately, snaps
+all monster lerps and, if a monster attacks, calls `performAttack`
+(`src/Game.cpp:2431-2449`), which ends in `canvas->setState(ST_COMBAT)`
+unconditionally (`src/Combat.cpp:165`) → the menu is left mid-flow.
+Back in the rebuilt list, a used-up row vanishes; the restored
+`selectedIndex` is not re-clamped (`back()` writes it after `setMenu`,
+`:599`), and 75 shows "[None]" when the last drink is gone.
+
+### 17a.6 `Player::useItem(n)` turn semantics (`src/Player.cpp:801-960`)
+
+- `inventory[n] == 0 && n != 22` → false (`:804-806`).
+- Per-item effect; any "already at max" returns **false** before any
+  consumption: 16 `addHealth(20)`, 17 `addHealth(80)`, 11 `addArmor(50)`,
+  12 `addArmor(10)` (`:810-833`); drinks 0-10 call `addStatusEffect(...)` +
+  `translateStatusEffects()` (`:834-934`); 22 = `addHealth(25) |
+  addStatusEffect(11,100,3)`, on success `ammo[3] -= 25` and no inventory
+  decrement (`b2 = false`, `:935-944`); 23 → true with no side effects
+  (`:945-947`); default → false.
+- On success: `playSound(1124)`, `--inventory[n]` unless 22, and
+  **`game->advanceTurn()` unless n == 8** (`INV_DRINK_SMOOTHIE` sets `b = false`,
+  `:884-892`) (`:952-959`).
+
+So using an item from the menu consumes the player's turn (monsters act at
+once via the `snapMonsters(true)` above), except item 8.
+
+### 17a.7 Other actions in these screens
+
+- `ACTION_USEITEMWEAPON` (18) on 73: `saveIndexes(1)`; if `i > 0`,
+  `selectWeapon(param)` then `returnToGame()` — no confirm, menu closes
+  (`:3135-3143`).
+- `ACTION_GOTO` 73/75 from 72 saves 72's cursor with `saveIndexes(4)`
+  (`:3024-3028`).
+- `ACTION_SHOWDETAILS` (16) on the credits row → empty stub (`:3126-3129`,
+  `:3993-3995`).
+- `ACTION_MENU_ITEM_INFO` on any row with a `helpField` opens the torn-page
+  popup with the item description (§15, `:2849-2857`).
+- No drop / discard / equip-from-inventory action exists in these screens.
 
 ---
 

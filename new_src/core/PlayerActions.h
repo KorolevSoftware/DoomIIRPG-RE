@@ -1,6 +1,8 @@
 #ifndef NEW_CORE_PLAYERACTIONS_H
 #define NEW_CORE_PLAYERACTIONS_H
 
+#include <functional>
+
 #include "core/GameStates.h"
 
 namespace newcore {
@@ -29,6 +31,7 @@ public:
 		const Localization* loc = nullptr;
 		Targeting* targeting = nullptr;
 		StateHost* host = nullptr;
+		std::function<void(int)> openMenu;   // enter Menu on a given MenuId (ACTION_ITEMS)
 	};
 
 	void init(const Env& env);

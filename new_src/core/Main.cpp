@@ -303,6 +303,7 @@ int main(int argc, char* argv[]) {
 	// happens in the Loading tick (legacy Game::spawnPlayer port).
 	Player player;
 	player.setDefs(&g_entityDefs);   // auto-equip lookup in give (spec §G3.3)
+	player.setMessaging(&hud, &loc); // addHealth msg 111 (ADR 0032)
 	player.reset();
 
 	Game game;

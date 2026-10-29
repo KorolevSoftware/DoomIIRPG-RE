@@ -23,6 +23,8 @@ enum MenuId : int {
 	kMenuSpecialExit   = 58,
 	kMenuControls      = 62,
 	kMenuItems         = 72, kMenuItemsWeapons = 73, kMenuItemsDrinks = 75,
+	kMenuItemsConfirm  = 77, kMenuItemsHealthMsg = 79, kMenuItemsArmorMsg = 80,
+	kMenuItemsSyringeMsg = 81, kMenuItemsHolyWaterMax = 82,
 };
 
 // Menus::MENUTYPE_* (src/Menus.h:7-15)
@@ -43,7 +45,8 @@ enum MenuAction : int {
 	kActionNone = 0, kActionGoto = 1, kActionBack = 2, kActionLoad = 3,
 	kActionSave = 4, kActionBackToMain = 5, kActionChangeState = 9,
 	kActionRestartLevel = 12, kActionSaveQuit = 13, kActionShowDetails = 16,
-	kActionUseItemWeapon = 18, kActionConfirmUse = 24, kActionSaveExit = 25,
+	kActionUseItemWeapon = 18, kActionUseItemSyring = 20, kActionUseItemOther = 21,
+	kActionConfirmUse = 24, kActionSaveExit = 25, kActionBackTwo = 26,
 	kActionReturnToPlayer = 33,
 };
 

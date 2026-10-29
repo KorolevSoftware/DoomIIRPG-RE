@@ -346,15 +346,26 @@ void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 }
 
 // snapLerpSprites (src/Game.cpp:1149-1166): zero the timings and run one tick
-// so the completion snap + slot free happen immediately. Owner-thread resume
-// omitted (the callers run mid-dispatch of some thread and re-entrant run() is
-// unsafe in the rewrite VM).
+// so the completion snap + slot free happen immediately. Owner-thread resume is
+// omitted for per-sprite snaps only (their callers run mid-dispatch of some
+// thread and re-entrant run() is unsafe in the rewrite VM); -1 resumes the
+// de-duplicated non-ASYNC owners after the loop as src/Game.cpp:2967-2981 does.
 void SpriteLerps::snap(int sprite) {
+	ScriptThread* owners[kMaxLerpSprites];
+	int numOwners = 0;
 	for (SpriteLerp& ls : spriteLerps_) {
-		if (ls.hSprite != sprite + 1) continue;
+		if (ls.hSprite == 0 || (sprite != -1 && ls.hSprite != sprite + 1)) continue;   // src/Game.cpp:2965-2966
+		if (sprite == -1 && ls.ownerThread != nullptr && (ls.flags & SpriteLerp::kFlagAsync) == 0) {
+			int k = 0;
+			while (k < numOwners && owners[k] != ls.ownerThread) ++k;   // (:2968-2972)
+			if (k == numOwners) owners[numOwners++] = ls.ownerThread;
+		}
 		ls.startTime = 0;                          // (:1159-1160)
 		ls.travelTime = 0;
 		updateLerpSprite(&ls);                     // zero travel -> completion snap + free
+	}
+	for (int i = 0; i < numOwners; ++i) {
+		if (env_.vm != nullptr) env_.vm->resumeThread(owners[i]);
 	}
 }
 

@@ -14,11 +14,15 @@ _Last updated: 2026-10-28_
 | TAB | automap (logs only, no screen yet) |
 | ESCAPE | open menu / back — **does not quit** |
 | BACKSPACE | back (ours; also closes the loot list) |
+| I | open Inventory (items menu 72; legacy AVK_ITEMS_INFO, `src/Input.cpp:92`) |
 | K | debug: grant keycards (ours, removable) |
 
 There is no quit key: the window close button is the only exit, as in the
 reference. Z/X/I/O/P/B are reserved-unmapped (no rewrite counterpart). Full
 rationale: `docs/architecture/specs/2026-08-27-ui-layer.md` §"KEYMAP 2026-08-29".
+
+Known deviation (2026-10-29): in a cinematic ANY queued action skips it (`new_src/core/GameContext.cpp:233-237`);
+legacy skips only on PASSTURN/AUTOMAP/FIRE/key 18 (`src/InputEventController.cpp:417`). Fix later with an action whitelist.
 
 ## Working on
 

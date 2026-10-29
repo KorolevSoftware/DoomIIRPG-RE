@@ -26,6 +26,7 @@ enum class StateId : int {
 enum class Action : int {
 	None, Forward, Back, TurnLeft, TurnRight, Use,
 	Passturn, Automap, Menu, BackKey,
+	Items,   // ACTION_ITEMS (AVK_ITEMS_INFO, src/Input.cpp:92)
 	// No key produces this one: the in-game menu's right soft key is touch-only
 	// in the original (src/MenuSystem.cpp:4787-4789 calls returnToGame directly),
 	// so it exists purely so the UI intent travels through the one action queue

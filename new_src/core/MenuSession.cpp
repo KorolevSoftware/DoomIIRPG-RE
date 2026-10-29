@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 #include "domain/game/Enums.h"
+#include "domain/game/Game.h"
 #include "domain/game/Player.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
@@ -54,6 +56,8 @@ constexpr int kStrNanoDrinksItemHelp = 179;
 constexpr int kStrRestartLevelQuestion = 134;
 constexpr int kStrSaveQuitQuestion = 135;
 constexpr int kStrLoadGameQuestion = 136;
+// MENU_ITEMS_CONFIRM's question "Use %01?" (:2054-2058), composed with the name.
+constexpr int kStrUseItemQuestion = 184;
 // MenuStrings::YES_LABEL / NO_LABEL (src/MenuStrings.h:246-247), appended by
 // SetYESNO (:3651-3652).
 constexpr int kStrYesLabel = 197;
@@ -223,7 +227,7 @@ int helpResourceFor(int menuId) {
 // remaining absent id stays refused by the GOTO gate in initMenu.
 bool isCodeBuiltScreen(int menuId) {
 	return menuId == kMenuLoad || menuId == kMenuRestartLvl || menuId == kMenuSaveQuit ||
-		menuId == kMenuQuestLog || helpResourceFor(menuId) > 0;
+		menuId == kMenuQuestLog || menuId == kMenuItemsConfirm || helpResourceFor(menuId) > 0;
 }
 
 // The screens whose action rows carry an "i" button, verbatim from the paint
@@ -246,8 +250,7 @@ ScreenGeom geometryFor(int menuId) {
 	switch (menuId) {
 	// One case group in the original (:4330-4349): w = the 296 px option
 	// button, x = (480 - w) >> 1 = 92, y = 0, h = 320. Its remaining members
-	// (INGAME_CONTROLLER / OPTIONS_SOUND / OPTIONS_INPUT /
-	// ITEMS_CONFIRM / the three ITEMS_*MSG screens) have no MenuId in the
+	// (INGAME_CONTROLLER / OPTIONS_SOUND / OPTIONS_INPUT) have no MenuId in the
 	// rewrite. LOADNOSAVE 50 and SPECIAL_EXIT 58 are deliberately absent: they
 	// are NOT in that group and keep the default rect.
 	case kMenuOptions:
@@ -257,6 +260,11 @@ ScreenGeom geometryFor(int menuId) {
 	case kMenuRestartLvl:
 	case kMenuSaveQuit:
 	case kMenuControls:
+	case kMenuItemsConfirm:
+	case kMenuItemsHealthMsg:
+	case kMenuItemsArmorMsg:
+	case kMenuItemsSyringeMsg:
+	case kMenuItemsHolyWaterMax:
 		return { UiRect{ (480 - kItemWidthPx) / 2, kListRect.y, kItemWidthPx, kListRect.h }, 320 };
 	// The text-section group (:4351-4367): x = 23, y = 0, w = 434,
 	// h = 320 - panelBottom->height. MENU_INGAME_SNIPER (41) is a member here
@@ -389,6 +397,20 @@ void MenuSession::initMenu(int menuId) {
 		scrollIndex_ = 0;
 		// The one caller that spells the NO branch out; 2/0 is also the default.
 		setYesNo(kStrSaveQuitQuestion, 1, kActionSaveQuit, 0, kActionBack, 0);
+	} else if (menuId == kMenuItemsConfirm) {          // (:2047-2059)
+		type_ = kMenuTypeVCenter;
+		scrollIndex_ = 0;
+		// find(6, 0, menuParam)->name — the INVENTORY def even for 22 (entities.bin
+		// has (6,0,22), name 86 "Holy Water", same id as the ammo def's).
+		std::string name;
+		const EntityDef* d = env_.defs != nullptr ? env_.defs->find(Enums::ET_ITEM,
+			Enums::ITEM_CLASS_INVENTORY, menuParam_) : nullptr;
+		if (d != nullptr && env_.loc != nullptr) name = env_.loc->get(kTextIngame, d->name);
+		else std::fprintf(stderr, "[menu] confirm: no def (6,0,%d)\n", menuParam_);
+		const int peek = stackCount_ > 0 ? menuStack_[stackCount_ - 1] : 0;   // peekMenu()
+		setYesNo(kStrUseItemQuestion, 1,
+			peek == kMenuItemsDrinks ? kActionUseItemSyring : kActionUseItemOther,
+			menuParam_, kActionBack, 0, &name, 1);
 	} else {
 		// loadMenuItems(menu, 0, -1) (:2724-2727): the whole span, copied because
 		// initMenu patches flags per screen (:1549-1573).
@@ -460,12 +482,6 @@ void MenuSession::initMenu(int menuId) {
 			break;
 		case kActionBackToMain:
 			disableRow(i, "no main menu");
-			break;
-		case kActionConfirmUse:
-			// ACTION_CONFIRMUSE hands the slot to MENU_ITEMS_CONFIRM (77), a
-			// SetYESNO screen built in code (:2047-2062), and the YES branch runs
-			// Player::useItem, which the rewrite does not have either.
-			disableRow(i, "use-item confirm screen is built in code, not ported yet (G7)");
 			break;
 		case kActionShowDetails:
 			// showDetailsMenu() -> MENU_SHOWDETAILS (71), built in code from the
@@ -707,14 +723,18 @@ int MenuSession::addMessageRow(int srcStrId, const Text& src, int beg, int end) 
 // default the NO branch to (ACTION_BACK, 0) (:3611-3618), so one function with a
 // defaulted no-action covers all three.
 //
-// composeText(3, strId, text) (:3616) is not ported: none of the three questions
-// this screen family uses in the in-game tree carries a %NN argument, so the
-// shipped string IS the composed text. A '%' in it would mean an unresolved
+// composeText(3, strId, text) (:3616) resolves %NN from the current text args;
+// the rewrite passes them explicitly (`args`, the ITEMS_CONFIRM name) and
+// composes with composeArgs. A '%' left over would mean an unresolved
 // argument, which is worth a line in the log rather than a silent wrong string.
 void MenuSession::setYesNo(int strId, int preselect, int yesAction, int yesParam,
-	int noAction, int noParam) {
+	int noAction, int noParam, const std::string* args, int numArgs) {
 	yesNoText_.setLength(0);
-	if (env_.loc != nullptr) yesNoText_.append(env_.loc->get(kTextIngame2, strId));
+	if (env_.loc != nullptr) {
+		std::string s = env_.loc->get(kTextIngame2, strId);
+		if (args != nullptr) composeArgs(s, args, numArgs);
+		yesNoText_.append(s);
+	}
 	if (yesNoText_.findFirstOf('%') >= 0) {
 		std::fprintf(stderr, "[menu] confirm string %d has an unresolved argument: '%s'\n",
 			strId, yesNoText_.c_str());
@@ -1339,6 +1359,38 @@ void MenuSession::select(int i) {
 		// (src/LoadingManager.cpp:659).
 		if (env_.restartLevel) env_.restartLevel();
 		break;
+	case kActionConfirmUse:                                       // (:3188-3197)
+		// saveIndexes(2|4) is replaced by the nav stack (same note as kActionUseItemWeapon).
+		menuParam_ = items_[i].def.param;
+		gotoMenu(kMenuItemsConfirm);
+		break;
+	case kActionUseItemSyring:
+	case kActionUseItemOther: {                                   // (:3149-3179), identical bodies
+		if (env_.player == nullptr || env_.game == nullptr || env_.host == nullptr) break;
+		Game& game = *env_.game;
+		const UseResult r = env_.player->useItem(menuParam_);
+		if (r == UseResult::Used) game.advanceTurn();             // useItem's own tail (src/Player.cpp:956-958)
+		if (game.lerps.animatingEffects() != 0) { returnToGame(); break; }   // :3152-3155
+		game.monsters.snapMonsters(true);                         // :3156
+		game.lerps.snap(-1);                                      // :3157
+		// :3158-3160 `canvas->state != ST_MENU`. Two rewrite spellings of it:
+		// a started monster attack (legacy setState(ST_COMBAT), src/Combat.cpp:165 ==
+		// combat.active here, ADR 0028) and anything the PER_TURN script requested.
+		if (game.combat.active) { returnToGame(); break; }
+		if (env_.host->state() != StateId::Menu) break;
+		if (r != UseResult::Refused) { back(); break; }           // :3161-3164, to the rebuilt list
+		if (menuParam_ == Enums::INV_OTHER_HOLY_WATER) gotoMenu(kMenuItemsHolyWaterMax);
+		else if (menuParam_ >= 16 && menuParam_ < 18) gotoMenu(kMenuItemsHealthMsg);
+		else if (menuParam_ >= 11 && menuParam_ < 13) gotoMenu(kMenuItemsArmorMsg);
+		else gotoMenu(kMenuItemsSyringeMsg);
+		break;
+	}
+	case kActionBackTwo: {                                        // (:3203-3207)
+		int idx = 0, scroll = 0;
+		if (stackCount_ != 0) popMenu(idx, scroll);               // discard the confirm's entry (legacy pops unguarded)
+		back();
+		break;
+	}
 	default:
 		std::fprintf(stderr, "[menu] action %d (param %d) has no rewrite path\n",
 			items_[i].def.action, items_[i].def.param);
@@ -1414,6 +1466,13 @@ void MenuSession::back() {
 		setMenu(target);
 		selectedIndex_ = idx;
 		scrollIndex_ = scroll;
+		// Deviation U1: legacy leaves the cursor past the end / on a divider when
+		// a used-up row vanished (:599); re-run the initMenu tail. No-op otherwise.
+		if (selectedIndex_ >= numItems_) {
+			moveDir(-1);
+		} else if (!selectable(selectedIndex_)) {
+			moveDir(1);
+		}
 	} else if (menu_ == kMenuInGame || menu_ == kMenuItems || menu_ == kMenuQuestLog) {
 		returnToGame();
 	}

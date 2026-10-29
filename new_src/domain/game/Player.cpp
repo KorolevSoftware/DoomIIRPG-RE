@@ -2,12 +2,16 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
 
 #include "domain/game/Combat.h"
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
+#include "domain/game/Game.h"
 #include "domain/game/WeaponTable.h"
+#include "io/Localization.h"
+#include "ui/Hud.h"
 
 namespace newcore {
 
@@ -201,7 +205,7 @@ bool Player::requireItem(int kind, int slot, int min, int max) const {
 	return (weapons & bit) == 0;
 }
 
-bool Player::addHealth(int amount) {
+bool Player::addHealth(int amount, bool showMessage) {
 	int stat = ce.getStat(Enums::STAT_HEALTH);
 	int stat2 = ce.getStat(Enums::STAT_MAX_HEALTH);
 	if (amount > 0) {
@@ -210,7 +214,41 @@ bool Player::addHealth(int amount) {
 		return false;
 	}
 	ce.addStat(Enums::STAT_HEALTH, amount);
+	const int now = ce.getStat(Enums::STAT_HEALTH);
+	if (showMessage && now > stat && hud_ != nullptr && loc_ != nullptr) {   // src/Player.cpp:445-449
+		std::string text = loc_->get(kTextMain, 111);   // "Gained %01 health"
+		std::string args[1] = { std::to_string(now - stat) };
+		composeArgs(text, args, 1);
+		hud_->addMessage(text, 0xAA000000, 0);          // Hud::addMessage(short) = flags 0
+	}
 	return true;
+}
+
+UseResult Player::useItem(int n) {
+	if (n < 0 || n >= 26) return UseResult::Refused;   // rewrite bound; legacy indexes unchecked
+	if (inventory[n] == 0 && n != Enums::INV_OTHER_HOLY_WATER) return UseResult::Refused;   // src/Player.cpp:804-806
+	bool turn = true, consume = true;                  // b, b2 (:807-808)
+	switch (n) {
+	case 16: if (!addHealth(20)) return UseResult::Refused; break;   // :810-815
+	case 17: if (!addHealth(80)) return UseResult::Refused; break;   // :816-821
+	case 11: if (!addArmor(50)) return UseResult::Refused; break;    // :822-827
+	case 12: if (!addArmor(10)) return UseResult::Refused; break;    // :828-833
+	case 22: {                                                        // :935-944
+		consume = false;
+		// shortcut: legacy is addHealth(25) | addStatusEffect(11 FEAR, 100, 3) + translate;
+		// at full health legacy still succeeds via the fear stack, here it refuses. Upgrade in G2a.
+		const bool ok = addHealth(25);
+		std::fprintf(stderr, "[item] holy water: fear half deferred to G2\n");
+		if (!ok) return UseResult::Refused;
+		ammo[Enums::AMMO_HOLY_WATER] -= 25;
+		break;
+	}
+	case 23: return UseResult::UsedNoTurn;   // :945-947, no sound/consume/turn
+	default: return UseResult::Refused;      // drinks 0..10 arrive in G2a (:948)
+	}
+	std::fprintf(stderr, "[sound] 1124\n");  // :952
+	if (consume) --inventory[n];             // :953-955
+	return turn ? UseResult::Used : UseResult::UsedNoTurn;
 }
 
 Player::PainBand Player::pain(int n) {
@@ -256,11 +294,12 @@ int Player::calcDamageDir(int x1, int y1, int angle, int x2, int y2) {
 	return dir;
 }
 
-void Player::addArmor(int n) {
+bool Player::addArmor(int n) {
 	const int stat = ce.getStat(Enums::STAT_ARMOR);        // src/Player.cpp:1933-1946
-	if (stat >= 200 && n > 0) return;
-	if (n < 0 && god) return;
+	if (stat >= 200 && n > 0) return false;
+	if (n < 0 && god) return false;
 	ce.setStat(Enums::STAT_ARMOR, std::max(0, std::min(200, stat + n)));
+	return true;
 }
 
 // ---- XP / leveling ----
