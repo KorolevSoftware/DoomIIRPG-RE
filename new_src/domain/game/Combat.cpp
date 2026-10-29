@@ -581,8 +581,7 @@ bool Combat::playerSeq() {
 		totalDamage += damage;                                   // :309
 		totalArmorDamage += crArmorDamage;                       // :310
 		animTime = weaponDef(attackerWeaponId).shothold;         // :311
-		// haste statusEffects[2] x5 branch absent -> always x10 (:312-317).
-		animTime *= 10;
+		animTime *= (env_.player != nullptr && env_.player->statusEffects[2] > 0) ? 5 : 10;   // :312-317 haste
 		animStartTime = (int)*env_.gameTime;                     // :318
 		animEndTime = animStartTime + animTime;                  // :319
 		flashDone = false;                                       // :320
@@ -711,7 +710,11 @@ void Combat::explodeOnMonster() {
 	}
 	if (targetType == Enums::ET_MONSTER) {               // :904-931
 		if (totalDamage > 0) {
-			// checkMonsterFX skipped: status effects absent (:168-176,:906).
+			// checkMonsterFX (:168-176, :906): WP_POISON marks the target. The
+			// poison tick (updateMonsterFX) is unported (deviation U3).
+			if (env_.player != nullptr && env_.player->statusEffects[12] > 0) {
+				curTarget->monster->monsterEffects |= ((env_.player->statusEffects[30] - 1) << 5) | 0x1;
+			}
 			env_.game->entityPain(curTarget, totalDamage);       // :907 (ADR 0018)
 			// blood particles (:908-910), knockback (:911-921), splash radius
 			// (:922-924) and negative-damage healing cap (:926-931) skipped:

@@ -328,12 +328,15 @@ void Game::advanceTurn() {
 		std::fprintf(stderr, "[turn] ERR_NONSNAPPEDMONSTERS (95)\n");
 		monsters.snapMonsters(true);
 	}
-	// haste-parity block (:1244-1262): statusEffects[2] absent ->
-	// monstersTurn = 1 always. Player-side ticks (poison/infection/combat
-	// decay) deferred with citation src/Player.cpp:51-92.
-	monstersTurn = 1;                          // arm the monster phase (:1257-1264); Playing tick step disarms
+	bool b = true;                             // haste parity (:1244-1253)
+	if (player_ != nullptr && player_->statusEffects[Enums::STATUS_EFFECT_AGILITY] > 0) {   // 2 = BUFF_HASTE
+		++player_->statusEffects[20];          // haste amount plane = parity counter
+		b = (player_->statusEffects[20] % 2) == 0;
+	}
+	if (player_ != nullptr) player_->advanceTurn();   // (:1255); updateBombs (:1256) not ported
+	monstersTurn = b ? 1 : 2;                  // arm the monster phase (:1257-1262); Playing tick step disarms
 	monsters.monstersUpdated = false;          // (:1263)
-	facingDirty = true;                        // updateFacingEntity latch (src/Game.cpp:1269; no haste -> b always true)
+	if (b) facingDirty = true;                 // updateFacingEntity latch (:1265-1269); updateMonsterFX deferred
 	doors.advanceTurnDoors();                  // auto-close sweep (:1271-1278)
 	if (vm_) vm_->executeStaticFunc(Enums::SCR_PER_TURN); // PER_TURN hook (:1279)
 }

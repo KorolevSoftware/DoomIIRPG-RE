@@ -6,11 +6,11 @@
 #include <vector>
 
 #include "render/api/Texture.h"
+#include "text/Text.h"
 
 namespace newcore {
 
 class Font;
-class Text;
 class Graphics2D;
 class UiAssets;
 
@@ -164,6 +164,12 @@ public:
 	// drawn here — drawMessages owns them.
 	void drawTopBar(Graphics2D& g, const Font& font, int canvasWidth);
 
+	// Player::drawBuffs + drawStatusEffectIcon (src/Player.cpp:1209-1260,
+	// :1597-1620): the buff box at the top-right of the 3D view. buffs is the
+	// legacy layout ([k] turns, [15+k] amount); showTurns = app->time -
+	// turnTime < 600 (:1614).
+	void drawBuffs(Graphics2D& g, const Font& font, const int16_t* buffs, int numbuffs, bool showTurns);
+
 	// Bottom panel background: gameMenu_Panel_bottom.bmp (480x64) at y=256,
 	// the legacy band below the 3D viewport (src/TouchController.cpp:544-545,
 	// rendering.md 6.1). Background only, no widgets.
@@ -193,6 +199,8 @@ private:
 	// empty UiAssets while it is null.
 	const UiAssets* assets_ = nullptr;
 	const UiAssets& art() const;
+
+	Text buffText_;   // drawBuffs' smallBuffer (src/Player.cpp:1600)
 
 	// Message queue: only messages_[0] is drawn, and it expires
 	// msgDuration_ + 100 ms after becoming the head (src/Hud.cpp:249-251).

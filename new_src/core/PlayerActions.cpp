@@ -366,6 +366,10 @@ void PlayerActions::handleAction(Action a) {
 		env_.hud->clearMessages();            // msgCount = 0 (:165)
 		if (env_.openMenu) env_.openMenu(kMenuItems);
 		break;
+	case Action::ItemsDrinks:                 // src/PlayingInputHandler.cpp:169-178
+		env_.hud->clearMessages();            // msgCount = 0
+		if (env_.openMenu) env_.openMenu(kMenuItemsDrinks);
+		break;
 	default:
 		break;
 	}

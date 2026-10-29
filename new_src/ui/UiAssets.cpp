@@ -92,6 +92,7 @@ bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	ok &= loadTexture(store, read, "gameMenu_bottomSlider.bmp", menuSliderBottom);
 	ok &= loadTexture(store, read, "inGame_menu_softkey.bmp", menuSoftKey);
 	ok &= loadTexture(store, read, "inGame_menu_option_button.bmp", menuOptionButton);
+	ok &= loadTexture(store, read, "Icons_Buffs.bmp", iconsBuffs);   // src/Canvas.cpp:172
 	return ok;
 }
 

@@ -132,6 +132,22 @@ public:
 	// src/Player.cpp:801-959; n = inventory slot, 22 = holy water.
 	UseResult useItem(int n);
 
+	// ---- Status effects / buffs (src/Player.h:107-113) ----
+	int statusEffects[54] = { 0 };   // [0+i] turns, [18+i] amount, [36+i] stack count
+	int numStatusEffects = 0;
+	int16_t buffs[30] = { 0 };       // [0+k] turns, [15+k] amount; derived by translateStatusEffects
+	int numbuffs = 0;
+	bool addStatusEffect(int n, int amount, int turns);   // src/Player.cpp:1562-1595
+	void removeStatusEffect(int n);                       // :1534-1560
+	void updateStatusEffects();                           // :1458-1472
+	void translateStatusEffects();                        // :1474-1531
+	void updateStats();                                   // :1448-1456
+	void advanceTurn();                                   // :50-92 subset
+	// app->time of the last advanceTurn (:87); the HUD buff box shows turn
+	// counts for 600 ms after it (:1614).
+	int64_t turnTime = 0;
+	void setClock(const int64_t* upTimeMs) { clock_ = upTimeMs; }
+
 	// Health-fraction crossing reported by pain(); the caller shows the message.
 	enum class PainBand { None, NearDeath, LowHealth, HalfHealth };
 	// Player::pain state half (src/Player.cpp:652-709): god / n == 0 early
@@ -172,6 +188,7 @@ private:
 	const EntityDefs* defs_ = nullptr;
 	Hud* hud_ = nullptr;
 	const Localization* loc_ = nullptr;
+	const int64_t* clock_ = nullptr;
 };
 
 } // namespace newcore

@@ -47,10 +47,16 @@ void Player::finishRotation() {
 
 bool Player::updateView() {
 	bool moved = false;
-	if (viewX < destX) { viewX += animPos; if (viewX > destX) viewX = destX; moved = true; }
-	else if (viewX > destX) { viewX -= animPos; if (viewX < destX) viewX = destX; moved = true; }
-	if (viewY < destY) { viewY += animPos; if (viewY > destY) viewY = destY; moved = true; }
-	else if (viewY > destY) { viewY -= animPos; if (viewY < destY) viewY = destY; moved = true; }
+	int step = animPos;
+	int ang = animAngle;
+	if (statusEffects[2] > 0) {   // haste x1.5 (src/MovementController.cpp:405-410; knockbackDist is always 0)
+		step += step / 2;
+		ang += ang / 2;
+	}
+	if (viewX < destX) { viewX += step; if (viewX > destX) viewX = destX; moved = true; }
+	else if (viewX > destX) { viewX -= step; if (viewX < destX) viewX = destX; moved = true; }
+	if (viewY < destY) { viewY += step; if (viewY > destY) viewY = destY; moved = true; }
+	else if (viewY > destY) { viewY -= step; if (viewY < destY) viewY = destY; moved = true; }
 	if (zStep != 0) {
 		if (viewZ < destZ) { viewZ += zStep; if (viewZ > destZ) viewZ = destZ; moved = true; }
 		else if (viewZ > destZ) { viewZ -= zStep; if (viewZ < destZ) viewZ = destZ; moved = true; }
@@ -66,11 +72,11 @@ bool Player::updateView() {
 	// produced view=-256 vs dest=768 — masked code saw "arrived" while the
 	// raw gate (GameContext::handlePlayingAction) blocked input forever.
 	if (viewAngle < destAngle) {
-		viewAngle += animAngle;
+		viewAngle += ang;
 		if (viewAngle > destAngle) viewAngle = destAngle;
 		moved = true;
 	} else if (viewAngle > destAngle) {
-		viewAngle -= animAngle;
+		viewAngle -= ang;
 		if (viewAngle < destAngle) viewAngle = destAngle;
 		moved = true;
 	}
@@ -110,6 +116,10 @@ void Player::reset() {
 	facingEntity = nullptr;
 	god = false;
 	give(0, 18, 1); // journal
+	numbuffs = 0;                      // src/Player.cpp:535-544
+	for (auto& v : buffs) v = 0;
+	numStatusEffects = 0;
+	for (auto& v : statusEffects) v = 0;
 }
 
 // src/Player.cpp:970-1063. The isFamiliar mirror arrays (weaponsCopy /
@@ -233,22 +243,219 @@ UseResult Player::useItem(int n) {
 	case 17: if (!addHealth(80)) return UseResult::Refused; break;   // :816-821
 	case 11: if (!addArmor(50)) return UseResult::Refused; break;    // :822-827
 	case 12: if (!addArmor(10)) return UseResult::Refused; break;    // :828-833
+	case 7:                                                           // :834-840
+		if (!addStatusEffect(6, 25, 31)) return UseResult::Refused;
+		translateStatusEffects();
+		break;
+	case 6:                                                           // :841-847
+		if (!addStatusEffect(4, 25, 31)) return UseResult::Refused;
+		translateStatusEffects();
+		break;
+	case 1:                                                           // :848-854
+		if (!addStatusEffect(7, 5, 31)) return UseResult::Refused;
+		translateStatusEffects();
+		break;
+	case 3: {                                                         // :855-868
+		bool any = false;
+		if (addStatusEffect(8, 25, 31)) any = true;
+		if (addStatusEffect(5, 20, 31)) any = true;
+		if (!any) return UseResult::Refused;
+		translateStatusEffects();
+		break;
+	}
+	case 2:                                                           // :869-876
+		if (!addStatusEffect(9, 0, 11)) return UseResult::Refused;
+		removeStatusEffect(13);
+		translateStatusEffects();
+		break;
+	case 9:                                                           // :877-883
+		if (!addStatusEffect(8, 100, 31)) return UseResult::Refused;
+		translateStatusEffects();
+		break;
+	case 8:                                                           // :884-892
+		if (statusEffects[2] != 0) return UseResult::Refused;
+		turn = false;
+		addStatusEffect(2, 0, 21);
+		translateStatusEffects();
+		break;
+	case 0:                                                           // :893-900
+		if (!addStatusEffect(10, 20, 31)) return UseResult::Refused;
+		translateStatusEffects();
+		addHealth(20);
+		break;
+	case 5:                                                           // :901-907
+		if (!addStatusEffect(3, 5, 31)) return UseResult::Refused;
+		translateStatusEffects();
+		break;
+	case 10: {                                                        // :908-927
+		bool any = false;
+		if (addStatusEffect(6, 25, 31)) any = true;
+		if (addStatusEffect(8, 25, 31)) any = true;
+		if (addStatusEffect(4, 25, 31)) any = true;
+		if (addStatusEffect(7, 5, 31)) any = true;
+		if (!any) return UseResult::Refused;
+		translateStatusEffects();
+		break;
+	}
+	case 4:                                                           // :928-934
+		if (!addStatusEffect(12, 10, 11)) return UseResult::Refused;
+		translateStatusEffects();
+		break;
 	case 22: {                                                        // :935-944
+		const bool ok = addHealth(25) | addStatusEffect(11, 100, 3);  // bitwise: both run
 		consume = false;
-		// shortcut: legacy is addHealth(25) | addStatusEffect(11 FEAR, 100, 3) + translate;
-		// at full health legacy still succeeds via the fear stack, here it refuses. Upgrade in G2a.
-		const bool ok = addHealth(25);
-		std::fprintf(stderr, "[item] holy water: fear half deferred to G2\n");
 		if (!ok) return UseResult::Refused;
 		ammo[Enums::AMMO_HOLY_WATER] -= 25;
+		translateStatusEffects();
 		break;
 	}
 	case 23: return UseResult::UsedNoTurn;   // :945-947, no sound/consume/turn
-	default: return UseResult::Refused;      // drinks 0..10 arrive in G2a (:948)
+	default: return UseResult::Refused;      // 13, 18-21, 24, 25 (:948)
 	}
 	std::fprintf(stderr, "[sound] 1124\n");  // :952
 	if (consume) --inventory[n];             // :953-955
 	return turn ? UseResult::Used : UseResult::UsedNoTurn;
+}
+
+// ---- Status effects / buffs ----
+
+namespace {
+// COLD's render->startFogLerp (src/Player.cpp:1550-1552, :1583-1589) has no
+// rewrite counterpart (fog is disabled, core/Main.cpp).
+void logFogLerpOnce() {
+	static bool logged = false;
+	if (!logged) std::fprintf(stderr, "[buff] cold fog lerp not ported\n");
+	logged = true;
+}
+} // namespace
+
+void Player::advanceTurn() {
+	// src/Player.cpp:50-92 subset. Deferred: moves/totalMoves (:53-54),
+	// COLD/DRUNK drain statusEffects[53] (:63-66) and FIRE -3 + msg 82/71
+	// (:68-77) — no producer (EV_STATUS_EFFECT op 70 and monster fire effects
+	// src/Combat.cpp:553,978,1135 unported) — inCombat decay (:79-81),
+	// counters[3] (:83-85) and the automap exit (:88-90).
+	updateStatusEffects();                                  // :55
+	if (buffs[Enums::BUFF_REGEN] > 0) {                     // :59-61, silent
+		addHealth(buffs[Enums::BUFF_MAX + Enums::BUFF_REGEN], false);
+	}
+	turnTime = clock_ != nullptr ? *clock_ : 0;             // :87 app->time
+}
+
+void Player::updateStats() {                                // src/Player.cpp:1448-1456
+	ce.setStat(Enums::STAT_MAX_HEALTH, baseCe.getStat(Enums::STAT_MAX_HEALTH) + buffs[25]);
+	ce.setStat(Enums::STAT_HEALTH, ce.getStat(Enums::STAT_HEALTH));   // re-clamp
+	ce.setStat(Enums::STAT_STRENGTH, baseCe.getStat(Enums::STAT_STRENGTH) + buffs[20]);
+	ce.setStat(Enums::STAT_ACCURACY, baseCe.getStat(Enums::STAT_ACCURACY) + buffs[22] - buffs[28]);
+	ce.setStat(Enums::STAT_DEFENSE, baseCe.getStat(Enums::STAT_DEFENSE) + buffs[19]);
+	ce.setStat(Enums::STAT_AGILITY, baseCe.getStat(Enums::STAT_AGILITY) + buffs[21]);
+	ce.setStat(Enums::STAT_IQ, baseCe.getStat(Enums::STAT_IQ));
+}
+
+void Player::updateStatusEffects() {                        // src/Player.cpp:1458-1472
+	if (numStatusEffects == 0) return;
+	for (int i = 0; i < Enums::MAX_STATUS_EFFECTS; ++i) {
+		if (statusEffects[0 + i] != 0) {
+			// Legacy `turns <= 5 && turns == 1`: the first half is redundant.
+			if (statusEffects[0 + i] <= 5 && statusEffects[0 + i] == 1) {
+				removeStatusEffect(i);
+			} else if (statusEffects[0 + i] != 0) {
+				--statusEffects[0 + i];
+			}
+		}
+	}
+	translateStatusEffects();
+}
+
+void Player::translateStatusEffects() {                     // src/Player.cpp:1474-1531
+	for (int i = 0; i < Enums::BUFF_MAX; ++i) {
+		buffs[0 + i] = (buffs[15 + i] = 0);
+	}
+	numbuffs = 0;
+	for (int j = 0; j < Enums::MAX_STATUS_EFFECTS; ++j) {
+		const int n = statusEffects[0 + j];
+		const int n2 = statusEffects[18 + j];
+		if (n > 0) {
+			switch (j) {
+			case 14:
+				buffs[20] -= (int16_t)n2;
+				buffs[5] = (int16_t)n;
+				buffs[19] -= (int16_t)n2;
+				buffs[4] = (int16_t)n;
+				buffs[29] -= (int16_t)(statusEffects[36 + j] * 4);
+				buffs[14] = (int16_t)n;
+				break;
+			case 15:
+			case 17:
+				buffs[20] += (int16_t)n2;
+				buffs[5] = (int16_t)n;
+				buffs[19] += (int16_t)n2;
+				buffs[4] = (int16_t)n;
+				buffs[22] -= (int16_t)(n2 + (n2 / 2));
+				buffs[7] = (int16_t)n;
+				break;
+			case 16:
+				buffs[22] -= (int16_t)n2;
+				buffs[7] = (int16_t)n;
+				break;
+			default:
+				buffs[15 + j] += (int16_t)n2;
+				buffs[0 + j] = (int16_t)n;
+				break;
+			}
+		}
+	}
+	for (int k = 0; k < Enums::BUFF_MAX; ++k) {
+		if (buffs[0 + k] > 0) {
+			if (((1 << k) & Enums::BUFF_NO_AMOUNT) == 0 && buffs[15 + k] == 0) {
+				buffs[0 + k] = 0;
+			} else {
+				++numbuffs;
+			}
+		}
+	}
+	updateStats();
+}
+
+void Player::removeStatusEffect(int n) {                    // src/Player.cpp:1534-1560
+	if (n == Enums::STATUS_EFFECT_ALL) {
+		numStatusEffects = 0;
+		for (int i = 0; i < Enums::MAX_STATUS_EFFECTS; ++i) {
+			statusEffects[0 + i] = 0;
+			statusEffects[18 + i] = 0;
+			statusEffects[36 + i] = 0;
+		}
+	} else {
+		if (statusEffects[36 + n] == 0) return;
+		if (n == Enums::STATUS_EFFECT_COLD) logFogLerpOnce();   // :1550-1552
+		statusEffects[18 + n] = 0;
+		statusEffects[36 + n] = 0;
+		statusEffects[0 + n] = 0;
+		--numStatusEffects;
+	}
+	std::fprintf(stderr, "[buff] -effect %d\n", n);
+	translateStatusEffects();
+}
+
+bool Player::addStatusEffect(int n, int amount, int turns) {   // src/Player.cpp:1562-1595
+	if (n == Enums::STATUS_EFFECT_FIRE) {                   // :1568-1573
+		if (buffs[Enums::BUFF_ANTIFIRE] > 0) return false;
+		std::fprintf(stderr, "[sound] 1034\n");
+	}
+	const int count = statusEffects[36 + n] + 1;
+	if (count > 3 || ((n == 12 || n == 9) && count > 1)) {
+		if (n == 14) statusEffects[0 + n] = turns;          // DISEASE refreshes (:1576-1578)
+		return false;
+	}
+	if (count == 1) {
+		++numStatusEffects;
+		if (n == Enums::STATUS_EFFECT_COLD) logFogLerpOnce();   // :1583-1589
+	}
+	statusEffects[18 + n] += amount;
+	statusEffects[0 + n] = turns;
+	statusEffects[36 + n] = count;
+	std::fprintf(stderr, "[buff] +effect %d amount %d turns %d (stack %d)\n", n, amount, turns, count);
+	return true;
 }
 
 Player::PainBand Player::pain(int n) {

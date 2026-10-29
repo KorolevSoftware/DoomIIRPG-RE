@@ -264,6 +264,7 @@ int main(int argc, char* argv[]) {
 		[&app](const char* name, std::vector<uint8_t>& out) {
 			return app.readResource(name, out);
 		});
+	app.g2d().setBuffIconTexture(uiAssets.iconsBuffs);   // drawBuffIcon + '\'-letter glyphs
 
 	UiState uiState;
 	Ui ui;
@@ -315,6 +316,7 @@ int main(int argc, char* argv[]) {
 	// (spec §2).
 	ScriptVM vm;
 	GameContext ctx;
+	player.setClock(&ctx.upTimeMs);  // advanceTurn's turnTime stamp (src/Player.cpp:87)
 	DialogSystem dialogs;
 	vm.init({                  // Env: map, defs, game, player, loc, tables, hud, ctx, dialogs, gameTime
 		&g_map, &g_entityDefs, &game, &player, &loc, &tables, &hud, &ctx, &dialogs, &ctx.gameTime });

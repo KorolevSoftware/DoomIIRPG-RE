@@ -604,6 +604,12 @@ void GameContext::debugGiveKeycards() {
 	sys_.player->give(0, 20, 1);
 	std::fprintf(stderr, "[debug] granted keycards inv[19]=%d inv[20]=%d\n",
 		sys_.player->inventory[19], sys_.player->inventory[20]);
+	// DEBUG (removable, use-item G2): map00 has no drinks; one of each plus
+	// the holy-water pistol and 50 water so every item-use arm is testable.
+	for (int s = 0; s < 11; ++s) sys_.player->give(0, s, 1, true);
+	sys_.player->give(1, Enums::WP_HOLY_WATER_PISTOL, 1, true);
+	sys_.player->give(2, Enums::AMMO_HOLY_WATER, 50, true);
+	std::fprintf(stderr, "[debug] granted drinks 0..10 + holy water\n");
 }
 
 void GameContext::debugToggleCoords() {
@@ -925,6 +931,12 @@ void GameContext::render(AppContext& app) {
 	}
 	targeting_.feedHealthBar();
 	if (gameplayView) {
+		// Buff box, before the damage arrow inside drawEffects (src/Hud.cpp:505-507);
+		// skipped in ST_DIALOG (src/Player.cpp:1211). ST_DYING is not a gameplayView.
+		if (state_ != StateId::Dialog && sys_.player->numbuffs != 0) {
+			sys_.hud->drawBuffs(g, *sys_.font, sys_.player->buffs, sys_.player->numbuffs,
+				upTimeMs - sys_.player->turnTime < 600);
+		}
 		// Repaint bit 0x1 (drawEffects) before 0x2 (drawTopBar), src/Hud.cpp:725-742.
 		sys_.hud->drawDamageEffects(g, upTimeMs, sys_.game->combat.totalDamage > 0);
 		sys_.hud->drawTopBar(g, *sys_.font, 480);

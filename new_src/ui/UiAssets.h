@@ -47,6 +47,8 @@ public:
 	Texture menuBackground;
 	Texture menuScrollBar, menuSliderTop, menuSliderMid, menuSliderBottom;
 	Texture menuSoftKey, menuOptionButton;
+	// HUD buff box icons, 30x30 cells stacked vertically (src/Canvas.cpp:172).
+	Texture iconsBuffs;
 };
 
 } // namespace newcore

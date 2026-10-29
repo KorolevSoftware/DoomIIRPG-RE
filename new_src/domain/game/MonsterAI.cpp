@@ -137,7 +137,13 @@ void MonsterAI::calcSimpleGoal(Entity* e, bool b) {
 		static bool logged = false;
 		logOnce(logged, "[ai] arch-vile raise deferred");
 	}
-	// Fear flee (player buffs[11], :541-545): no player buffs in the rewrite.
+	if (env_.player != nullptr && env_.player->buffs[11] > 0 &&
+	    ((1 << sub) & Enums::FEAR_IMMUNE_MONSTERS) == 0) {         // :541-545 fear flee
+		m->goalType = EntityMonster::kGoalFlee;
+		m->goalParam = 1;
+		std::fprintf(stderr, "[ai] spr=%d sub=%d fear flee\n", e->getSprite(), sub);
+		return;
+	}
 	const int w = weaponForTarget(e, env_.db->playerEntity());
 	if (w != -1) {                                             // :546-558
 		m->ce.weapon = w;

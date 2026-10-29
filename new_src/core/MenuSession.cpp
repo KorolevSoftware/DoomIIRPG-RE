@@ -235,9 +235,7 @@ bool isCodeBuiltScreen(int menuId) {
 // MENU_ITEMS, MENU_ITEMS_WEAPONS, MENU_ITEMS_DRINKS and the three vending ids.
 // `menu <= 30` reaches every main-menu id too, but ST_MENU only ever runs the
 // in-game tree here, where it means exactly MENU_INGAME (29) and
-// MENU_INGAME_STATUS (30). The vending ids have no MenuId in the rewrite;
-// MENU_ITEMS_DRINKS has one, and its GOTO row is refused in initMenu, so that
-// arm cannot fire yet — it is kept because it is part of the ported condition.
+// MENU_INGAME_STATUS (30). The vending ids have no MenuId in the rewrite.
 // updateTouchButtonState' own drawButton whitelist (:4479-4489) resolves to the
 // same set of ids for this tree, so the drawn button and the clickable one
 // always agree.
@@ -373,6 +371,8 @@ void MenuSession::initMenu(int menuId) {
 		buildItemsScreen();
 	} else if (menuId == kMenuItemsWeapons) {
 		buildWeaponsScreen();
+	} else if (menuId == kMenuItemsDrinks) {
+		buildDrinksScreen();
 	} else if (menuId == kMenuQuestLog) {              // (:1707-1710)
 		loadNotebook();
 	} else if (helpResourceFor(menuId) > 0) {          // (:1663-1705, :1749-1765)
@@ -456,11 +456,6 @@ void MenuSession::initMenu(int menuId) {
 			// rewrite does not have (spec §11.2, §15).
 			if (items_[i].def.param == kMenuControls) {
 				disableRow(i, "no arrow-controls screen");
-			} else if (items_[i].def.param == kMenuItemsDrinks) {
-				// 75 DOES have a menus.bin row (a blank line + the NANO DRINKS
-				// divider), so the type() test below would let it through; its
-				// list is appended in code like this screen's (:2024-2046).
-				disableRow(i, "drinks list is built in code, not ported yet (G8)");
 			} else if (env_.menus->type(items_[i].def.param) < 0 &&
 			           !isCodeBuiltScreen(items_[i].def.param)) {
 				// G7 widened this: an id absent from menus.bin is now refused
@@ -555,6 +550,30 @@ int MenuSession::addEntityRow(int subType, int defParm, int flags, int action, i
 	}
 	return addItem(env_.loc->makeId(kTextIngame, d->name), flags, action, param,
 		env_.loc->makeId(kTextIngame, d->description));
+}
+
+// MENU_ITEMS_DRINKS (:2024-2045): the menus.bin span (blank + "NA-NO DRINKS"
+// divider), then one row per owned drink 0..10, or "[None]".
+void MenuSession::buildDrinksScreen() {
+	addParsedRows(kMenuItemsDrinks, 0, -1);
+	Player* p = env_.player;
+	if (p == nullptr || env_.loc == nullptr) return;
+	bool any = false;
+	for (int slot = Enums::INV_DRINK_MIN; slot < Enums::INV_DRINK_MAX; ++slot) {
+		const int n = p->inventory[slot];
+		if (n <= 0) continue;
+		const int i = addEntityRow(Enums::ITEM_CLASS_INVENTORY, slot, kItemShowDetails,
+			kActionConfirmUse, slot);                          // flags 32, action 24 (:2038)
+		if (i < 0) continue;
+		any = true;
+		valueBuf_[i].setLength(0);
+		valueBuf_[i].append(n);
+		items_[i].hasValue = true;
+	}
+	if (!any) {                                                // "[None]", flags 9 (:2041-2043)
+		addItem(env_.loc->makeId(kTextIngame2, 1), kItemNoSelect | kItemAlignCenter,
+			kActionNone, 0, kEmptyTextId);
+	}
 }
 
 // MENU_ITEMS (:1930-1986). Row order is the original's, which is NOT the
@@ -1450,8 +1469,8 @@ int MenuSession::popMenu(int& selectedIndex, int& scrollIndex) {
 	return menuStack_[--stackCount_];
 }
 
-// back() (:591-607). MENU_ITEMS_DRINKS and MENU_INGAME_SNIPER have no rewrite
-// counterpart (spec §4.1), and MENU_MAIN_MINIGAME / MENU_COMIC_BOOK are
+// back() (:591-607). MENU_INGAME_SNIPER has no rewrite counterpart (spec
+// §4.1), and MENU_MAIN_MINIGAME / MENU_COMIC_BOOK are
 // main-menu ids that cannot be reached from ST_MENU. On MENU_INGAME_DEAD the
 // stack is empty and 51 is in neither list, so only the sound remains.
 void MenuSession::back() {
@@ -1473,7 +1492,8 @@ void MenuSession::back() {
 		} else if (!selectable(selectedIndex_)) {
 			moveDir(1);
 		}
-	} else if (menu_ == kMenuInGame || menu_ == kMenuItems || menu_ == kMenuQuestLog) {
+	} else if (menu_ == kMenuInGame || menu_ == kMenuItems || menu_ == kMenuItemsDrinks ||
+	           menu_ == kMenuQuestLog) {
 		returnToGame();
 	}
 }

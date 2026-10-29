@@ -152,6 +152,53 @@ static constexpr int AMMO_SENTRY_BOT = 7;
 static constexpr int AMMO_ITEM = 8;
 static constexpr int AMMO_MAX_SOULS = 5;
 
+// Player::statusEffects indices (src/Enums.h:1154-1176). Index trap: these and
+// BUFF_* disagree for 2/5/6; translateStatusEffects maps effect j -> buff j, so
+// behaviour follows the BUFF_* meaning (loot-inventory.md §8.4).
+static constexpr int STATUS_EFFECT_REFLECT = 0;
+static constexpr int STATUS_EFFECT_PURIFY = 1;
+static constexpr int STATUS_EFFECT_AGILITY = 2;
+static constexpr int STATUS_EFFECT_REGEN = 3;
+static constexpr int STATUS_EFFECT_DEFENSE = 4;
+static constexpr int STATUS_EFFECT_ADRENALINE = 5;
+static constexpr int STATUS_EFFECT_EVADE = 6;
+static constexpr int STATUS_EFFECT_FOCUS = 7;
+static constexpr int STATUS_EFFECT_ANGER = 8;
+static constexpr int STATUS_EFFECT_ANTIFIRE = 9;
+static constexpr int STATUS_EFFECT_FORTITUDE = 10;
+static constexpr int STATUS_EFFECT_FEAR = 11;
+static constexpr int STATUS_EFFECT_WP_POISON = 12;
+static constexpr int STATUS_EFFECT_FIRE = 13;
+static constexpr int STATUS_EFFECT_DISEASE = 14;
+static constexpr int STATUS_EFFECT_DRUNK = 15;
+static constexpr int STATUS_EFFECT_DIZZY = 16;
+static constexpr int STATUS_EFFECT_COLD = 17;
+static constexpr int MAX_STATUS_EFFECTS = 18;
+static constexpr int STATUS_EFFECT_ALL = 18;
+static constexpr int OFS_STATUSEFFECT_TURNS = 0;
+static constexpr int OFS_STATUSEFFECT_AMOUNT = 18;
+static constexpr int OFS_STATUSEFFECT_COUNT = 36;
+
+// Player::buffs indices (src/Enums.h:1177-1194): [k] turns, [BUFF_MAX + k] amount.
+static constexpr int BUFF_REFLECT = 0;
+static constexpr int BUFF_PURIFY = 1;
+static constexpr int BUFF_HASTE = 2;
+static constexpr int BUFF_REGEN = 3;
+static constexpr int BUFF_DEFENSE = 4;
+static constexpr int BUFF_STRENGTH = 5;
+static constexpr int BUFF_AGILITY = 6;
+static constexpr int BUFF_FOCUS = 7;
+static constexpr int BUFF_ANGER = 8;
+static constexpr int BUFF_ANTIFIRE = 9;
+static constexpr int BUFF_FORTITUDE = 10;
+static constexpr int BUFF_FEAR = 11;
+static constexpr int BUFF_WP_POISON = 12;
+static constexpr int BUFF_FIRE = 13;
+static constexpr int BUFF_DISEASE = 14;
+static constexpr int BUFF_MAX = 15;
+static constexpr int BUFF_NO_AMOUNT = 0x1A07;       // kept without an amount (6663)
+static constexpr int BUFF_AMT_NOT_DRAWN = 0x3A07;   // no +N/-N text in the HUD (14855)
+
 // Weapon ids / bit positions in Player::weapons (src/Enums.h:134-150).
 static constexpr int WP_HOLY_WATER_PISTOL = 2;
 static constexpr int WP_ITEM = 14;
@@ -240,6 +287,8 @@ static constexpr int BOSS_VIOS = 15;
 // Subtype masks, bit = 1 << eSubType (src/Enums.h:82): lost soul, revenant,
 // arch-vile, mastermind retreat after attacking.
 static constexpr int EVADING_MONSTERS = 0x4604;
+// Subtypes the FEAR buff cannot make flee (src/Enums.h:83).
+static constexpr int FEAR_IMMUNE_MONSTERS = 0x1F801;
 // Saw goblin, cacodemon, sentinel, Vios, Vios2 attack right after a step
 // (src/Enums.h:84, src/Entity.cpp:1123).
 static constexpr int MOVE2ATTACK_MONSTERS = 0x180D0;

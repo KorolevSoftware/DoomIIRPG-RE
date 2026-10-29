@@ -279,6 +279,70 @@ void Hud::drawArrowControls(Graphics2D& g) {
 	g.drawImage(*texRight, 80, 106, 0);
 }
 
+// Player::drawBuffs (src/Player.cpp:1209-1260) with viewRect {0, 20, 480, 250};
+// the numbuffs == 0 / ST_DIALOG / ST_DYING gates stay at the caller.
+void Hud::drawBuffs(Graphics2D& g, const Font& font, const int16_t* buffs, int numbuffs,
+                    bool showTurns) {
+	constexpr int kAmtNotDrawn = 0x3A07;          // BUFF_AMT_NOT_DRAWN (src/Enums.h:1177)
+	const int n = 0 + 480;
+	int n2 = n - 32;
+	int n3 = 20 + 2;
+	int n4 = 0;
+	bool b = false;
+	if (numbuffs > 6) {
+		numbuffs = 6;
+		b = true;
+	}
+	int n5 = numbuffs * 31 + 6;
+	// Width pass; legacy never increments n4 here (:1225-1237).
+	for (int k = 0; k < 15 && n4 < 6; ++k) {
+		if (buffs[k] > 0 && ((1 << k) & kAmtNotDrawn) == 0) {
+			if (buffs[15 + k] > 99 || buffs[15 + k] < -99) {
+				n2 = n - 73;
+				break;
+			}
+			if (buffs[15 + k] > 9 || buffs[15 + k] < -9) {
+				n2 = n - 65;
+			} else if (n2 == n - 32) {
+				n2 = n - 57;
+			}
+		}
+	}
+	const int n7 = n - n2 + 4;
+	if (b) n5 += 5;
+	g.fillRect(n2 - 5, n3 - 2, n7, n5, 0, 0, 0);          // alpha forced to 1.0 (src/Graphics.cpp:88-95)
+	g.drawRect(n2 - 5, n3 - 2, n7, n5, 0xAA, 0xAA, 0xAA);
+	const int n8 = n - 36;
+	for (int k = 0; k < 15 && n4 < 6; ++k) {
+		if (buffs[k] == 0) continue;
+		++n4;
+		// drawStatusEffectIcon(k, amount, turns, n8, n3) (:1597-1620).
+		const int amount = buffs[15 + k];
+		buffText_.setLength(0);
+		if (k == 8) {
+			buffText_.append('%');
+			buffText_.append(amount);
+		} else if (((1 << k) & kAmtNotDrawn) == 0) {
+			if (amount >= 0) buffText_.append('+');
+			buffText_.append(amount);
+		}
+		g.drawString(font, buffText_, n8, n3 + 2, Graphics2D::kAnchorRight | Graphics2D::kAnchorTop);
+		g.drawBuffIcon(k, n8 + 3, n3 + 1, 0);
+		if (showTurns) {
+			buffText_.setLength(0);
+			buffText_.append((int)buffs[k]);
+			g.drawString(font, buffText_, n8 + 17, n3 + 2,
+				Graphics2D::kAnchorHCenter | Graphics2D::kAnchorTop);
+		}
+		n3 += 31;
+	}
+	if (b) {
+		buffText_.setLength(0);
+		buffText_.append('\x85');
+		g.drawString(font, buffText_, n2 + n7 / 2 - 4, n3 - 4, Graphics2D::kAnchorHCenter);
+	}
+}
+
 void Hud::drawTopBar(Graphics2D& g, const Font& font, int canvasWidth) {
 	if (!art().panelTop.valid()) return;
 	g.drawImage(art().panelTop, canvasWidth / 2, 0, Graphics2D::kAnchorHCenter);

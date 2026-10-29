@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-28_
+_Last updated: 2026-10-29_
 
 ## Controls (2026-08-29, aligned with `src/Input.cpp:80-95`)
 
@@ -15,16 +15,21 @@ _Last updated: 2026-10-28_
 | ESCAPE | open menu / back — **does not quit** |
 | BACKSPACE | back (ours; also closes the loot list) |
 | I | open Inventory (items menu 72; legacy AVK_ITEMS_INFO, `src/Input.cpp:92`) |
-| K | debug: grant keycards (ours, removable) |
+| O | open Nano Drinks (menu 75; legacy AVK_DRINKS, `src/Input.cpp:93`) |
+| K | debug: grant keycards + drinks 0..10 + holy-water pistol/50 water (ours, removable; switches to the pistol if not owned) |
 
 There is no quit key: the window close button is the only exit, as in the
 reference. Z/X/I/O/P/B are reserved-unmapped (no rewrite counterpart). Full
 rationale: `docs/architecture/specs/2026-08-27-ui-layer.md` §"KEYMAP 2026-08-29".
 
+Known deviation (2026-10-29): `Graphics2D::drawRect` outlines w x h, legacy draws (w+1)x(h+1) (`new_src/render/Graphics2D.cpp:57-63` vs `src/Graphics.cpp:236-240`) — every HUD box border is 1px short.
+
 Known deviation (2026-10-29): in a cinematic ANY queued action skips it (`new_src/core/GameContext.cpp:233-237`);
 legacy skips only on PASSTURN/AUTOMAP/FIRE/key 18 (`src/InputEventController.cpp:417`). Fix later with an action whitelist.
 
 ## Working on
+
+- **ИСПОЛЬЗОВАНИЕ ПРЕДМЕТОВ (2026-10-29).** G1 проверен и закоммичен; G2 (напитки, баффы) и G3 (иконки баффов) — ревью PASS, не закоммичены; экранная проверка отложена до торгового автомата (следующий этап).
 
 - **АТАКА МОНСТРОВ (2026-09-22).** Исследование готово (monster-turn/attack/movement,
   player-damage в docs/original-code/), спека 2026-09-22-monster-attacks.md, ADR-0027..0030.

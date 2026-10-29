@@ -179,11 +179,12 @@ int CombatEntity::calcHit(Combat& c, CombatEntity& attackerCe, CombatEntity& def
 
 int CombatEntity::calcDamage(Combat& c, CombatEntity& attackerCe, Entity* targetEnt,
                              CombatEntity& defenderCe, bool vsPlayer, int parm) {
-	// src/CombatEntity.cpp:300-378. Omitted: buffs (:311-313,:337-339,
-	// :367-370) and the familiar split (:357-366 keeps only the normal armor
-	// path). parm is the legacy n (unused by this body — kept for signature
-	// parity with calcCombat's targetSubType pass-through).
+	// src/CombatEntity.cpp:300-378. Omitted: the REFLECT early-out (:311-313)
+	// and the familiar split (:357-366 keeps only the normal armor path). parm
+	// is the legacy n (unused by this body — kept for signature parity with
+	// calcCombat's targetSubType pass-through).
 	(void)parm;
+	const Player* p = c.env().player;
 	// :302 weapon = attackerCe.weapon * 9 — the row is looked up by id.
 	const WeaponDef& row = c.weaponDef(attackerCe.weapon);
 	// The & 0xFF is legacy: the signed byte is reinterpreted unsigned here
@@ -196,7 +197,7 @@ int CombatEntity::calcDamage(Combat& c, CombatEntity& attackerCe, Entity* target
 		dmgStrMax *= 2;
 	}
 
-	// buffs[0] early-out (:311-313) omitted.
+	// buffs[0] REFLECT early-out (:311-313) omitted: no item grants effect 0.
 	if (c.difficulty() == 4) {                                   // :314-316 cut BEFORE crit doubling
 		dmgStrMin -= dmgStrMin >> 2;
 	}
@@ -217,7 +218,9 @@ int CombatEntity::calcDamage(Combat& c, CombatEntity& attackerCe, Entity* target
 	int armorDamage = 0;                                         // :334
 	int damage;
 	if (!vsPlayer) {                                             // :336-355 player attack
-		// buffs[8] damage boost (:337-339) omitted.
+		if (p != nullptr && p->buffs[8] > 0) {                   // :337-339 ANGER +amount %
+			dmgStrMin += (p->buffs[23] << 8) / 100 * dmgStrMin >> 8;
+		}
 		short weaponWeakness = c.getWeaponWeakness(attackerCe.weapon,
 			targetEnt->def->eSubType, targetEnt->def->parm);      // :340
 		if (attackerCe.weapon == 2) {                            // :341-353 holy water cases
@@ -233,7 +236,12 @@ int CombatEntity::calcDamage(Combat& c, CombatEntity& attackerCe, Entity* target
 		armorDamage = std::min(((171 * dmgStrMin >> 8) + 1) / 2,   // :357-359 normal armor split
 		                       defenderCe.getStat(Enums::STAT_ARMOR));
 		damage = dmgStrMin - 2 * armorDamage;
-		// familiar branches (:361-366) and buffs[9] absorb (:367-370) omitted.
+		// familiar branches (:361-366) omitted.
+		if (Combat::checkWeaponMask(attackerCe.weapon, 0x900000) &&   // :367-370 ANTIFIRE
+		    p != nullptr && p->buffs[9] > 0) {
+			armorDamage = 0;
+			damage = 0;
+		}
 	}
 	int crDamage = damage -
 	    (defenderCe.getStatPercent(Enums::STAT_DEFENSE) * damage >> 8);  // :372

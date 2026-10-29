@@ -101,9 +101,9 @@ Action UiInputCollector::keyAction(const SDL_Event& ev) const {
 	// so the mouse Back path and the loot list keep a keyboard equivalent.
 	case SDL_SCANCODE_BACKSPACE: a = Action::BackKey; break; // swallowed in dialogs
 	case SDL_SCANCODE_I: a = Action::Items; break;        // :92, AVK_ITEMS_INFO
+	case SDL_SCANCODE_O: a = Action::ItemsDrinks; break;  // :93, AVK_DRINKS
 	// Reserved, deliberately unmapped: the rewrite has no counterpart for
-	// AVK_NEXTWEAPON Z (:86), AVK_PREVWEAPON X (:87),
-	// AVK_DRINKS O (:93), AVK_PDA P (:94).
+	// AVK_NEXTWEAPON Z (:86), AVK_PREVWEAPON X (:87), AVK_PDA P (:94).
 	// SDL_SCANCODE_K is ours too — debug keycards, handled in GameLoop.cpp.
 	// SDL_SCANCODE_B (was AVK_BOTDISCARD :95, no rewrite counterpart) is
 	// borrowed by the debug coordinate overlay, also in GameLoop.cpp.

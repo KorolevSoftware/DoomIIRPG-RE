@@ -32,9 +32,9 @@ class Tables;
 // SAVEQUIT 53) through setYesNo, the port of SetYESNO.
 // GROUP 6 adds the ten type-5 HELP leaves and the PDA shell (QUESTLOG 46).
 // GROUP 8 adds the per-row info buttons and the torn-page help popup.
-// The item-use confirm 77 is built from spec 2026-10-28-use-item G1b on. The
-// remaining code-built screens (the drinks list 75, the ITEM_SHOWDETAILS
-// details screen 71) have no group yet.
+// The item-use confirm 77 (G1b) and the drinks list 75 (G2b) are built from
+// spec 2026-10-28-use-item on. The ITEM_SHOWDETAILS details screen 71 has no
+// group yet.
 class MenuSession {
 public:
 	// maxItems: [GEC] hard-set to 4 at src/MenuSystem.cpp:1231; what the J2ME
@@ -103,6 +103,7 @@ private:
 	int  addEntityRow(int subType, int defParm, int flags, int action, int param);
 	void buildItemsScreen();          // MENU_ITEMS (:1930-1986)
 	void buildWeaponsScreen();        // MENU_ITEMS_WEAPONS (:1988-2021)
+	void buildDrinksScreen();         // MENU_ITEMS_DRINKS (:2024-2045)
 	// LoadHelpResource(short) (:3662-3702): the type-5 body of a HELP leaf.
 	void loadHelpResource(int resource);
 	// LoadHelpItems(Text*, int) (:3811-3838): one item per '|'-separated line.
