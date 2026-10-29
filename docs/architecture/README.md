@@ -191,6 +191,17 @@ Deleted only after the user signs off on G5 (byte-identical) and G6 (Metal looks
 | `MenuModel.h` | **(planned, spec `specs/2026-08-28-menu.md` G3)** `MenuRow` + `MenuViewModel`: menuRect/clip/itemWidth geometry, ALL rows with their resolved heights, `scrollPx`, `selectedRow`, cursor offset, scrollbar thumb, chrome flags and the two soft-key labels. No menu id, no `StateId`. |
 | `MenuView.h/.cpp` | **(planned, G3+)** `UiResult drawMenu(Ui&, const MenuViewModel&)`: opaque background + bottom panel + health/shield readout + soft keys, then the clipped row walk (296x32 plates at 25 %/100 % alpha, `'\x8A'` cursor glyph, right-aligned value column) and the menu's own 4-sheet scrollbar. |
 
+### minigames/ — **(planned, ADR 0033 / spec `specs/2026-10-29-minigames-layout.md`)**
+One folder per minigame plus `common/`. The layering rule applies per file role: `*View`/`*Model`/`MiniGameButtons.h` follow the `ui/` rules (no `domain/`, `core/`, `io/`); session classes may use `domain/`/`io/`/`core/GameStates.h` but never `core/GameContext.h` or `core/MenuSession.h`.
+| File | Responsibility |
+|---|---|
+| `common/MiniGame.h` | The shared lifecycle interface: `begin(b1,b2,b3)`, `handleAction(Action)`, `handleTouch(buttonId)`, `draw(Ui&) -> UiResult`. |
+| `common/MiniGameHost.h/.cpp` | `ST_MINI_GAME` (12) dispatcher owned by `GameContext`: `start(type,...)` from `EV_MINIGAME`, holds the calling `ScriptThread*` across the vending↔menu round trip, `finish(result)` = vars[7] → Playing → resumeThread; owns the shared help state and sheets plus the concrete games. |
+| `common/MiniGameButtons.h` | Verbatim `GetTouchedButtonID` (inclusive rects, list order), highlight and release → `UiAction::MiniGameTouch`. |
+| `common/MiniGameAssets`, `MiniGameHelp`, `MiniGameHelpModel.h`, `MiniGameHelpView` | Shared `gameHelpBG.bmp`, plus the `MiniGameManager` help screen port (scroll, 16-line window, scrollbar). |
+| `vending/VendingMachine`, `VendingModel.h`, `VendingView`, `VendingAssets` | Vending terminal / help / 4-digit hack game; menu API (prices, buy, `returnFromBuying`, `endGame`) used by `MenuSession` for menus 83-87. |
+| `hacking/`, `sentrybot/` | Placeholders (spec §9). |
+
 ## Wiring (startup → frame)
 
 **Startup** (`main()`, Main.cpp:36): `AppContext::initialize(archive)` (window/backend/input/zip)
@@ -264,6 +275,7 @@ _See [adr/](adr/):_
 - [0030 — Runtime sprites use 48 custom slots appended to the map sprite arrays, owned by `GameSprites`](adr/0030-runtime-sprite-slots.md) (2026-09-22)
 - [0031 — Visibility bookkeeping runs a CPU port of TinyGL's column-occlusion cull; the GPU draw list is untouched](adr/0031-cpu-column-occlusion-for-visibility.md) (2026-10-28)
 - [0032 — Item use: `Player` owns the item switch, effect planes and msg 111; the menu owns turn sequencing](adr/0032-item-use-ownership.md) (2026-10-28)
+- [0033 — Minigames live in `new_src/minigames/<name>/` behind one small `MiniGame` interface, dispatched by `MiniGameHost`](adr/0033-minigames-folder-and-interface.md) (2026-10-29)
 
 ## Specs
 
@@ -289,3 +301,4 @@ _See [adr/](adr/):_
 - [2026-09-22 — Monster attacks: player entity, turn pipeline, attack sequence, player damage + feedback, sight wake, movement, missiles 6/7, death (G1-G8b)](specs/2026-09-22-monster-attacks.md)
 - [2026-10-28 — Secret doors (push walls), awardSecret, EV_AWARDSECRET (G1-G3)](specs/2026-10-28-secret-doors.md)
 - [2026-10-28 — Use inventory items: confirm 77, `Player::useItem`, status effects/buffs + consumers, Nano Drinks list, HUD buff box (G1a-G3)](specs/2026-10-28-use-item.md)
+- [2026-10-29 — Minigames: folder layout, `MiniGame` interface, `ST_MINI_GAME`, `EV_MINIGAME` start/resume, vending machine terminal/hack game/menus 83-87 (G1-G6)](specs/2026-10-29-minigames-layout.md)

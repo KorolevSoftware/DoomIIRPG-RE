@@ -1354,10 +1354,15 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 
 		case Enums::EV_MINIGAME: {
 			int type = readByte(t);
-			readByte(t);
-			readByte(t);
-			readByte(t);
-			std::fprintf(stderr, "[script] MINIGAME type=%d skipped (no minigames)\n", type);
+			int b1 = readByte(t);
+			int b2 = readByte(t);
+			int b3 = readByte(t);
+			if (env_.ctx->minigames().start(type, b1, b2, b3, t)) {   // src/ScriptThread.cpp:1296-1347
+				t->unpauseTime = -1;                               // resumed by MiniGameHost::finish
+				n = 2;
+			} else {
+				std::fprintf(stderr, "[script] MINIGAME type=%d not implemented\n", type);
+			}
 			break;
 		}
 

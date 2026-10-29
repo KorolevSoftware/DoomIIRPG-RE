@@ -340,6 +340,13 @@ int main(int argc, char* argv[]) {
 	ctx.init({                 // Init: map, defs, tables, loc, font, g2d, media, game, player, vm, hud, world, dialogs, ui, menus, reloadMap
 		&g_map, &g_entityDefs, &tables, &loc, &font, &app.g2d(), &g_media,
 		&game, &player, &vm, &hud, &world, &dialogs, &ui, &menus, reloadMap });
+	// Minigame sheets, loaded once at startup like loadMiniGameImages
+	// (src/App.cpp:105); owned by ctx; the TextureStore outlives
+	// app.shutdown() (AppContext.cpp:74-79).
+	ctx.minigames().loadAssets(app.renderer().textures(),
+		[&app](const char* name, std::vector<uint8_t>& out) {
+			return app.readResource(name, out);
+		});
 	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
 		&ctx, &vm, &game, &loc, &hud, &font, &tables });
 

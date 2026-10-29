@@ -49,7 +49,21 @@ public:
 	Texture menuSoftKey, menuOptionButton;
 	// HUD buff box icons, 30x30 cells stacked vertically (src/Canvas.cpp:172).
 	Texture iconsBuffs;
+	// Vending terminal background and soft keys, also drawn by the vending
+	// menus 83-87 (ADR 0033 point 6; src/LoadingManager.cpp:95, src/Hud.cpp:55-56).
+	Texture vendingBackground;
+	Texture vendingSoftkeyNormal, vendingSoftkeyPressed;
+	// Vending menu art (src/MenuSystem.cpp:93, :99-100, :124, :134-137).
+	Texture vendingButtonLarge, vendingButtonHelp;
+	Texture vendingArrowUpGlow, vendingArrowDownGlow;
+	Texture vendingScrollBar, vendingScrollTop, vendingScrollMid, vendingScrollBottom;
 };
+
+// The one BMP -> indexed texture loader (ADR 0033 point 6); each failure logs.
+// fixIndices, when set, patches the palette indices before the upload (the
+// legacy fixImage, src/Utils.cpp:164-172).
+bool loadUiTexture(TextureStore& store, const UiAssets::ResourceReader& read,
+	const char* name, Texture& out, void (*fixIndices)(std::vector<uint8_t>&) = nullptr);
 
 } // namespace newcore
 

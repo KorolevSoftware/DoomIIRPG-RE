@@ -49,6 +49,11 @@ public:
 	int nextLevelXP = 0;
 	int xpGained = 0;
 	int foundSecretsLevels = 0;     // bit mapID-1: all secrets found (src/Game.cpp:3486-3488)
+	// Vending machines (src/Player.cpp:506-518): bit id = hacked; tries are
+	// 3-bit fields at bit 3*(k-1), ids 1..9 in ...1 and 10..18 in ...2.
+	int hackedVendingMachines = 0;
+	int vendingMachineHackTriesLeft1 = 0;
+	int vendingMachineHackTriesLeft2 = 0;
 	bool god = false;
 
 	// ---- Discrete movement (legacy Canvas) ----
@@ -96,6 +101,16 @@ public:
 
 	// Starts the player at default stats (3 classes not implemented yet).
 	void reset();
+
+	// src/Player.cpp:222-245: adds n2 to stat n (cap 200 for IQ, 99 else; n 0
+	// = health) and returns the change actually applied.
+	int modifyStat(int n, int n2);
+
+	// src/Player.cpp:2451-2483.
+	bool vendingMachineIsHacked(int id) const;
+	void setVendingMachineHack(int id);
+	int getVendingMachineTriesLeft(int id) const;
+	void removeOneVendingMachineTry(int id);
 
 	// The defs table give() needs for the auto-equip lookup the legacy does
 	// itself (find(6, 1, wp), src/Player.cpp:160). Wired in core/Main.cpp.

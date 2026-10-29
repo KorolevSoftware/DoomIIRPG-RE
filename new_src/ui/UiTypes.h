@@ -42,6 +42,7 @@ enum class UiAction : int {
 	// InfoClose is the release that dismisses it (:4809-4813). Both are
 	// touch-only in the original's port too.
 	Info, InfoClose,
+	MiniGameTouch,    // index carries the legacy minigame button id, -1 = none
 };
 
 // One navigation edge per frame. Moves a selected index owned by the screen's

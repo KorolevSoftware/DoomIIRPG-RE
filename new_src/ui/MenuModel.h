@@ -54,6 +54,7 @@ struct MenuViewModel {
 	UiRect clip{ 0, 10, 480, 241 };
 	int itemWidth  = 296;  // menuItem_width = inGame_menu_option_button.width (:4193)
 	int itemHeight = 46;   // menuItem_height: the art/label box, NOT the row pitch (:4173)
+	int itemPadding = 10;  // menuItem_paddingBottom: also the plate -> info button gap (:5141-5145)
 
 	// Every item, in item order: the row index IS the item index, so a row hit
 	// needs no mapping. The view walks from row 0 at y = -scrollPx and stops
@@ -88,7 +89,15 @@ struct MenuViewModel {
 	bool drawBottomPanel = true;       // gameMenu_Panel_bottom (:734)
 	const Text* statusLine = nullptr;  // health/shield readout (:742-758); null = skip
 	const Text* softLeft = nullptr;    // loc(3,80) "Back"
-	const Text* softRight = nullptr;   // ASCII literal "Resume"
+	const Text* softRight = nullptr;   // ASCII literal "Resume" ("Exit" on the vending skin)
+	// The vending menus' art (83-87, src/MenuSystem.cpp:734-737, :4208-4219,
+	// :4458-4466, :2789-2793, :5216-5280, :1149-1155): vendingBG instead of the
+	// menu background, vending_button_large plates, vending_button_help info
+	// buttons, the vending scrollbar sheets, the vending soft keys and the
+	// vendingBG help page. A look, not a menu id.
+	bool vendingSkin = false;
+	// The confirm screen's quantity arrows (:247-261, rendered only there, :5174-5175).
+	bool showQtyArrows = false;
 
 	// The torn-page help popup (drawHelpText, src/MenuSystem.cpp:1135-1173).
 	// Non-null = the modal is up: it is drawn over the whole screen and NOTHING

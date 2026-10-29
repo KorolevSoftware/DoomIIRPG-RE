@@ -25,12 +25,14 @@ enum MenuId : int {
 	kMenuItems         = 72, kMenuItemsWeapons = 73, kMenuItemsDrinks = 75,
 	kMenuItemsConfirm  = 77, kMenuItemsHealthMsg = 79, kMenuItemsArmorMsg = 80,
 	kMenuItemsSyringeMsg = 81, kMenuItemsHolyWaterMax = 82,
+	kMenuVending       = 83, kMenuVendingDrinks = 84, kMenuVendingSnacks = 85,
+	kMenuVendingConfirm = 86, kMenuVendingCantBuy = 87,
 };
 
 // Menus::MENUTYPE_* (src/Menus.h:7-15)
 enum MenuType : int {
 	kMenuTypeList = 1, kMenuTypeHelp = 5, kMenuTypeVCenter = 6,
-	kMenuTypeNotebook = 7,
+	kMenuTypeNotebook = 7, kMenuTypeVending = 9,
 };
 
 // Menus::ITEM_* (src/Menus.h:16-34); only the bits the in-game tree uses.
@@ -47,6 +49,7 @@ enum MenuAction : int {
 	kActionRestartLevel = 12, kActionSaveQuit = 13, kActionShowDetails = 16,
 	kActionUseItemWeapon = 18, kActionUseItemSyring = 20, kActionUseItemOther = 21,
 	kActionConfirmUse = 24, kActionSaveExit = 25, kActionBackTwo = 26,
+	kActionConfirmBuy = 28, kActionBuyDrink = 29, kActionBuySnack = 30,
 	kActionReturnToPlayer = 33,
 };
 

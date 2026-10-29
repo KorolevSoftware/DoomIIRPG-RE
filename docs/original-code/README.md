@@ -24,6 +24,7 @@ Topic files (created on demand):
 | `player-damage.md` | Player taking damage: armor/defense math, `pain`/`painEvent`, shake, rock-back, vignette, direction arrow, weapon red tint, `died()` → `ST_DYING` fall/fade → dead menu |
 | `fades.md` | Render scene fade: flags, `fadeScene` math/end behaviour, frame order, `EV_FADEOP` decode (bit15 = FADEIN), readers, map00 FADEOP list |
 | `ui.md` | HUD, menus, dialogs, fonts |
+| `vending-machine.md` | Vending machine minigame: EV_MINIGAME type 4 entry, terminal/help/hack screens, 4-digit hack puzzle, per-machine save bits, prices table, exit, hand-off to menus 83-88, test locations |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
 | `audio.md` | sound/music |
 | `app.md` | App lifecycle, game states, input mapping |

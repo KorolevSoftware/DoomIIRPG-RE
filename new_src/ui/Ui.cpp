@@ -294,11 +294,8 @@ void Ui::scrollBar(int x, int y, int h, int topLine, int pageEnd,
 // fmScrollButton::Render, image branch (src/Button.cpp:574-588). The track and
 // the sliders get two different x values because the source centres the track
 // by its own width and the sliders by imgBarTop's (20 vs 24).
-void Ui::scrollBarMenu(const UiRect& barRect, int thumbOffset, int thumbLen) {
-	const Texture& bar = art().menuScrollBar;
-	const Texture& top = art().menuSliderTop;
-	const Texture& mid = art().menuSliderMid;
-	const Texture& bottom = art().menuSliderBottom;
+void Ui::scrollBarMenu(const UiRect& barRect, int thumbOffset, int thumbLen,
+	const Texture& bar, const Texture& top, const Texture& mid, const Texture& bottom) {
 	if (!bar.valid() || !top.valid() || !mid.valid() || !bottom.valid()) return;
 	if (mid.height() <= 0) return;
 

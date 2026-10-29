@@ -16,7 +16,8 @@ _Last updated: 2026-10-29_
 | BACKSPACE | back (ours; also closes the loot list) |
 | I | open Inventory (items menu 72; legacy AVK_ITEMS_INFO, `src/Input.cpp:92`) |
 | O | open Nano Drinks (menu 75; legacy AVK_DRINKS, `src/Input.cpp:93`) |
-| K | debug: grant keycards + drinks 0..10 + holy-water pistol/50 water (ours, removable; switches to the pistol if not owned) |
+| K | debug: grant keycards + drinks 0..10 + holy-water pistol/50 water + 1000 credits (inventory[24]) (ours, removable; switches to the pistol if not owned) |
+| V | debug: start the vending minigame, machine slot 1 of the current map, while Playing; no script thread (exit just returns to Playing) (ours, removable) |
 
 There is no quit key: the window close button is the only exit, as in the
 reference. Z/X/I/O/P/B are reserved-unmapped (no rewrite counterpart). Full
@@ -28,6 +29,8 @@ Known deviation (2026-10-29): in a cinematic ANY queued action skips it (`new_sr
 legacy skips only on PASSTURN/AUTOMAP/FIRE/key 18 (`src/InputEventController.cpp:417`). Fix later with an action whitelist.
 
 ## Working on
+
+- **ТОРГОВЫЙ АВТОМАТ / МИНИ-ИГРЫ (2026-10-29).** Спека 2026-10-29-minigames-layout.md, ADR-0033; new_src/minigames/{common,vending}. G1-G6 ревью PASS, проверены на экране 2026-10-29 (вместе с use-item G2/G3) (K даёт кредиты, V открывает автомат). Взлом и турель — заглушки (спека §9). Известно: `combat.loadMapID` не выставляется (Combat.h:92, всегда 1) — исправить вместе с переходом между картами.
 
 - **ИСПОЛЬЗОВАНИЕ ПРЕДМЕТОВ (2026-10-29).** G1 проверен и закоммичен; G2 (напитки, баффы) и G3 (иконки баффов) — ревью PASS, не закоммичены; экранная проверка отложена до торгового автомата (следующий этап).
 

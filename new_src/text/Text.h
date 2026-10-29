@@ -80,6 +80,10 @@ private:
 	std::string buffer_;
 };
 
+// Pads t with ' ' and '\x80' divider glyphs to `cells` characters
+// (MenuSystem::buildDivider; shared by the menus and the vending terminal).
+void buildDivider(Text& t, int cells);
+
 } // namespace newcore
 
 #endif // NEW_TEXT_TEXT_H

@@ -296,4 +296,24 @@ void Text::toUpper() {
 	}
 }
 
+// MenuSystem::buildDivider (src/MenuSystem.cpp:267-281), verbatim: the cell
+// count is computed BEFORE the padding spaces go in, and an empty label
+// becomes three divider glyphs.
+void buildDivider(Text& t, int cells) {
+	constexpr char kDividerGlyph = '\x80';
+	const int cnt = (cells - (t.length() + 2)) / 2;
+	if (t.length() > 0) {
+		t.insert(' ', 0);
+		t.append(' ');
+	} else {
+		t.append(kDividerGlyph);
+		t.append(kDividerGlyph);
+		t.append(kDividerGlyph);
+	}
+	for (int j = 0; j < cnt; ++j) {
+		t.insert(kDividerGlyph, 0);
+		t.append(kDividerGlyph);
+	}
+}
+
 } // namespace newcore

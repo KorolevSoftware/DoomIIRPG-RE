@@ -37,6 +37,20 @@ constexpr UiRect kSoftRightRect{ 372, 268, 99, 37 };
 constexpr int kSoftLeftTextX = 42;
 constexpr int kSoftRightTextX = 448;
 constexpr int kSoftTextY = 295;
+// Vending soft keys (:5216-5233, :5263-5280): the art's own size at these
+// corners, "Back" at (67, 307) anchor 36, "Exit" at (411, 307) anchor 40.
+constexpr int kVendSoftLeftX = 56;
+constexpr int kVendSoftRightX = 362;
+constexpr int kVendSoftY = 277;
+constexpr int kVendSoftLeftTextX = 67;
+constexpr int kVendSoftRightTextX = 411;
+constexpr int kVendSoftTextY = 307;
+// Quantity arrows on the vending confirm (:247-261): up at (320, 130), down at
+// (320, menu_arrow_up.bmp height 40 + 150). normalRenderMode 1 (BLEND25),
+// highlightRenderMode 0 with no highlight sheet.
+constexpr int kQtyArrowX = 320;
+constexpr int kQtyArrowUpY = 130;
+constexpr int kQtyArrowDownY = 40 + 150;
 
 // Nine row slots, matching the legacy 9-button pool
 // (src/MenuSystem.cpp:4440-4470).
@@ -64,11 +78,11 @@ constexpr char kCursorGlyph = '\x8A';    // Graphics::drawCursor (src/Graphics.c
 constexpr char kDisabledGlyph = '\x89';  // disabled LABEL row fill (src/MenuSystem.cpp:1104-1113)
 
 // Info button (:5141-5145): rect x = menuRect[0] + menuItem_width +
-// menuItem_paddingBottom = 70 + 296 + 10, size = the Pressed sheet's 48x32.
-// Its render modes are set once in updateTouchButtonState (:4448-4449):
-// normalRenderMode = 2 (RENDER_BLEND50 -> alpha 128, src/GLES.cpp:642-646) on
-// the Normal sheet, highlightRenderMode = 0 on the Pressed one.
-constexpr int kItemPaddingBottom = 10;   // setMenuSettings (:4193)
+// menuItem_paddingBottom (model.itemWidth + model.itemPadding), size = the
+// Pressed sheet's 48x32. Its render modes are set once in
+// updateTouchButtonState (:4448-4449): normalRenderMode = 2 (RENDER_BLEND50 ->
+// alpha 128, src/GLES.cpp:642-646) on the Normal sheet, highlightRenderMode = 0
+// on the Pressed one.
 constexpr int kInfoW = 48;
 constexpr int kInfoH = 32;
 constexpr uint8_t kInfoAlphaIdle = 128;
@@ -104,9 +118,10 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 			Graphics2D::kAnchorLeft);
 	}
 	if (m.drawBackground) {
-		// Opaque, full screen: the world is not visible behind the menu (:739).
-		ui.image(art.menuBackground, 0, 0, Graphics2D::kAnchorTop |
-			Graphics2D::kAnchorLeft);
+		// Opaque, full screen: the world is not visible behind the menu (:739);
+		// the vending menus draw vendingBG instead (:735-737).
+		ui.image(m.vendingSkin ? art.vendingBackground : art.menuBackground, 0, 0,
+			Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
 	}
 	if (m.statusLine != nullptr) {                                   // (:742-758)
 		const int w = m.statusLine->getStringWidth();
@@ -121,19 +136,36 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 	// ---- soft keys (:5181-5292) ----
 	bool softLeftFired = false;
 	bool softRightFired = false;
+	// The vending branch (:5216-5233, :5263-5280) uses its own sheets, the
+	// pressed one while held and the normal one plain (render mode 0).
+	auto softKeyArt = [&](UiId id, const UiRect& r) {
+		if (m.vendingSkin) {
+			ui.image(ui.isActive(id) ? art.vendingSoftkeyPressed : art.vendingSoftkeyNormal,
+				r.x, r.y, Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
+		} else {
+			ui.imageAlpha(art.menuSoftKey, r.x, r.y,
+				ui.isActive(id) ? kSoftAlphaHeld : kSoftAlphaIdle);
+		}
+	};
+	const int vendW = art.vendingSoftkeyNormal.width();
+	const int vendH = art.vendingSoftkeyNormal.height();
 	if (m.softLeft != nullptr) {
-		ui.imageAlpha(art.menuSoftKey, kSoftLeftRect.x, kSoftLeftRect.y,
-			ui.isActive(UiId::MenuSoftLeft) ? kSoftAlphaHeld : kSoftAlphaIdle);
-		softLeftFired = ui.softKey(UiId::MenuSoftLeft, *m.softLeft, kSoftLeftTextX,
-			kSoftTextY, Graphics2D::kAnchorLeft | Graphics2D::kAnchorBottom,
-			kSoftLeftRect, !popup);
+		const UiRect r = m.vendingSkin ? UiRect{ kVendSoftLeftX, kVendSoftY, vendW, vendH }
+		                               : kSoftLeftRect;
+		softKeyArt(UiId::MenuSoftLeft, r);
+		softLeftFired = ui.softKey(UiId::MenuSoftLeft, *m.softLeft,
+			m.vendingSkin ? kVendSoftLeftTextX : kSoftLeftTextX,
+			m.vendingSkin ? kVendSoftTextY : kSoftTextY,
+			Graphics2D::kAnchorLeft | Graphics2D::kAnchorBottom, r, !popup);
 	}
 	if (m.softRight != nullptr) {
-		ui.imageAlpha(art.menuSoftKey, kSoftRightRect.x, kSoftRightRect.y,
-			ui.isActive(UiId::MenuSoftRight) ? kSoftAlphaHeld : kSoftAlphaIdle);
-		softRightFired = ui.softKey(UiId::MenuSoftRight, *m.softRight, kSoftRightTextX,
-			kSoftTextY, Graphics2D::kAnchorRight | Graphics2D::kAnchorBottom,
-			kSoftRightRect, !popup);
+		const UiRect r = m.vendingSkin ? UiRect{ kVendSoftRightX, kVendSoftY, vendW, vendH }
+		                               : kSoftRightRect;
+		softKeyArt(UiId::MenuSoftRight, r);
+		softRightFired = ui.softKey(UiId::MenuSoftRight, *m.softRight,
+			m.vendingSkin ? kVendSoftRightTextX : kSoftRightTextX,
+			m.vendingSkin ? kVendSoftTextY : kSoftTextY,
+			Graphics2D::kAnchorRight | Graphics2D::kAnchorBottom, r, !popup);
 	}
 
 	// ---- the list, clipped like the original (:852) ----
@@ -174,8 +206,8 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 					// only, :5104-5124). The touch area is still assigned there,
 					// and select() is what refuses (:2978-2981).
 					if (!r.disabled) {
-						ui.imageAlpha(art.menuOptionButton, m.rect.x, y0,
-							ui.isActive(id) ? kRowAlphaHeld : kRowAlphaIdle);
+						ui.imageAlpha(m.vendingSkin ? art.vendingButtonLarge : art.menuOptionButton,
+							m.rect.x, y0, ui.isActive(id) ? kRowAlphaHeld : kRowAlphaIdle);
 					}
 					if (takeHits && y <= kNoTouchBelowY) {
 						const UiRect hit{ m.rect.x, y0, m.itemWidth, m.itemHeight };
@@ -187,13 +219,20 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 					// under the same y > 210 rule as the row (:5146-5148).
 					if (r.info) {
 						const UiId iid = infoSlotId(slot);
-						const UiRect ir{ m.rect.x + m.itemWidth + kItemPaddingBottom,
+						const UiRect ir{ m.rect.x + m.itemWidth + m.itemPadding,
 							y0, kInfoW, kInfoH };
+						// Vending: vending_button_help with no highlight sheet, so a
+						// held button is the same sheet drawn plain (:4212-4218,
+						// src/Button.cpp:178-183).
+						const Texture& held = m.vendingSkin ? art.vendingButtonHelp
+						                                    : art.menuInfoPressed;
+						const Texture& idle = m.vendingSkin ? art.vendingButtonHelp
+						                                    : art.menuInfoNormal;
 						if (ui.isActive(iid)) {
-							ui.image(art.menuInfoPressed, ir.x, ir.y,
+							ui.image(held, ir.x, ir.y,
 								Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
 						} else {
-							ui.imageAlpha(art.menuInfoNormal, ir.x, ir.y, kInfoAlphaIdle);
+							ui.imageAlpha(idle, ir.x, ir.y, kInfoAlphaIdle);
 						}
 						if (takeHits && y <= kNoTouchBelowY) {
 							if (ui.buttonRect(iid, ir)) infoHit = i;
@@ -212,8 +251,39 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 	// the producer's business (MenuSession::updateDrag, a port of
 	// handleUserMoved :4869-4913), which reads the frame's pointer directly —
 	// exactly like the original, where the scroll widget is not a button.
+	// The confirm screen's arrows, rendered at the end of drawTouchButtons
+	// (:5174-5175). Like every fmButton they fire on the release position
+	// (inclusive rect), here as the same UP/DOWN the keys send (:4744-4763).
+	// Not ported: their press click, fmButton sound 1027 (:249, :256).
+	int qtyHit = 0;
+	if (m.showQtyArrows) {
+		const UiInput& in = ui.in();
+		const Texture* arrows[2] = { &art.vendingArrowUpGlow, &art.vendingArrowDownGlow };
+		const int ys[2] = { kQtyArrowUpY, kQtyArrowDownY };
+		for (int k = 0; k < 2; ++k) {
+			const Texture& t = *arrows[k];
+			const bool inside = in.cursorValid && in.cursorX >= kQtyArrowX &&
+				in.cursorY >= ys[k] && in.cursorX <= kQtyArrowX + t.width() &&
+				in.cursorY <= ys[k] + t.height();
+			// Drawn twice: paint calls drawTouchButtons(false) and (true)
+			// (:856/:866) and both end in the ungated Render (:5174), so the
+			// idle 25 % composites to about 44 %.
+			for (int pass = 0; pass < 2; ++pass) {
+				ui.imageAlpha(t, kQtyArrowX, ys[k],
+					inside && in.down && !popup ? kRowAlphaHeld : kRowAlphaIdle);
+			}
+			if (inside && in.released && takeHits) qtyHit = k == 0 ? 1 : -1;
+		}
+	}
+
 	if (m.showBar) {
-		ui.scrollBarMenu(m.barRect, m.barThumbOffset, m.barThumbLen);
+		if (m.vendingSkin) {
+			ui.scrollBarMenu(m.barRect, m.barThumbOffset, m.barThumbLen, art.vendingScrollBar,
+				art.vendingScrollTop, art.vendingScrollMid, art.vendingScrollBottom);
+		} else {
+			ui.scrollBarMenu(m.barRect, m.barThumbOffset, m.barThumbLen, art.menuScrollBar,
+				art.menuSliderTop, art.menuSliderMid, art.menuSliderBottom);
+		}
 	}
 
 	// Pass 2: cursor + labels (:905-1130). The legacy loop draws every plate
@@ -283,11 +353,14 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 	// ---- the torn-page popup, drawn last and outside the clip (:1135-1173) ----
 	if (popup) {
 		ui.panel(UiRect{ 0, 0, kCanvasW, kCanvasH }, kPopupWash);
-		const int px = kPopupCx - (art.menuTornPage.width() >> 1);
-		ui.image(art.menuTornPage, px, kPopupY,
-			Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
-		ui.label(*m.helpPopup, px + (art.menuTornPage.width() >> 1),
-			kPopupY + (art.menuTornPage.height() >> 1),
+		// The vending menus swap the page for vendingBG at (0, 0); the text
+		// still centres on the torn page's half height (:1149-1171).
+		const Texture& page = m.vendingSkin ? art.vendingBackground : art.menuTornPage;
+		const int px = m.vendingSkin ? 0 : kPopupCx - (page.width() >> 1);
+		const int py = m.vendingSkin ? 0 : kPopupY;
+		ui.image(page, px, py, Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
+		ui.label(*m.helpPopup, px + (page.width() >> 1),
+			py + (art.menuTornPage.height() >> 1),
 			Graphics2D::kAnchorHCenter | Graphics2D::kAnchorVCenter);
 		// Dismissed by a release anywhere (:4809-4813). The release that ends a
 		// drag returns before that point (:4676-4689), which is what m.rowHits
@@ -307,6 +380,8 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 		res.action = UiAction::Back;
 	} else if (softRightFired) {
 		res.action = UiAction::Resume;
+	} else if (qtyHit != 0) {
+		res.action = qtyHit > 0 ? UiAction::ScrollUp : UiAction::ScrollDown;
 	} else if (rowHit >= 0) {
 		res.action = UiAction::ListRow;
 		res.index = rowHit;

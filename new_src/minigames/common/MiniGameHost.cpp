@@ -1,0 +1,51 @@
+#include "minigames/common/MiniGameHost.h"
+
+#include "domain/game/ScriptVM.h"
+
+namespace newcore {
+
+void MiniGameHost::init(const Env& env) {
+	env_ = env;
+	help_.init(env_.loc);
+	vending_.init(this);
+}
+
+bool MiniGameHost::loadAssets(TextureStore& store, const UiAssets::ResourceReader& read) {
+	return assets_.load(store, read) & vending_.loadAssets(store, read);
+}
+
+bool MiniGameHost::start(int type, int b1, int b2, int b3, ScriptThread* t) {
+	MiniGame* g = nullptr;
+	switch (type) {
+	case kVending: g = &vending_; break;
+	default: return false;   // sentry bot / hacking: spec §9
+	}
+	callingThread_ = t;
+	active_ = g;
+	touchButton_ = -1;
+	env_.host->requestState(StateId::MiniGame);
+	g->begin(b1, b2, b3);
+	return true;
+}
+
+void MiniGameHost::handleAction(Action a) {
+	if (active_ == nullptr) return;
+	if (a == Action::MiniGameTouch) active_->handleTouch(touchButton_);
+	else active_->handleAction(a);
+}
+
+UiResult MiniGameHost::draw(Ui& ui) {
+	return active_ != nullptr ? active_->draw(ui) : UiResult{};
+}
+
+void MiniGameHost::finish(int result) {
+	// Cleared before resuming: the resumed script may start another minigame.
+	ScriptThread* t = callingThread_;
+	callingThread_ = nullptr;
+	active_ = nullptr;
+	env_.vm->vars[kResultVar] = (short)result;
+	env_.host->requestState(StateId::Playing);
+	if (t != nullptr) env_.vm->resumeThread(t);
+}
+
+} // namespace newcore

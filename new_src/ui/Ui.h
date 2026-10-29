@@ -121,8 +121,10 @@ public:
 	// This is NOT Canvas::drawScrollBar (that one stays `scrollBar` above and
 	// keeps serving the dialog box and the loot list). thumbOffset/thumbLen are
 	// the producer's (spec 2026-08-28-menu §6.4): this primitive computes
-	// nothing.
-	void scrollBarMenu(const UiRect& barRect, int thumbOffset, int thumbLen);
+	// nothing. The sheets are the caller's: gameMenu_* or the vending set
+	// (src/MenuSystem.cpp:2789-2793).
+	void scrollBarMenu(const UiRect& barRect, int thumbOffset, int thumbLen,
+		const Texture& bar, const Texture& top, const Texture& mid, const Texture& bottom);
 	// row = 4 - 5*health/maxHealth, clamped at 0 (src/Hud.cpp:695-699).
 	void face(const Texture& sheet, int x, int y, int rowH,
 		int health, int maxHealth);

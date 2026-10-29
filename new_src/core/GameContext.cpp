@@ -58,6 +58,7 @@ void GameContext::init(const Init& sys) {
 	menuEnv.host = this;
 	menuEnv.upTimeMs = &upTimeMs;
 	menuEnv.restartLevel = [this] { restartLevel(); };
+	menuEnv.vending = &minigames_.vending();
 	menu_.init(menuEnv);
 	Targeting::Env tgtEnv;
 	tgtEnv.game = sys_.game;
@@ -92,6 +93,17 @@ void GameContext::init(const Init& sys) {
 	actEnv.host = this;
 	actEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
 	actions_.init(actEnv);
+	MiniGameHost::Env mgEnv;
+	mgEnv.vm = sys_.vm;
+	mgEnv.host = this;
+	mgEnv.game = sys_.game;
+	mgEnv.player = sys_.player;
+	mgEnv.tables = sys_.tables;
+	mgEnv.loc = sys_.loc;
+	mgEnv.defs = sys_.defs;
+	mgEnv.upTimeMs = &upTimeMs;
+	mgEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
+	minigames_.init(mgEnv);
 	if (sys_.tables) {
 		sys_.game->lerps.setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (SpriteLerps.h)
 	}
@@ -178,6 +190,11 @@ void GameContext::enterState_(StateId s) {
 		menu_.begin(nextMenuId_);
 		nextMenuId_ = kMenuInGame;
 		break;
+	case StateId::MiniGame:
+		// initGame clears the soft keys only; clearing the queue is the
+		// Dialog/Menu events analog, so world keys never leak into the game.
+		pendingActions_.clear();
+		break;
 	case StateId::Loading:
 		loadingPhase_ = 0;     // arm the loading-phase counter
 		break;
@@ -242,7 +259,16 @@ void GameContext::tick() {
 		// blocked-drop check: the legacy ST_MENU dispatch happens before it, and
 		// a script lockout must not freeze an open menu (spec §2.4).
 		if (state_ == StateId::Menu) { menu_.handleAction(a); continue; }
+		// ST_MINI_GAME dispatch also precedes the block test
+		// (src/InputEventController.cpp:334-349 vs :449).
+		if (state_ == StateId::MiniGame) { minigames_.handleAction(a); continue; }
 		if (blocked || state_ != StateId::Playing) break;
+		if (a == Action::DebugVending) {
+			// DEBUG (removable, minigames): no calling thread, so finish()
+			// only returns to Playing.
+			minigames_.start(MiniGameHost::kVending, 1, -1, -1, nullptr);
+			continue;
+		}
 		actions_.handleAction(a);
 	}
 	pendingActions_.clear();
@@ -311,6 +337,10 @@ void GameContext::tick() {
 		// updates soft keys (src/GameStateRunner.cpp:203-253). No lerps, no
 		// doors, no scripts, no view update — and gameTime does not advance
 		// either (the clock gate above lists Playing/Camera/Looting only).
+		break;
+	case StateId::MiniGame:
+		// Nothing ticks (src/Canvas.cpp:827-828 excludes ST_MINI_GAME), no
+		// scripts, gameTime frozen; animations run on upTimeMs inside draw.
 		break;
 	}
 
@@ -610,6 +640,9 @@ void GameContext::debugGiveKeycards() {
 	sys_.player->give(1, Enums::WP_HOLY_WATER_PISTOL, 1, true);
 	sys_.player->give(2, Enums::AMMO_HOLY_WATER, 50, true);
 	std::fprintf(stderr, "[debug] granted drinks 0..10 + holy water\n");
+	// DEBUG (removable, minigames): credits for the vending buy menus.
+	sys_.player->give(0, 24, 1000, true);
+	std::fprintf(stderr, "[debug] credits inv[24]=%d\n", sys_.player->inventory[24]);
 }
 
 void GameContext::debugToggleCoords() {
@@ -831,6 +864,10 @@ void GameContext::applyUiAction(UiAction a, int index) {
 	case UiAction::InfoClose:
 		queued = Action::MenuInfoClose;
 		break;
+	case UiAction::MiniGameTouch:
+		minigames_.latchTouch(index);
+		queued = Action::MiniGameTouch;
+		break;
 	case UiAction::Resume:
 		// Touch-only in the original (src/MenuSystem.cpp:4787-4789): no key
 		// produces this action.
@@ -1014,6 +1051,13 @@ void GameContext::render(AppContext& app) {
 			const UiResult r = drawMenu(*ui, mv);
 			applyUiAction(r.action, r.index);
 		}
+	}
+
+	// Minigame screens open with an opaque 480x320 blit (spec §4.3), so the
+	// world pass above is covered; `gameplayView` excludes HUD and weapon.
+	if (state_ == StateId::MiniGame && ui != nullptr) {
+		const UiResult r = minigames_.draw(*ui);
+		applyUiAction(r.action, r.index);
 	}
 
 	if (ui != nullptr) ui->endFrame();

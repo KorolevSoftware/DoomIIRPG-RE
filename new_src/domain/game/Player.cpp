@@ -112,6 +112,17 @@ void Player::reset() {
 	nextLevelXP = calcLevelXP(level);
 	xpGained = 0;
 	foundSecretsLevels = 0;            // src/Player.cpp:557
+	hackedVendingMachines = 0;         // src/Player.cpp:506-518: every tries field = 4
+	vendingMachineHackTriesLeft1 = 0;
+	vendingMachineHackTriesLeft2 = 0;
+	for (int i = 0; i < 9; ++i) {
+		vendingMachineHackTriesLeft1 += 4;
+		vendingMachineHackTriesLeft2 += 4;
+		if (i < 8) {
+			vendingMachineHackTriesLeft1 <<= 3;
+			vendingMachineHackTriesLeft2 <<= 3;
+		}
+	}
 	disabledWeapons = 0;
 	facingEntity = nullptr;
 	god = false;
@@ -120,6 +131,58 @@ void Player::reset() {
 	for (auto& v : buffs) v = 0;
 	numStatusEffects = 0;
 	for (auto& v : statusEffects) v = 0;
+}
+
+int Player::modifyStat(int n, int n2) {
+	int before;
+	int after;
+	if (n == 0) {
+		// shortcut: painEvent on n2 < 0 (:229-231) is not ported; no caller
+		// passes n 0 yet (vending IQ bonus only).
+		before = getHealth();
+		addHealth(n2);
+		after = getHealth();
+	} else {
+		before = baseCe.getStat(n);
+		const int cap = (n == 7) ? 200 : 99;
+		if (before + n2 > cap) n2 = cap - before;
+		if (n2 != 0) baseCe.setStat(n, before + n2);
+		updateStats();
+		after = baseCe.getStat(n);
+	}
+	return after - before;
+}
+
+bool Player::vendingMachineIsHacked(int id) const {
+	return (hackedVendingMachines & 1 << id) == 1 << id;
+}
+
+void Player::setVendingMachineHack(int id) {
+	hackedVendingMachines |= 1 << id;
+}
+
+int Player::getVendingMachineTriesLeft(int id) const {
+	id = std::max(std::min(id, 18), 1);
+	int n;
+	if (id > 9) {
+		n = vendingMachineHackTriesLeft2;
+		id -= 9;
+	} else {
+		n = vendingMachineHackTriesLeft1;
+	}
+	return (n >> (3 * (id - 1))) & 0x7;
+}
+
+void Player::removeOneVendingMachineTry(int id) {
+	id = std::max(std::min(id, 18), 1);
+	if (getVendingMachineTriesLeft(id) > 0) {
+		if (id > 9) {
+			id -= 9;
+			vendingMachineHackTriesLeft2 -= 1 << (3 * (id - 1));
+		} else {
+			vendingMachineHackTriesLeft1 -= 1 << (3 * (id - 1));
+		}
+	}
 }
 
 // src/Player.cpp:970-1063. The isFamiliar mirror arrays (weaponsCopy /

@@ -18,6 +18,7 @@ class Game;
 class Localization;
 class Player;
 class Tables;
+class VendingMachine;
 
 // ALL retained state of the ST_MENU screen (spec 2026-08-28-menu §4), the
 // LootSession / DialogSystem precedent: the session owns the current menu id,
@@ -56,6 +57,7 @@ public:
 		StateHost* host = nullptr;
 		const int64_t* upTimeMs = nullptr;   // cursor oscillation clock
 		std::function<void()> restartLevel;  // ACTION_RESTARTLEVEL target (GameContext::restartLevel)
+		VendingMachine* vending = nullptr;   // vending menus 83-85: prices, exits
 	};
 	void init(const Env& env);
 
@@ -104,6 +106,17 @@ private:
 	void buildItemsScreen();          // MENU_ITEMS (:1930-1986)
 	void buildWeaponsScreen();        // MENU_ITEMS_WEAPONS (:1988-2021)
 	void buildDrinksScreen();         // MENU_ITEMS_DRINKS (:2024-2045)
+	// A row whose label is a runtime string (getLastArgString) but keeps its
+	// source id, so it is never EMPTY_TEXT (the addMessageRow idiom).
+	int  addLiteralRow(int srcLabelId, const std::string& text, int flags, int action,
+		int param, int helpId);
+	int  addVendingCreditsRow();      // "Cre-dits: N", flags 9 (:2066-2075)
+	// The vending header (:2062-2077): title, "Cre-dits: N", the rest of the span.
+	void addVendingHeader(int menuId);
+	void buildVendingDrinksScreen();  // MENU_VENDING_MACHINE_DRINKS (:2080-2106)
+	void buildVendingSnacksScreen();  // MENU_VENDING_MACHINE_SNACKS (:2108-2125, :4100-4164)
+	// MENU_VENDING_MACHINE_CONFIRM (:2127-2196) / _CANT_BUY (:2198-2255).
+	void buildVendingOrderScreen(bool confirm);
 	// LoadHelpResource(short) (:3662-3702): the type-5 body of a HELP leaf.
 	void loadHelpResource(int resource);
 	// LoadHelpItems(Text*, int) (:3811-3838): one item per '|'-separated line.
@@ -132,10 +145,11 @@ private:
 	void back();                      // (:591-607)
 	void returnToGame();              // (:1209-1220)
 	void select(int i);               // (:2971-3050 subset)
-	void moveDir(int n);              // (:401-455 verbatim, minus type 9)
+	void moveDir(int n);              // (:401-455 verbatim)
 	void scrollPageUp();              // (:349-363)
 	void scrollPageDown();            // (:332-346)
 	UiRect listRect() const;          // setMenuSettings + paint's narrowing (:848)
+	int  viewPx() const { return listRect().h; }   // scroll view height (A3): 241, vending 250
 	UiRect barRect() const;           // (:2757-2762)
 	int  itemHeight(int i) const;     // getMenuItemHeight (:4947-4984)
 	int  contentHeight() const;       // sum over the non-hidden rows (:2742-2751)

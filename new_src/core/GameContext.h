@@ -12,6 +12,7 @@
 #include "core/PlayerActions.h"
 #include "domain/game/Game.h"
 #include "domain/game/Targeting.h"
+#include "minigames/common/MiniGameHost.h"
 #include "render/SceneRenderer.h"
 #include "text/Text.h"
 #include "ui/HudModel.h"
@@ -114,6 +115,9 @@ public:
 	// GOTO/TURN_PLAYER handshake fields the VM writes (spec §P1-G7).
 	PlayerActions& actions() { return actions_; }
 
+	// ST_MINI_GAME dispatcher; the VM starts minigames through it (ADR 0033).
+	MiniGameHost& minigames() { return minigames_; }
+
 	// Clocks in ms. upTimeMs is the monotonic app clock; gameTime pauses
 	// outside Playing this phase (spec deviation C5).
 	int64_t upTimeMs = 0;
@@ -192,6 +196,9 @@ private:
 	// Playing input, movement commit, use chain, fire commit, arrival hooks
 	// (spec §P1-G7).
 	PlayerActions actions_;
+
+	// ST_MINI_GAME: calling thread, active game, shared endGame tail.
+	MiniGameHost minigames_;
 };
 
 } // namespace newcore

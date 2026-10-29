@@ -13,6 +13,7 @@ enum class StateId : int {
 	InterCamera = 4,  // legacy ST_INTER_CAMERA (script lerp show; world renders from player view)
 	Dialog      = 8,  // legacy ST_DIALOG (real dialogs, spec GROUP 1)
 	Loading     = 7,  // legacy ST_LOADING
+	MiniGame    = 12, // legacy ST_MINI_GAME (src/Canvas.h:79; spec 2026-10-29-minigames-layout §4)
 	Dying       = 13, // legacy ST_DYING (stub)
 	Camera      = 18, // legacy ST_CAMERA (scripted cinematic, cutscenes-camera.md §1)
 	Looting     = 23, // legacy ST_LOOTING (src/Canvas.h:90; loot-crouch camera,
@@ -39,6 +40,11 @@ enum class Action : int {
 	// is bound to it in the rewrite. MenuInfoClose has no legacy action id: it
 	// is the touch release that dismisses the torn page (:4809-4813).
 	MenuInfo, MenuInfoClose,
+	// No key produces this one either: it is a minigame touch release, whose
+	// button id was latched through MiniGameHost::latchTouch (the ListRow idiom).
+	MiniGameTouch,
+	// DEBUG (removable, minigames): V starts the vending machine, slot 1.
+	DebugVending,
 };
 
 // The only thing a module may know about the state machine (spec

@@ -6,10 +6,8 @@
 
 namespace newcore {
 
-namespace {
-
-bool loadTexture(TextureStore& store, const UiAssets::ResourceReader& read,
-	const char* name, Texture& out) {
+bool loadUiTexture(TextureStore& store, const UiAssets::ResourceReader& read,
+	const char* name, Texture& out, void (*fixIndices)(std::vector<uint8_t>&)) {
 	std::vector<uint8_t> bmp;
 	if (!read(name, bmp)) {
 		std::fprintf(stderr, "UiAssets: missing resource %s\n", name);
@@ -21,7 +19,13 @@ bool loadTexture(TextureStore& store, const UiAssets::ResourceReader& read,
 		std::fprintf(stderr, "UiAssets: failed to decode %s\n", name);
 		return false;
 	}
-	out.uploadIndexed(store, img->indices(), img->width(), img->height(), img->palette(), true);
+	if (fixIndices == nullptr) {
+		out.uploadIndexed(store, img->indices(), img->width(), img->height(), img->palette(), true);
+	} else {
+		std::vector<uint8_t> fixed = img->indices();
+		fixIndices(fixed);
+		out.uploadIndexed(store, fixed, img->width(), img->height(), img->palette(), true);
+	}
 	if (!out.valid()) {
 		std::fprintf(stderr, "UiAssets: texture upload failed for %s\n", name);
 		return false;
@@ -29,70 +33,79 @@ bool loadTexture(TextureStore& store, const UiAssets::ResourceReader& read,
 	return true;
 }
 
-} // namespace
-
 // Verbatim move of the former Hud::startup (order and file names unchanged).
 bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	if (!read) return false;
 	bool ok = true;
-	ok &= loadTexture(store, read, "HUD_Panel_top.bmp", panelTop);
-	ok &= loadTexture(store, read, "gameMenu_Panel_bottom.bmp", panelBottom);
+	ok &= loadUiTexture(store, read, "HUD_Panel_top.bmp", panelTop);
+	ok &= loadUiTexture(store, read, "gameMenu_Panel_bottom.bmp", panelBottom);
 	// Same file names and relative order as the original (src/Hud.cpp:51-54).
-	ok &= loadTexture(store, read, "Switch_Right_Normal.bmp", switchRightNormal);
-	ok &= loadTexture(store, read, "Switch_Right_Active.bmp", switchRightActive);
-	ok &= loadTexture(store, read, "Switch_Left_Normal.bmp", switchLeftNormal);
-	ok &= loadTexture(store, read, "Switch_Left_Active.bmp", switchLeftActive);
-	ok &= loadTexture(store, read, "Hud_Weapon_Normal.bmp", weaponNormal);
-	ok &= loadTexture(store, read, "HUD_Weapon_Active.bmp", weaponActive);
-	ok &= loadTexture(store, read, "arrow-up.bmp", arrowUp);
-	ok &= loadTexture(store, read, "arrow-down.bmp", arrowDown);
-	ok &= loadTexture(store, read, "arrow-left.bmp", arrowLeft);
-	ok &= loadTexture(store, read, "arrow-right.bmp", arrowRight);
-	ok &= loadTexture(store, read, "arrow-up_pressed.bmp", arrowUpPressed);
-	ok &= loadTexture(store, read, "arrow-down_pressed.bmp", arrowDownPressed);
-	ok &= loadTexture(store, read, "arrow-left_pressed.bmp", arrowLeftPressed);
-	ok &= loadTexture(store, read, "arrow-right_pressed.bmp", arrowRightPressed);
-	ok &= loadTexture(store, read, "ui_images.bmp", uiImages);
-	ok &= loadTexture(store, read, "Hud_Portrait_Small.bmp", portraitsSmall);
-	ok &= loadTexture(store, read, "pageUP_Icon.bmp", pageUp);
-	ok &= loadTexture(store, read, "pageDOWN_Icon.bmp", pageDown);
-	ok &= loadTexture(store, read, "pageOK_Icon.bmp", pageOk);
-	ok &= loadTexture(store, read, "damage.bmp", damageVignette);
-	ok &= loadTexture(store, read, "Hud_Attack_Arrows.bmp", attackArrows);
-	ok &= loadTexture(store, read, "Hud_Test.bmp", hudTest);
+	ok &= loadUiTexture(store, read, "Switch_Right_Normal.bmp", switchRightNormal);
+	ok &= loadUiTexture(store, read, "Switch_Right_Active.bmp", switchRightActive);
+	ok &= loadUiTexture(store, read, "Switch_Left_Normal.bmp", switchLeftNormal);
+	ok &= loadUiTexture(store, read, "Switch_Left_Active.bmp", switchLeftActive);
+	ok &= loadUiTexture(store, read, "Hud_Weapon_Normal.bmp", weaponNormal);
+	ok &= loadUiTexture(store, read, "HUD_Weapon_Active.bmp", weaponActive);
+	ok &= loadUiTexture(store, read, "arrow-up.bmp", arrowUp);
+	ok &= loadUiTexture(store, read, "arrow-down.bmp", arrowDown);
+	ok &= loadUiTexture(store, read, "arrow-left.bmp", arrowLeft);
+	ok &= loadUiTexture(store, read, "arrow-right.bmp", arrowRight);
+	ok &= loadUiTexture(store, read, "arrow-up_pressed.bmp", arrowUpPressed);
+	ok &= loadUiTexture(store, read, "arrow-down_pressed.bmp", arrowDownPressed);
+	ok &= loadUiTexture(store, read, "arrow-left_pressed.bmp", arrowLeftPressed);
+	ok &= loadUiTexture(store, read, "arrow-right_pressed.bmp", arrowRightPressed);
+	ok &= loadUiTexture(store, read, "ui_images.bmp", uiImages);
+	ok &= loadUiTexture(store, read, "Hud_Portrait_Small.bmp", portraitsSmall);
+	ok &= loadUiTexture(store, read, "pageUP_Icon.bmp", pageUp);
+	ok &= loadUiTexture(store, read, "pageDOWN_Icon.bmp", pageDown);
+	ok &= loadUiTexture(store, read, "pageOK_Icon.bmp", pageOk);
+	ok &= loadUiTexture(store, read, "damage.bmp", damageVignette);
+	ok &= loadUiTexture(store, read, "Hud_Attack_Arrows.bmp", attackArrows);
+	ok &= loadUiTexture(store, read, "Hud_Test.bmp", hudTest);
 	std::fprintf(stdout, "UiAssets: weaponNormal=%dx%d valid=%d, weaponActive valid=%d\n",
 		weaponNormal.width(), weaponNormal.height(), (int)weaponNormal.valid(),
 		(int)weaponActive.valid());
-	ok &= loadTexture(store, read, "HUD_Shield_Normal.bmp", shieldNormal);
-	ok &= loadTexture(store, read, "Hud_Shield_Button_Active.bmp", shieldActive);
-	ok &= loadTexture(store, read, "Hud_Key_Normal.bmp", keyNormal);
-	ok &= loadTexture(store, read, "Hud_Key_Active.bmp", keyActive);
-	ok &= loadTexture(store, read, "HUD_Health_Normal.bmp", healthNormal);
-	ok &= loadTexture(store, read, "Hud_Health_Button_Active.bmp", healthActive);
-	ok &= loadTexture(store, read, "Hud_Player.bmp", playerFaces);
-	ok &= loadTexture(store, read, "HUD_Player_Active.bmp", playerActive);
-	ok &= loadTexture(store, read, "HUD_Player_frame_Normal.bmp", playerFrameNormal);
-	ok &= loadTexture(store, read, "HUD_Player_frame_Active.bmp", playerFrameActive);
-	ok &= loadTexture(store, read, "Hud_Numbers.bmp", numbers);
-	ok &= loadTexture(store, read, "cockpit.bmp", cockpitOverlay);
+	ok &= loadUiTexture(store, read, "HUD_Shield_Normal.bmp", shieldNormal);
+	ok &= loadUiTexture(store, read, "Hud_Shield_Button_Active.bmp", shieldActive);
+	ok &= loadUiTexture(store, read, "Hud_Key_Normal.bmp", keyNormal);
+	ok &= loadUiTexture(store, read, "Hud_Key_Active.bmp", keyActive);
+	ok &= loadUiTexture(store, read, "HUD_Health_Normal.bmp", healthNormal);
+	ok &= loadUiTexture(store, read, "Hud_Health_Button_Active.bmp", healthActive);
+	ok &= loadUiTexture(store, read, "Hud_Player.bmp", playerFaces);
+	ok &= loadUiTexture(store, read, "HUD_Player_Active.bmp", playerActive);
+	ok &= loadUiTexture(store, read, "HUD_Player_frame_Normal.bmp", playerFrameNormal);
+	ok &= loadUiTexture(store, read, "HUD_Player_frame_Active.bmp", playerFrameActive);
+	ok &= loadUiTexture(store, read, "Hud_Numbers.bmp", numbers);
+	ok &= loadUiTexture(store, read, "cockpit.bmp", cockpitOverlay);
 	// In-game menu sheets, in the original's load order
 	// (src/MenuSystem.cpp:120-131 for the gameMenu_* block; the softkey comes
 	// from src/Hud.cpp:57). inGame_menu_option_button.bmp is declared but never
 	// loaded in the port (src/MenuSystem.h:171 has no assignment), so it goes
 	// last; the file ships in the archive.
-	ok &= loadTexture(store, read, "gameMenu_Health.bmp", menuHealth);
-	ok &= loadTexture(store, read, "gameMenu_Shield.bmp", menuShield);
-	ok &= loadTexture(store, read, "gameMenu_infoButton_Pressed.bmp", menuInfoPressed);
-	ok &= loadTexture(store, read, "gameMenu_infoButton_Normal.bmp", menuInfoNormal);
-	ok &= loadTexture(store, read, "gameMenu_TornPage.bmp", menuTornPage);
-	ok &= loadTexture(store, read, "gameMenu_Background.bmp", menuBackground);
-	ok &= loadTexture(store, read, "gameMenu_ScrollBar.bmp", menuScrollBar);
-	ok &= loadTexture(store, read, "gameMenu_topSlider.bmp", menuSliderTop);
-	ok &= loadTexture(store, read, "gameMenu_midSlider.bmp", menuSliderMid);
-	ok &= loadTexture(store, read, "gameMenu_bottomSlider.bmp", menuSliderBottom);
-	ok &= loadTexture(store, read, "inGame_menu_softkey.bmp", menuSoftKey);
-	ok &= loadTexture(store, read, "inGame_menu_option_button.bmp", menuOptionButton);
-	ok &= loadTexture(store, read, "Icons_Buffs.bmp", iconsBuffs);   // src/Canvas.cpp:172
+	ok &= loadUiTexture(store, read, "gameMenu_Health.bmp", menuHealth);
+	ok &= loadUiTexture(store, read, "gameMenu_Shield.bmp", menuShield);
+	ok &= loadUiTexture(store, read, "gameMenu_infoButton_Pressed.bmp", menuInfoPressed);
+	ok &= loadUiTexture(store, read, "gameMenu_infoButton_Normal.bmp", menuInfoNormal);
+	ok &= loadUiTexture(store, read, "gameMenu_TornPage.bmp", menuTornPage);
+	ok &= loadUiTexture(store, read, "gameMenu_Background.bmp", menuBackground);
+	ok &= loadUiTexture(store, read, "gameMenu_ScrollBar.bmp", menuScrollBar);
+	ok &= loadUiTexture(store, read, "gameMenu_topSlider.bmp", menuSliderTop);
+	ok &= loadUiTexture(store, read, "gameMenu_midSlider.bmp", menuSliderMid);
+	ok &= loadUiTexture(store, read, "gameMenu_bottomSlider.bmp", menuSliderBottom);
+	ok &= loadUiTexture(store, read, "inGame_menu_softkey.bmp", menuSoftKey);
+	ok &= loadUiTexture(store, read, "inGame_menu_option_button.bmp", menuOptionButton);
+	ok &= loadUiTexture(store, read, "Icons_Buffs.bmp", iconsBuffs);   // src/Canvas.cpp:172
+	ok &= loadUiTexture(store, read, "vending_softkey_pressed.bmp", vendingSoftkeyPressed);
+	ok &= loadUiTexture(store, read, "vending_softkey_normal.bmp", vendingSoftkeyNormal);
+	ok &= loadUiTexture(store, read, "vendingBG.bmp", vendingBackground);
+	ok &= loadUiTexture(store, read, "vending_button_large.bmp", vendingButtonLarge);
+	ok &= loadUiTexture(store, read, "vending_arrow_up_glow.bmp", vendingArrowUpGlow);
+	ok &= loadUiTexture(store, read, "vending_arrow_down_glow.bmp", vendingArrowDownGlow);
+	ok &= loadUiTexture(store, read, "vending_button_help.bmp", vendingButtonHelp);
+	ok &= loadUiTexture(store, read, "vending_scroll_bar.bmp", vendingScrollBar);
+	ok &= loadUiTexture(store, read, "vending_scroll_button_top.bmp", vendingScrollTop);
+	ok &= loadUiTexture(store, read, "vending_scroll_button_middle.bmp", vendingScrollMid);
+	ok &= loadUiTexture(store, read, "vending_scroll_button_bottom.bmp", vendingScrollBottom);
 	return ok;
 }
 

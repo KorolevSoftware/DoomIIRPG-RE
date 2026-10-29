@@ -820,6 +820,284 @@ once via the `snapMonsters(true)` above), except item 8.
   popup with the item description (§15, `:2849-2857`).
 - No drop / discard / equip-from-inventory action exists in these screens.
 
+## 17b. Vending menus (83-88)
+
+Verified 2026-10-29 (raw log: `docs/research/2026-10-29-vending-menus.md`).
+Line numbers are `src/MenuSystem.cpp` unless a file is named. The minigame
+state machine (terminal, hacking, help screen) is out of scope here; see
+`docs/original-code/vending-machine.md`.
+
+Ids (`src/Menus.h:303-309`, enum): 83 `MENU_VENDING_MACHINE`, 84 `_DRINKS`,
+85 `_SNACKS`, 86 `_CONFIRM`, 87 `_CANT_BUY`, 88 `_DETAILS`, `_LAST` = 88.
+Actions (`src/Menus.h:164-166`): 28 `ACTION_CONFIRMBUY`, 29 `ACTION_BUYDRINK`,
+30 `ACTION_BUYSNACK`. Currency = **`player->inventory[24]`** (credits) everywhere.
+
+### 17b.1 Entry and exit
+
+* Entry: the vending terminal (minigame `stateVars[1] == 2`) on FIRE with
+  `mainTerminalCursor == 0` calls `menuSystem->setMenu(MENU_VENDING_MACHINE)`
+  (`src/VendingMachine.cpp:199-201`, `:217-219`). `setMenu` does not push, and
+  every ST_MENU exit clears the stack (`src/Canvas.cpp:1033-1035`), so 83 always
+  starts with an **empty stack**.
+* Leaving 83 by key: `ACTION_MENU` or `ACTION_BACK` on menu 83 calls
+  `vendingMachine->returnFromBuying()` instead of `back()` (`:2927-2928`,
+  `:2947-2948`). `returnFromBuying` puts the canvas back in `ST_MINI_GAME` with
+  `stateVars = {4, 2, 0, -, 0}` (terminal screen) and, if
+  `!machineCanBeHacked()` (already hacked, or no tries left), immediately
+  `endGame(2)` (`src/VendingMachine.cpp:118-130`, `:132-134`). `endGame` sets
+  `game->scriptStateVars[7] = 2`, goes to `ST_PLAYING` and resumes the paused
+  calling script thread; from the main-menu minigame it returns to
+  `MENU_MAIN_MINIGAME` instead (`src/VendingMachine.cpp:850-864`).
+* Leaving by touch: the right soft key (button 15, "Exit") calls
+  `returnToGame()` on **every** vending screen (`:4788-4790`) →
+  `ST_PLAYING`/`ST_INTER_CAMERA` (`:1209-1220`). This bypasses `endGame`: the
+  script thread paused by `EV_MINIGAME` (`unpauseTime = -1`,
+  `src/ScriptThread.cpp:1305-1311`) is not resumed and `scriptStateVars[7]` is
+  not written. Port artifact; the keyboard path never does this.
+
+### 17b.2 What `menus.bin` contributes (decoded from the shipped file)
+
+All five present screens are **type 9** (`MENUTYPE_VENDING_MACHINE`,
+`src/Menus.h:15`); 88 is absent (built in code).
+
+| id | rows (str = file 3 menu strings) |
+|---|---|
+| 83 | [0] "Ven-ding Ma-chine" (344) flags 73; [1] blank flags 9; [2] "Na-no Drinks" (178) flags 0 GOTO 84; [3] "Snacks" (352) flags 0 GOTO 85 |
+| 84 | [0] "Na-no Drinks" (178) flags 73; [1] blank flags 9 |
+| 85 | [0] "Snacks" (352) flags 73; [1] blank flags 9 |
+| 86 | [0] "Con-firm Or-der" (345) flags 73; [1] blank flags 9 |
+| 87 | [0] "Con-firm Or-der" (345) flags 73; [1] blank flags 9 |
+
+No help strings on any of these rows.
+
+### 17b.3 Common header ("Cre-dits: N")
+
+83, 84, 85 (`:2062-2077`, `:2080-2094`, `:2108-2123`) all start with
+`loadMenuItems(menu, 0, 1)` (title divider), then a row built as:
+`addTextArg(<inventory[24] decimal>)`, `composeText(0, 197)` = "Cre-dits: %01",
+reset args, `addTextArg(that)`, `addItem(getLastArgString(), EMPTY, 9, 0, 0,
+EMPTY)`; then `loadMenuItems(menu, 1, -1)` (the blank row, and on 83 the two GOTO
+rows). So every screen is: title (73) / "Cre-dits: N" (9) / blank (9) / rows.
+86/87 build the same credits text but via `getSmallBuffer` (`:2151-2156`,
+`:2218-2223`).
+
+### 17b.4 `MENU_VENDING_MACHINE_DRINKS` (84) — prices from `tables.bin` table 10
+
+After the header, `for n16 = 0..10` ascending, if
+`vendingMachine->drinkInThisVendingMachine(n16)`: value =
+`getDrinkPrice(n16)` as a decimal text arg, row
+`addItem(STRINGID(1, def(6,0,n16)->name), getLastArgString(), 32, 28, n16,
+STRINGID(1, def->description))` (`:2096-2103`). So label = drink name, value
+column = **price** (no "x", no stock), flags 32 `ITEM_SHOWDETAILS`, action 28,
+param = inventory slot 0..10. There is **no stock / quantity-on-hand** concept.
+
+`energyDrinkData` = `tables.bin` table 10, int16 (`src/App.cpp:383,399`),
+3 shorts per drink: `[normalPrice, hackedPrice, mapMask]`.
+`drinkInThisVendingMachine(n) = (data[n*3+2] & 1<<currentMapNumber) != 0`;
+`getDrinkPrice(n) = data[n*3 + (machineHasBeenHacked ? 1 : 0)]`
+(`src/VendingMachine.cpp:805-811`). `currentMapNumber` is clamped to 1..9 in
+`initGame` (`src/VendingMachine.cpp:53`). Decoded shipped table (33 shorts):
+
+| slot | drink | price | hacked | mapMask |
+|---|---|---|---|---|
+| 0 | Energy Blast | 20 | 15 | 0x03FE |
+| 1 | Focus Juice | 25 | 20 | 0x03FE |
+| 2 | Super Quench | 30 | 20 | 0x03FE |
+| 3 | Power Punch | 50 | 40 | 0x03FE |
+| 4 | Snake Venom | 70 | 60 | 0x03FE |
+| 5 | Youth Serum | 80 | 70 | 0x03FE |
+| 6 | Caffeine Block | 100 | 80 | 0x03FE |
+| 7 | Diet Might | 100 | 80 | 0x03FE |
+| 8 | Smoothie | 200 | 150 | 0x03FE |
+| 9 | Monster Shot | 400 | 300 | 0x03FE |
+| 10 | Hell Knight Sweat | 666 | 400 | 0x03FE |
+
+Mask 0x03FE = bits 1..9, so **every machine on every map sells all 11 drinks**
+(the filter is a no-op with shipped data). Drink names: §17a / 
+`docs/original-code/loot-inventory.md` (useItem table).
+
+### 17b.5 `MENU_VENDING_MACHINE_SNACKS` (85) — cosmetic names, one item
+
+After the header, `fillVendingMachineSnacks(canvas->loadMapID, textbuff)`
+(`:2123`, body `:4100-4164`). Set by map: `n2 = 0` for maps 1-3, `2` for maps
+7-9, else `1` (`:4103-4109`). One text arg = `getSnackPrice()`, shared by all
+rows; each row is `addItem(STRINGID(3, s), getLastArgString(), 0, 28,
+STRINGID(3, s), STRINGID(1, def(6,0,16)->description))` — flags 0, action 28,
+and **param = the composite string id `3<<10 | s`** (always >= 11, which is how
+86/87 tell snacks from drinks). 12 rows per set:
+
+| set | menu string ids (file 3) |
+|---|---|
+| 0 (maps 1-3) | 358-369: Moon Cake, Moon Shine, Moon Tofu, Moon Paste, Space Chips, Space Coo-kies, Swiss Cheese, Gou-da Cheese, Ched-dar Cheese, Cheese Crack-ers, Mac n' Cheese, Christy's Cake |
+| 1 (other maps) | 370-379, 368, 369: Baked Chips ... Rice Cakes, Mac n' Cheese, Christy's Cake |
+| 2 (maps 7-9) | 380-390, 369: Ha-ba-nero Nuts ... Sri-ra-cha, Christy's Cake |
+
+`getSnackPrice() = machineHasBeenHacked ? 8 : 10` (`src/VendingMachine.cpp:825-827`).
+Every snack is the same item: inventory slot **16** (Snack, `addHealth(20)` on
+use). String 353 "Meals" is never used.
+
+### 17b.6 `ACTION_CONFIRMBUY` (28) → `MENU_VENDING_MACHINE_CONFIRM` (86)
+
+`select` case 28 (`:3223-3232`): `menuParam = items[i].param`,
+`vendingMachine->currentItemQuantity = 1`, then `gotoMenu(86)` (pushes 84/85
+with cursor), or `setMenu(86)` if the current menu is 88 (no push).
+
+`initMenu` case 86 (`:2127-2196`): drink iff `0 <= menuParam < 11`.
+Drink: `def = find(6,0,menuParam)`, `price = getDrinkPrice(menuParam)`, name =
+`STRINGID(1, def->name)`, buy action 29. Snack: `def = find(6,0,16)`,
+`price = getSnackPrice()`, name = `menuParam` (the snack string id), action 30.
+`vendingMachine->currentItemPrice = price` (cached; used by the buy and the
+quantity checks). Rows:
+
+| # | text | flags | action / param | note |
+|---|---|---|---|---|
+| 0 | "Con-firm Or-der" (menus.bin 0) | 73 | — | |
+| 1 | "Cre-dits: N" | 9 | — | |
+| 2 | blank | 9 | — | |
+| 3 | blank (menus.bin 1) | 9 | — | |
+| 4 | `"%01 x %02"` (3/350) = "<name> x <qty>" | **0** | 29 or 30 / menuParam | help = def description; the only selectable row |
+| 5 | `"To-tal Cost: %01"` (3/351), `%01 = price*qty` | 1 | — | |
+| 6 | blank | 9 | | |
+| 7 | "Press UP/DOWN" (3/346) | 9 | | |
+| 8 | "to change quan-ti-ty" (3/347) | 9 | | |
+| 9 | blank | 9 | | |
+| 10 | "Tap item to buy" (3/348) | 9 | | |
+| 11 | blank | 9 | | |
+| 12 | "Press back to go back  " (3/349) | 9 | | |
+
+Entry cursor: `initMenu` zeroes `selectedIndex` on a menu change
+(`:1227-1230`), then the tail `moveDir(1)` skips rows 0-3 (flags & 1 or empty)
+→ **row 4** (`:2734-2739`). The cursor glyph is suppressed on 86/87/88
+(`:1064`), so nothing marks it.
+
+Quantity: `ACTION_UP` on 86: if `inventory[24] >= price * (qty+1)` → `++qty`,
+`setMenu(86)` (rebuild; same menu, so `selectedIndex` survives)
+(`:2859-2864`). `ACTION_DOWN`: if `qty > 1` → `--qty`, rebuild (`:2870-2875`).
+So qty ranges 1..floor(credits/price) (or stays 1 when even one is
+unaffordable). Touch: `m_vendingButtons` button 0 = up arrow at (320,130), button 1
+= down arrow at (320, imgMenuArrowUp->height + 150), images
+`vending_arrow_up_glow.bmp` / `vending_arrow_down_glow.bmp` (`:247-261`); same
+checks, then `setMenu(86)` (`:4744-4763`). They are rendered only on 86
+(`:5174-5175`) and highlight on touch/move (`:4713-4714`, `:4827-4828`).
+
+Every `select` on 86 first plays sound **1125** (`:2983-2985`).
+
+### 17b.7 Buying: `ACTION_BUYDRINK` (29) / `ACTION_BUYSNACK` (30)
+
+* 29 (`:3234-3241`): `vendingMachine->buyDrink(menuParam)`
+  (`src/VendingMachine.cpp:813-823`): if `inventory[24] < currentItemPrice *
+  currentItemQuantity` → false; else qty times `inventory[24] -=
+  currentItemPrice; player->give(0, n, 1, false)`. True → `back()`; false →
+  `setMenu(87)`.
+* 30 (`:3243-3254`): same affordability check inline; else qty times
+  `inventory[24] -= getSnackPrice(); give(0, 16, 1, false)`; then `back()`.
+  Failure → `setMenu(87)`.
+
+`give(0, n, 1, false)` (`src/Player.cpp:1010-1031`): adds to `inventory[n]`
+(or `inventoryCopy` while `isFamiliar`), **clamped to 999** (credits 9999); the
+excess is silently lost — credits are still deducted. With `b = false` it calls
+`showInvHelp(n)`, which enqueues the item's first-time help dialog once per
+item if help is enabled (`src/Player.cpp:1147-1159`). No turn advance, no
+sound besides 1125. **No max-count check and no other refusal reason**: the
+only CANT_BUY cause is insufficient credits. Since UP never raises qty past
+affordability, 87 is in practice reached only when a single unit is
+unaffordable.
+
+After success `back()` pops to 84/85, which `setMenu` rebuilds (fresh credits
+header), cursor restored from the stack (`:591-600`).
+
+### 17b.8 `MENU_VENDING_MACHINE_CANT_BUY` (87)
+
+`initMenu` case 87 (`:2198-2255`), same drink/snack split as 86 (no action
+choice):
+
+| # | text | flags | action |
+|---|---|---|---|
+| 0 | "Con-firm Or-der" | 73 | |
+| 1 | "Cre-dits: N" | 9 | |
+| 2 | blank | 9 | |
+| 3 | blank (menus.bin 1) | 9 | |
+| 4 | "<name> x <qty>" (3/350) | 1 | |
+| 5 | "To-tal Cost: <price*qty>" (3/351) | 1 | |
+| 6 | blank | 9 | |
+| 7 | "You can't af-ford this!" (3/354) | 9 | |
+| 8 | "Tap Screen to Con-tin-ue" (0/96) | 8 | 2 `ACTION_BACK`, help = def description |
+
+Cursor lands on row 8; FIRE → `back()`. Because 87 replaced 86 with `setMenu`,
+`back()` pops straight to the list (84/85). `doDetailsSelect` is a no-op on 87
+(`:555-557`).
+
+### 17b.9 `MENU_VENDING_MACHINE_DETAILS` (88) — unreachable
+
+`initMenu` case 88 (`:2257-2274`) sets type 9, lays out `detailsTitle` +
+a flags-72 divider + `detailsHelpText`, row 0 gets action 28 with `menuParam`.
+But nothing ever calls `setMenu/gotoMenu(88)` (only references: `:1064`,
+`:2257`, `:3226`, `:4624`, `src/GameStateRunner.cpp:218`), and
+`showDetailsMenu()` — what `ITEM_SHOWDETAILS` rows would trigger — is an empty
+stub (`:3993-3995`). Dead in this port.
+
+### 17b.10 Navigation summary
+
+| From | Key back (`ACTION_MENU`/`ACTION_BACK`) | Touch left "Back" (btn 11) | Touch right "Exit" (btn 15) |
+|---|---|---|---|
+| 83 | `returnFromBuying()` → terminal | not shown | `returnToGame()` |
+| 84/85 | `back()` → 83 (rebuilt) | `back()` | `returnToGame()` |
+| 86 | `back()` → 84/85 | `back()` | `returnToGame()` |
+| 87 | `back()` → 84/85 | `back()` | `returnToGame()` |
+
+(`:2919-2955`, `:4785-4790`; buttons enabled per menu `:4617-4627`: 83 only
+15, 84-88 both.) `ACTION_LEFT/RIGHT` page up/down; on 86 `UP/DOWN` are
+quantity, elsewhere they move the cursor. `ACTION_MENU_ITEM_INFO` opens the
+help popup for rows with a help field (drink/snack rows, the 86 item row, 87
+row 8) (`:2849-2857`).
+
+Type 9 cursor movement extras in `moveDir` (`:416-455`): wrap-to-top also
+resets `scrollIndex = 0`, and the list keeps a 3-row look-ahead (scrolls one
+row early when the cursor is within 3 of the window edge). `maxItems = 4`
+(`:1231`).
+
+### 17b.11 Presentation
+
+* Background: `imgGameMenuPanelbottom` at the bottom, then
+  `vendingBG.bmp` (`vendingMachine->imgVendingBG`, loaded
+  `src/LoadingManager.cpp:95`) at (0,0) replacing the in-game menu background;
+  no health/armor status line (`:734-741`). The help popup also uses
+  `imgVendingBG` at (0,0) instead of the torn page (`:1149-1155`).
+* menuRect is set at init to the in-game (70, 0, 340, 320 - panelbottom.h)
+  (`:4192-4195`; the per-menu switch has no vending case, `:4422-4424`), BUT
+  `paint()` overrides it every frame with `setMenuDimentions(70, 11, 203, 250)`
+  for every menu > MENU_ITEMS_HOLY_WATER_MAX (`:847-851`); clip (`:853`) and touch
+  areas (`:5091`, `:5143`) read the overridden rect (corrected 2026-10-29 after G6 review);
+  `menuItem_width = imgVendingButtonLarge->width`
+  (`vending_button_large.bmp`), `menuItem_paddingBottom = 3`; info buttons use
+  `vending_button_help.bmp` render mode 2 (`:4208-4219`); action rows use
+  `vending_button_large.bmp` (`:4458-4466`). Info buttons appear on 84, 85,
+  86 action rows (`:4486`, `:5132-5139`).
+* Scrollbar (when content > menuRect[3]): `barRect.x = 350` and
+  `vending_scroll_bar.bmp` / `vending_scroll_button_{top,middle,bottom}.bmp`
+  (`:2789-2793`). Note the test is `menu >= 83`, so it also hits 89 (comic).
+* Soft keys (`drawSoftkeyButtons`, `:5179-5288`): vending art
+  `vending_softkey_normal.bmp` / `_pressed.bmp` (`src/Hud.cpp:55-56`); left at
+  (56,277), label "Back" (3/80) at (67,307) anchor 36; right at (362,277),
+  literal "Exit" at (411,307) anchor 40; font 0.
+* `GameStateRunner::menuState` J2ME soft-key ids (not rendered): right = `(0,202)`
+  "Buy" on 86/88, `(0,49)` "Details" on rows with flags 32 (drink rows), none on
+  87, `(0,121)` "Select" otherwise; left = "Back" (3/80) on 83 explicitly or
+  when the stack is non-empty (`src/GameStateRunner.cpp:208-242`).
+
+### 17b.12 Reuse in `new_src` (as of 2026-10-29)
+
+`new_src/core/MenuSession.cpp` already has the pieces: `addParsedRows`
+(= `loadMenuItems`, `:530-537`), `addEntityRow` (label/help from entity def,
+`:543-555`), value column via `valueBuf_`/`hasValue` (as in
+`buildDrinksScreen`, `:557-580`), literal composed labels via
+`hasLiteralLabel` (`:737`, `:800`), stack `gotoMenu`/`back`/`popMenu`
+(`:1424-1500`), `returnToGame` (`:1501`). Missing for vending: type 9 cases in
+`moveDir` (explicitly omitted, `new_src/core/MenuSession.h:135`), the
+UP/DOWN quantity override and the 83 back override in `handleAction`,
+`screenHasInfoButtons` for 84/85/86 (`:242-245`), and the vending art
+(background, large button, softkeys, arrows, scrollbar).
+
 ---
 
 # 18. Timed text slots

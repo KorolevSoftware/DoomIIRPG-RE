@@ -11,6 +11,7 @@
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
+#include "minigames/vending/VendingMachine.h"
 
 namespace newcore {
 
@@ -31,9 +32,16 @@ constexpr int kFontHeight = 16;
 // derived from the rewrite's 9 px advance (spec §14 NEW FACT 9).
 constexpr int kTruncateChars = (kItemWidthPx - 10) / 12;   // 23
 
+// The vending menus (menu > MENU_ITEMS_HOLY_WATER_MAX, :4208-4211):
+// menuItem_width = vending_button_large.bmp width = 231 (shipped file),
+// menuItem_paddingBottom = 3; the scrollbar moves to x = 350 (:2789-2790).
+constexpr int kVendingItemWidthPx = 231;
+constexpr int kVendingPaddingBottom = 3;
+constexpr int kVendingTruncateChars = (kVendingItemWidthPx - 10) / 12;   // 18
+constexpr int kVendingBarX = 350;
+
 constexpr char kCheckGlyph = '\x87';       // (:934-938)
 constexpr char kEllipsisGlyph = '\x85';    // (:948-951)
-constexpr char kDividerGlyph = '\x80';     // buildDivider (:267-281)
 // The same '\x80' is what a weapon with AMMO_NONE prints in its value column
 // (:2015-2016) — one glyph, not a divider run.
 constexpr char kNoAmmoGlyph = '\x80';
@@ -162,24 +170,6 @@ struct ScreenGeom {
 	int initRectH;
 };
 
-// buildDivider (:267-281), verbatim: the cell count is computed BEFORE the
-// padding spaces go in, and an empty label becomes three divider glyphs.
-void buildDivider(Text& t, int cells) {
-	const int cnt = (cells - (t.length() + 2)) / 2;
-	if (t.length() > 0) {
-		t.insert(' ', 0);
-		t.append(' ');
-	} else {
-		t.append(kDividerGlyph);
-		t.append(kDividerGlyph);
-		t.append(kDividerGlyph);
-	}
-	for (int j = 0; j < cnt; ++j) {
-		t.insert(kDividerGlyph, 0);
-		t.append(kDividerGlyph);
-	}
-}
-
 // buildFraction (:3840-3851).
 void buildFraction(Text& t, int i, int i2) {
 	t.setLength(0);
@@ -235,14 +225,32 @@ bool isCodeBuiltScreen(int menuId) {
 // MENU_ITEMS, MENU_ITEMS_WEAPONS, MENU_ITEMS_DRINKS and the three vending ids.
 // `menu <= 30` reaches every main-menu id too, but ST_MENU only ever runs the
 // in-game tree here, where it means exactly MENU_INGAME (29) and
-// MENU_INGAME_STATUS (30). The vending ids have no MenuId in the rewrite.
+// MENU_INGAME_STATUS (30).
 // updateTouchButtonState' own drawButton whitelist (:4479-4489) resolves to the
 // same set of ids for this tree, so the drawn button and the clickable one
 // always agree.
 bool screenHasInfoButtons(int menuId) {
 	return menuId <= kMenuStatus || menuId == kMenuHelp || menuId == kMenuItems ||
-		menuId == kMenuItemsWeapons || menuId == kMenuItemsDrinks;
+		menuId == kMenuItemsWeapons || menuId == kMenuItemsDrinks ||
+		menuId == kMenuVendingDrinks || menuId == kMenuVendingSnacks ||
+		menuId == kMenuVendingConfirm;
 }
+
+bool isVendingMenu(int menuId) {
+	return menuId >= kMenuVending && menuId <= kMenuVendingCantBuy;
+}
+
+// fillVendingMachineSnacks' three name sets, menu strings (file 3), by map:
+// 1-3, other, 7-9 (src/MenuSystem.cpp:4100-4164).
+constexpr int kSnackCount = 12;
+constexpr int kSnackSets[3][kSnackCount] = {
+	{ 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369 },
+	{ 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 368, 369 },
+	{ 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 369 },
+};
+constexpr int kStrCredits = 197;   // Code "Cre-dits: %01" (file 0)
+constexpr int kStrCostItem = 350;        // MenuStrings::COST_ITEM "%01 x %02"
+constexpr int kStrCostItemEmpty = 351;   // MenuStrings::COST_ITEM_EMPTY "To-tal Cost: %01"
 
 ScreenGeom geometryFor(int menuId) {
 	switch (menuId) {
@@ -279,6 +287,15 @@ ScreenGeom geometryFor(int menuId) {
 	case kMenuHelpMatrixSkip:
 	case kMenuHelpPowerUp:
 		return { UiRect{ 23, kListRect.y, 434, kListRect.h }, kHelpInitRectH };
+	// paint() narrows every menu past MENU_ITEMS_HOLY_WATER_MAX to
+	// (70, 11, 203, 250) (:847-851); setMenuSettings left the default
+	// in-game rect, so barRect() keeps the 320 - 64 derivation.
+	case kMenuVending:
+	case kMenuVendingDrinks:
+	case kMenuVendingSnacks:
+	case kMenuVendingConfirm:
+	case kMenuVendingCantBuy:
+		return { UiRect{ 70, 11, 203, 250 }, 320 - 64 };
 	default:
 		// menu >= MENU_INGAME: setMenuDimentions(70, 0, 340, 320 - 64) (:4191-4194).
 		return { kListRect, 320 - 64 };
@@ -304,7 +321,8 @@ UiRect MenuSession::listRect() const {
 
 UiRect MenuSession::barRect() const {
 	const int initRectH = geometryFor(menu_).initRectH;
-	return UiRect{ kBarX, (initRectH - kBarH) >> 1, kBarW, kBarH };
+	return UiRect{ isVendingMenu(menu_) ? kVendingBarX : kBarX, (initRectH - kBarH) >> 1,
+		kBarW, kBarH };
 }
 
 // ST_MENU entry hook: setMenu(menuId) — MENU_INGAME from gameplay, MENU_INGAME_DEAD
@@ -373,6 +391,14 @@ void MenuSession::initMenu(int menuId) {
 		buildWeaponsScreen();
 	} else if (menuId == kMenuItemsDrinks) {
 		buildDrinksScreen();
+	} else if (menuId == kMenuVending) {               // (:2062-2077)
+		addVendingHeader(menuId);
+	} else if (menuId == kMenuVendingDrinks) {
+		buildVendingDrinksScreen();
+	} else if (menuId == kMenuVendingSnacks) {
+		buildVendingSnacksScreen();
+	} else if (menuId == kMenuVendingConfirm || menuId == kMenuVendingCantBuy) {
+		buildVendingOrderScreen(menuId == kMenuVendingConfirm);
 	} else if (menuId == kMenuQuestLog) {              // (:1707-1710)
 		loadNotebook();
 	} else if (helpResourceFor(menuId) > 0) {          // (:1663-1705, :1749-1765)
@@ -573,6 +599,130 @@ void MenuSession::buildDrinksScreen() {
 	if (!any) {                                                // "[None]", flags 9 (:2041-2043)
 		addItem(env_.loc->makeId(kTextIngame2, 1), kItemNoSelect | kItemAlignCenter,
 			kActionNone, 0, kEmptyTextId);
+	}
+}
+
+int MenuSession::addLiteralRow(int srcLabelId, const std::string& text, int flags,
+	int action, int param, int helpId) {
+	const int i = addItem(srcLabelId, flags, action, param, helpId);
+	if (i < 0) return -1;
+	literalBuf_[i].setLength(0);
+	literalBuf_[i].append(text);
+	items_[i].hasLiteralLabel = true;
+	return i;
+}
+
+int MenuSession::addVendingCreditsRow() {
+	if (env_.loc == nullptr || env_.player == nullptr) return -1;
+	std::string s = env_.loc->get(kTextMain, kStrCredits);
+	const std::string arg = std::to_string(env_.player->inventory[Enums::INV_ONE_UAC_CREDIT]);
+	composeArgs(s, &arg, 1);
+	return addLiteralRow(env_.loc->makeId(kTextMain, kStrCredits), s,
+		kItemNoSelect | kItemAlignCenter, kActionNone, 0, kEmptyTextId);
+}
+
+// loadMenuItems(menu, 0, 1), the credits row, loadMenuItems(menu, 1, -1).
+void MenuSession::addVendingHeader(int menuId) {
+	addParsedRows(menuId, 0, 1);
+	addVendingCreditsRow();
+	addParsedRows(menuId, 1, -1);
+}
+
+// 86 and 87 share the build: drink iff 0 <= menuParam < 11 (a snack's param is
+// its composite string id), "<name> x <qty>" and "To-tal Cost: <price*qty>".
+// 86 caches the price on the machine and makes the name row the buy action;
+// 87 ends in "You can't af-ford this!" and a Back row.
+void MenuSession::buildVendingOrderScreen(bool confirm) {
+	const int menuId = confirm ? kMenuVendingConfirm : kMenuVendingCantBuy;
+	VendingMachine* vm = env_.vending;
+	if (vm == nullptr || env_.loc == nullptr || env_.defs == nullptr) {
+		addParsedRows(menuId, 0, -1);
+		return;
+	}
+	const bool drink = menuParam_ >= 0 && menuParam_ < 11;
+	const EntityDef* d = env_.defs->find(Enums::ET_ITEM, Enums::ITEM_CLASS_INVENTORY,
+		drink ? menuParam_ : Enums::INV_HEALTH_MIN);
+	const int price = drink ? vm->getDrinkPrice(menuParam_) : vm->getSnackPrice();
+	std::string name;
+	if (drink) {
+		if (d != nullptr) name = env_.loc->get(kTextIngame, d->name);
+	} else {
+		name = env_.loc->get(env_.loc->typeOf(menuParam_), env_.loc->indexOf(menuParam_));
+	}
+	const int helpId = d != nullptr ? env_.loc->makeId(kTextIngame, d->description) : kEmptyTextId;
+	if (confirm) vm->currentItemPrice = price;
+
+	const std::string itemArgs[2] = { name, std::to_string(vm->currentItemQuantity) };
+	std::string item = env_.loc->get(kTextIngame2, kStrCostItem);
+	composeArgs(item, itemArgs, 2);
+	const std::string totalArg = std::to_string(price * vm->currentItemQuantity);
+	std::string total = env_.loc->get(kTextIngame2, kStrCostItemEmpty);
+	composeArgs(total, &totalArg, 1);
+
+	addParsedRows(menuId, 0, 1);
+	addVendingCreditsRow();
+	addItem(kEmptyTextId, kItemNoSelect | kItemAlignCenter, kActionNone, 0, kEmptyTextId);
+	addParsedRows(menuId, 1, -1);
+	if (confirm) {
+		addLiteralRow(env_.loc->makeId(kTextIngame2, kStrCostItem), item, kItemNormal,
+			drink ? kActionBuyDrink : kActionBuySnack, menuParam_, helpId);
+	} else {
+		addLiteralRow(env_.loc->makeId(kTextIngame2, kStrCostItem), item, kItemNoSelect,
+			kActionNone, 0, kEmptyTextId);
+	}
+	addLiteralRow(env_.loc->makeId(kTextIngame2, kStrCostItemEmpty), total, kItemNoSelect,
+		kActionNone, 0, kEmptyTextId);
+	const int note = kItemNoSelect | kItemAlignCenter;   // flags 9
+	addItem(kEmptyTextId, note, kActionNone, 0, kEmptyTextId);
+	if (confirm) {
+		addItem(env_.loc->makeId(kTextIngame2, 346), note, kActionNone, 0, kEmptyTextId);  // "Press UP/DOWN"
+		addItem(env_.loc->makeId(kTextIngame2, 347), note, kActionNone, 0, kEmptyTextId);  // "to change quantity"
+		addItem(kEmptyTextId, note, kActionNone, 0, kEmptyTextId);
+		addItem(env_.loc->makeId(kTextIngame2, 348), note, kActionNone, 0, kEmptyTextId);  // "Tap item to buy"
+		addItem(kEmptyTextId, note, kActionNone, 0, kEmptyTextId);
+		addItem(env_.loc->makeId(kTextIngame2, 349), note, kActionNone, 0, kEmptyTextId);  // "Press back to go back"
+	} else {
+		addItem(env_.loc->makeId(kTextIngame2, 354), note, kActionNone, 0, kEmptyTextId);  // "You can't afford this!"
+		addItem(env_.loc->makeId(kTextMain, 96), kItemAlignCenter, kActionBack, 0, helpId); // "Tap Screen to Continue"
+	}
+}
+
+// Drinks 0..10 this machine sells: name/description from (6,0,n), the price in
+// the value column, flags 32, action 28 with the slot as param (:2096-2103).
+void MenuSession::buildVendingDrinksScreen() {
+	addVendingHeader(kMenuVendingDrinks);
+	if (env_.vending == nullptr) return;
+	for (int n = 0; n < 11; ++n) {
+		if (!env_.vending->drinkInThisVendingMachine(n)) continue;
+		const int i = addEntityRow(Enums::ITEM_CLASS_INVENTORY, n, kItemShowDetails,
+			kActionConfirmBuy, n);
+		if (i < 0) continue;
+		valueBuf_[i].setLength(0);
+		valueBuf_[i].append((int)env_.vending->getDrinkPrice(n));
+		items_[i].hasValue = true;
+	}
+}
+
+// Twelve cosmetic names, all the same snack (6,0,16) at one price; the param
+// is the composite string id, which is how 86/87 tell a snack from a drink.
+void MenuSession::buildVendingSnacksScreen() {
+	addVendingHeader(kMenuVendingSnacks);
+	if (env_.vending == nullptr || env_.loc == nullptr || env_.defs == nullptr ||
+	    env_.game == nullptr) return;
+	const int mapId = env_.game->combat.loadMapID;   // canvas->loadMapID (:2123)
+	int set = 1;
+	if (mapId >= 1 && mapId <= 3) set = 0;
+	else if (mapId >= 7 && mapId <= 9) set = 2;
+	const EntityDef* d = env_.defs->find(Enums::ET_ITEM, Enums::ITEM_CLASS_INVENTORY,
+		Enums::INV_HEALTH_MIN);   // slot 16, the snack
+	const int helpId = d != nullptr ? env_.loc->makeId(kTextIngame, d->description) : kEmptyTextId;
+	for (int k = 0; k < kSnackCount; ++k) {
+		const int id = env_.loc->makeId(kTextIngame2, kSnackSets[set][k]);
+		const int i = addItem(id, kItemNormal, kActionConfirmBuy, id, helpId);
+		if (i < 0) continue;
+		valueBuf_[i].setLength(0);
+		valueBuf_[i].append(env_.vending->getSnackPrice());
+		items_[i].hasValue = true;
 	}
 }
 
@@ -1001,7 +1151,7 @@ bool MenuSession::selectable(int i) const {
 int MenuSession::itemHeight(int i) const {
 	if (items_[i].def.action != 0) {
 		if (i == numItems_ - 1) return kItemHeightPx;
-		return kItemHeightPx + kItemPaddingBottom;
+		return kItemHeightPx + (isVendingMenu(menu_) ? kVendingPaddingBottom : kItemPaddingBottom);
 	}
 	if (i == numItems_ - 1) return kFontHeight;
 	return kFontHeight + kItemFontPaddingBottom;
@@ -1028,7 +1178,7 @@ int MenuSession::contentHeight() const {
 // Visible consequence of this choice: the first visible row is always flush
 // with the top of the region except at maximum scroll, where the clamp bites.
 int MenuSession::scrollPixels() const {
-	const int maxScroll = contentHeight() - kViewPx;
+	const int maxScroll = contentHeight() - viewPx();
 	if (maxScroll <= 0) return 0;
 	// A touch drag writes the pixel offset directly and leaves scrollIndex
 	// alone, exactly as UpdateContent writes field_0x44_ (src/Button.cpp:456-478)
@@ -1059,7 +1209,7 @@ int MenuSession::scrollPixels() const {
 // uneven (6-14 px); clamping the index removes the dead range entirely and keeps
 // one line per press. Do NOT "restore" the verbatim item-count bound.
 int MenuSession::maxScrollIndex() const {
-	const int maxScroll = contentHeight() - kViewPx;
+	const int maxScroll = contentHeight() - viewPx();
 	if (maxScroll <= 0) return 0;
 	int px = 0;
 	for (int i = 0; i < numItems_; ++i) {
@@ -1078,7 +1228,7 @@ int MenuSession::maxScrollIndex() const {
 int MenuSession::barThumbLen() const {
 	const int contentPx = contentHeight();
 	if (contentPx <= 0) return 0;
-	return kViewPx * kBarH / contentPx;
+	return viewPx() * kBarH / contentPx;
 }
 
 // fmScrollButton::Update for a vertical bar whose touch offset was zeroed
@@ -1101,7 +1251,7 @@ void MenuSession::barDragTo(int cursorY, int maxScroll) {
 // field_0x38_, and every later move runs UpdateContent.
 void MenuSession::updateDrag(const UiInput& in) {
 	gestureConsumed_ = false;
-	const int maxScroll = contentHeight() - kViewPx;
+	const int maxScroll = contentHeight() - viewPx();
 
 	if (!in.down) {
 		// Release: handleUserTouch(b == false) clears whichever drag latch is
@@ -1200,6 +1350,7 @@ void MenuSession::moveDir(int n) {
 				selectedIndex_ = numItems_ - 1;
 			} else {
 				selectedIndex_ = 0;
+				if (type_ == kMenuTypeVending) scrollIndex_ = 0;
 			}
 			while (!selectable(selectedIndex_)) {
 				if (--guard < 0) { bail = true; break; }
@@ -1223,17 +1374,25 @@ void MenuSession::moveDir(int n) {
 
 	// Window pull (:441-454). The legacy `maxItems != 0` guard is always true
 	// here: maxItems is the [GEC] constant 4 (:1231).
+	// Type 9 keeps a 3-row look-ahead (:437-439, :450-452).
 	if (n < 0) {
 		if (selectedIndex_ - kMaxItems + 1 > scrollIndex_) {
 			scrollIndex_ = selectedIndex_ - kMaxItems + 1;
 		} else if (selectedIndex_ < scrollIndex_) {
 			scrollIndex_ = selectedIndex_;
+		} else if (type_ == kMenuTypeVending && selectedIndex_ - 3 < scrollIndex_ &&
+		           scrollIndex_ > 0) {
+			--scrollIndex_;
 		}
 	} else {
 		if (selectedIndex_ > scrollIndex_ + kMaxItems - 1) {
 			scrollIndex_ = selectedIndex_ - kMaxItems + 1;
 		} else if (scrollIndex_ > selectedIndex_) {
 			scrollIndex_ = selectedIndex_;
+		} else if (type_ == kMenuTypeVending &&
+		           selectedIndex_ + 3 > scrollIndex_ + kMaxItems - 1 &&
+		           scrollIndex_ + kMaxItems < numItems_) {
+			++scrollIndex_;
 		}
 	}
 }
@@ -1276,6 +1435,23 @@ void MenuSession::handleAction(Action a) {
 		}
 		return;
 	}
+	// On the vending confirm UP/DOWN change the quantity, never past what the
+	// credits pay for, and rebuild the screen (:2859-2875).
+	if (menu_ == kMenuVendingConfirm && env_.vending != nullptr && env_.player != nullptr &&
+	    (a == Action::Forward || a == Action::Back)) {
+		VendingMachine& vm = *env_.vending;
+		if (a == Action::Forward) {
+			if (env_.player->inventory[Enums::INV_ONE_UAC_CREDIT] >=
+			    vm.currentItemPrice * (vm.currentItemQuantity + 1)) {
+				++vm.currentItemQuantity;
+				setMenu(menu_);
+			}
+		} else if (vm.currentItemQuantity > 1) {
+			--vm.currentItemQuantity;
+			setMenu(menu_);
+		}
+		return;
+	}
 	switch (a) {
 	case Action::Forward:    moveDir(-1); break;          // ACTION_UP -> scrollUp (:322-330)
 	case Action::Back:       moveDir(1); break;           // ACTION_DOWN -> scrollDown
@@ -1283,8 +1459,17 @@ void MenuSession::handleAction(Action a) {
 	case Action::TurnRight:  scrollPageDown(); break;     // ACTION_RIGHT
 	case Action::Use:        select(selectedIndex_); break; // ACTION_FIRE
 	case Action::Menu:
-	case Action::BackKey:    back(); break;               // ACTION_MENU / ACTION_BACK
-	case Action::MenuResume: returnToGame(); break;       // right soft key (:4787-4789)
+	case Action::BackKey:                                 // ACTION_MENU / ACTION_BACK
+		// Menu 83 returns to the vending terminal instead (:2927-2928, :2947-2948).
+		if (menu_ == kMenuVending && env_.vending != nullptr) env_.vending->returnFromBuying();
+		else back();
+		break;
+	case Action::MenuResume:                              // right soft key (:4787-4789)
+		// Deviation (ADR 0033): legacy returnToGame() leaves the EV_MINIGAME
+		// thread parked forever on the vending menus; endGame(2) resumes it.
+		if (isVendingMenu(menu_) && env_.vending != nullptr) env_.vending->endGame(2);
+		else returnToGame();
+		break;
 	case Action::MenuInfo:   showHelp(infoIndex_); break; // info button (:4802-4805)
 	default: break;
 	}
@@ -1345,6 +1530,7 @@ void MenuSession::select(int i) {
 			items_[i].disabledReason != nullptr ? items_[i].disabledReason : "?");
 		return;
 	}
+	if (menu_ == kMenuVendingConfirm) std::fprintf(stderr, "[sound] 1125\n");   // (:2983-2985)
 	if (type_ == kMenuTypeHelp || type_ == kMenuTypeNotebook) {       // (:3004-3011)
 		back();
 		return;
@@ -1402,6 +1588,33 @@ void MenuSession::select(int i) {
 		else if (menuParam_ >= 16 && menuParam_ < 18) gotoMenu(kMenuItemsHealthMsg);
 		else if (menuParam_ >= 11 && menuParam_ < 13) gotoMenu(kMenuItemsArmorMsg);
 		else gotoMenu(kMenuItemsSyringeMsg);
+		break;
+	}
+	case kActionConfirmBuy:                                       // (:3223-3232)
+		// MENU_VENDING_MACHINE_LAST (88, setMenu instead) is unreachable.
+		if (env_.vending == nullptr) break;
+		menuParam_ = items_[i].def.param;
+		env_.vending->currentItemQuantity = 1;
+		gotoMenu(kMenuVendingConfirm);
+		break;
+	case kActionBuyDrink:                                         // (:3234-3241)
+		if (env_.vending == nullptr) break;
+		if (env_.vending->buyDrink(menuParam_)) back();
+		else setMenu(kMenuVendingCantBuy);
+		break;
+	case kActionBuySnack: {                                       // (:3243-3254)
+		VendingMachine* vm = env_.vending;
+		Player* p = env_.player;
+		if (vm == nullptr || p == nullptr) break;
+		if (p->inventory[Enums::INV_ONE_UAC_CREDIT] < vm->currentItemPrice * vm->currentItemQuantity) {
+			setMenu(kMenuVendingCantBuy);
+		} else {
+			for (int k = 0; k < vm->currentItemQuantity; ++k) {
+				p->inventory[Enums::INV_ONE_UAC_CREDIT] -= (int16_t)vm->getSnackPrice();
+				p->give(0, Enums::INV_HEALTH_MIN, 1, false);              // the snack, slot 16
+			}
+			back();
+		}
 		break;
 	}
 	case kActionBackTwo: {                                        // (:3203-3207)
@@ -1555,11 +1768,14 @@ void MenuSession::composeLabel(int i) {
 		t.append(env_.loc->get(env_.loc->typeOf(d.labelId), env_.loc->indexOf(d.labelId)));
 	}
 	if ((d.flags & kItemNoDehyphenate) == 0) t.dehyphenate();        // (:943-944)
-	if (row.action && t.getStringWidth() + 10 > kItemWidthPx) {      // (:945-951)
+	const bool vending = isVendingMenu(menu_);
+	if (row.action && t.getStringWidth() + 10 >
+	                  (vending ? kVendingItemWidthPx : kItemWidthPx)) {   // (:945-951)
 		// NOTE: the trigger width is measured with the rewrite's 9 px advance
 		// while the original measured 12 px, so this fires later than it did in
-		// the original; the truncation length itself stays the literal 23.
-		t.setLength(kTruncateChars);
+		// the original; the truncation length itself stays the literal 23 (18
+		// on the vending plates).
+		t.setLength(vending ? kVendingTruncateChars : kTruncateChars);
 		t.append(kEllipsisGlyph);
 	}
 	if ((d.flags & kItemDivider) != 0) {                             // (:954-957)
@@ -1580,6 +1796,8 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 	// Same numbers as the model's own defaults; assigned so that the region the
 	// drag hit test uses and the region the view draws are one constant.
 	m.rect = listRect();
+	// setClipRect(screenRect[0], menuRect[1], screenRect[2], menuRect[3]) (:853).
+	m.clip = UiRect{ 0, m.rect.y, 480, m.rect.h };
 	m.scrollPx = scrollPixels();
 	// A content or bar drag owns the gesture, and so does the release that ends
 	// one: the rows take no hits on those frames (:4676-4689, :4855-4870).
@@ -1591,16 +1809,18 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 	// scrollPx, contentPx and viewPx, so splitting the formula across the ui/
 	// boundary would duplicate all three (spec §6.4).
 	const int contentPx = contentHeight();
-	m.showBar = contentPx > kViewPx;
+	m.showBar = contentPx > viewPx();
 	if (m.showBar) {
 		m.barRect = barRect();
 		// thumbLen L = V*H/C, thumbOffset = scrollPx * (H-L) / (C-V)
 		// (SetScrollBox src/Button.cpp:397-405, UpdateContent :479-481).
 		m.barThumbLen = barThumbLen();
-		m.barThumbOffset = m.scrollPx * (m.barRect.h - m.barThumbLen) / (contentPx - kViewPx);
+		m.barThumbOffset = m.scrollPx * (m.barRect.h - m.barThumbLen) / (contentPx - viewPx());
 	}
-	// No cursor at all on the text-section types (:1064).
-	m.selectedRow = (type_ == kMenuTypeHelp || type_ == kMenuTypeNotebook)
+	// No cursor at all on the text-section types and the vending order
+	// screens (:1064).
+	m.selectedRow = (type_ == kMenuTypeHelp || type_ == kMenuTypeNotebook ||
+	                 menu_ == kMenuVendingConfirm || menu_ == kMenuVendingCantBuy)
 		? -1 : selectedIndex_;
 
 	// Cursor wobble: OSC_CYCLE[app->time / 100 % 4] (:1065), table 6 == {-1,0,1,0}.
@@ -1617,8 +1837,16 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 		}
 	}
 
-	// Health / shield readout (:742-758).
-	if (env_.player != nullptr) {
+	const bool vending = isVendingMenu(menu_);
+	if (vending) {
+		m.vendingSkin = true;
+		m.itemWidth = kVendingItemWidthPx;
+		m.itemPadding = kVendingPaddingBottom;
+		m.showQtyArrows = menu_ == kMenuVendingConfirm;
+	}
+
+	// Health / shield readout (:742-758); the vending branch has none (:735-737).
+	if (env_.player != nullptr && !vending) {
 		statusText_.setLength(0);
 		statusText_.append(env_.player->getHealth());
 		statusText_.append("/");
@@ -1637,13 +1865,17 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 	// Soft keys (:5238-5240 left label, :5286-5289 right label). MENU_INGAME_DEAD
 	// shows neither: updateTouchButtonState leaves buttons 11 and 15 hidden for
 	// it (:4499-4509), so there is no Back and no Resume to tap.
+	// Vending: 83 shows only the right key, 84-87 both (:4617-4627), and the
+	// right label is the literal "Exit" (:5284).
 	if (menu_ != kMenuInGameDead) {
-		softLeftText_.setLength(0);
-		if (env_.loc != nullptr) softLeftText_.append(env_.loc->get(kTextIngame2, 80));
-		softLeftText_.dehyphenate();
-		m.softLeft = &softLeftText_;
+		if (menu_ != kMenuVending) {
+			softLeftText_.setLength(0);
+			if (env_.loc != nullptr) softLeftText_.append(env_.loc->get(kTextIngame2, 80));
+			softLeftText_.dehyphenate();
+			m.softLeft = &softLeftText_;
+		}
 		softRightText_.setLength(0);
-		softRightText_.append("Resume");      // ASCII literal in the original
+		softRightText_.append(vending ? "Exit" : "Resume");   // ASCII literals in the original
 		softRightText_.dehyphenate();
 		m.softRight = &softRightText_;
 	}
