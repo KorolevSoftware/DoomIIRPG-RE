@@ -48,6 +48,8 @@ enum class Action : int {
 	MiniGameTouch,
 	// DEBUG (removable, minigames): V starts the vending machine, slot 1.
 	DebugVending,
+	// DEBUG (removable, minigames): H starts the map00 hacking puzzle.
+	DebugHacking,
 	// DEBUG (removable, map change): N / Shift+N
 	DebugNextMap, DebugPrevMap,
 };

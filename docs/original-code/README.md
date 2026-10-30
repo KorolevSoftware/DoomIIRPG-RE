@@ -29,6 +29,7 @@ Topic files (created on demand):
 | `ui.md` | HUD, menus, dialogs, fonts |
 | `automap.md` | `ST_AUTOMAP` (6): toggle keys/menu, shared playing input, seen bits (tile 0x80, line 0x8, sprite 0x200000) + persistence, exact `drawAutomap` layout/colors (cell 8, origin 112,32), cursor blink, givemap/god cheats |
 | `vending-machine.md` | Vending machine minigame: EV_MINIGAME type 4 entry, terminal/help/hack screens, 4-digit hack puzzle, per-machine save bits, prices table, exit, hand-off to menus 83-88, test locations |
+| `hacking-minigame.md` | Hacking ("Hacker") minigame: EV_MINIGAME type 2 args (custom, columns, turns), column-sort rules, scramble generation and IQ scaling, keys/touch, exact draw layout and colors, sounds, vars[7] result; brief sentry-bot sibling summary |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
 | `audio.md` | sound/music |
 | `app.md` | App lifecycle, game states, input mapping |

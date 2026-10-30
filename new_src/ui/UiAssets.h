@@ -74,9 +74,11 @@ public:
 
 // The one BMP -> indexed texture loader (ADR 0033 point 6); each failure logs.
 // fixIndices, when set, patches the palette indices before the upload (the
-// legacy fixImage, src/Utils.cpp:164-172).
+// legacy fixImage, src/Utils.cpp:111-172).
+// May rewrite the indices and the width (rows stay `height`).
+using FixIndicesFn = void (*)(std::vector<uint8_t>& indices, int& width, int height);
 bool loadUiTexture(TextureStore& store, const UiAssets::ResourceReader& read,
-	const char* name, Texture& out, void (*fixIndices)(std::vector<uint8_t>&) = nullptr);
+	const char* name, Texture& out, FixIndicesFn fixIndices = nullptr);
 
 } // namespace newcore
 

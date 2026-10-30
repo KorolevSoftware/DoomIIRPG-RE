@@ -11,7 +11,7 @@ namespace {
 // src/Utils.cpp:164-172): indices 1 and 2 become 0. The legacy gates it on
 // the MD5 of the shipped file, the only variant there is, so it is applied
 // unconditionally.
-void fixArrowDown(std::vector<uint8_t>& indices) {
+void fixArrowDown(std::vector<uint8_t>& indices, int&, int) {
 	for (uint8_t& i : indices) {
 		if (i == 1 || i == 2) i = 0;
 	}

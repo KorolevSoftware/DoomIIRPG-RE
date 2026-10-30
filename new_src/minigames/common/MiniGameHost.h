@@ -8,6 +8,7 @@
 #include "minigames/common/MiniGame.h"
 #include "minigames/common/MiniGameAssets.h"
 #include "minigames/common/MiniGameHelp.h"
+#include "minigames/hacking/HackingGame.h"
 #include "minigames/vending/VendingMachine.h"
 #include "ui/UiAssets.h"
 #include "ui/UiTypes.h"
@@ -16,6 +17,7 @@ namespace newcore {
 
 class EntityDefs;
 class Game;
+class Hud;
 class Localization;
 class Player;
 class ScriptVM;
@@ -43,6 +45,7 @@ public:
 		const Localization* loc = nullptr;
 		const EntityDefs* defs = nullptr;
 		const int64_t* upTimeMs = nullptr;  // legacy app->time
+		Hud* hud = nullptr;                 // evaluateResults message
 		std::function<void(int)> openMenu;  // GameContext: nextMenuId_ = id; setState(Menu)
 	};
 
@@ -61,6 +64,9 @@ public:
 	// src/HackingGame.cpp:619-636, src/SentryBotGame.cpp:806-824), world
 	// branch only. Legacy order: the resumed script sees ST_PLAYING.
 	void finish(int result);
+	// evaluateMiniGameResults (src/MiniGameManager.cpp:235-248): a win grants
+	// +2 IQ with a HUD message. Vending does not call it (ADR 0033).
+	void evaluateResults(int n);
 
 	const Env& env() const { return env_; }
 	MiniGameHelp& help() { return help_; }
@@ -77,6 +83,7 @@ private:
 	MiniGameAssets assets_;
 	MiniGameHelp help_;
 	VendingMachine vending_;
+	HackingGame hacking_;
 };
 
 } // namespace newcore

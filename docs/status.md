@@ -17,7 +17,8 @@ _Last updated: 2026-10-30_
 | BACKSPACE | back (ours; also closes the loot list) |
 | I | open Inventory (items menu 72; legacy AVK_ITEMS_INFO, `src/Input.cpp:92`) |
 | O | open Nano Drinks (menu 75; legacy AVK_DRINKS, `src/Input.cpp:93`) |
-| K | debug: grant keycards + drinks 0..10 + holy-water pistol/50 water + 1000 credits (inventory[24]) (ours, removable; switches to the pistol if not owned) |
+| K | debug: grant keycards + drinks 0..10 + holy-water pistol/50 water + 1000 credits (inventory[24]), restore health to max and armor to 200 (ours, removable; switches to the pistol if not owned) |
+| H | debug: start the hacking minigame (map00 puzzle: 3 columns, 15 turns), no script thread (ours, removable) |
 | V | debug: start the vending minigame, machine slot 1 of the current map, while Playing; no script thread (exit just returns to Playing) (ours, removable) |
 | N / Shift+N | debug: change to the next / previous mapID (1..10, wraps) at the header spawn, while Playing; goes through the real EV_CHANGE_MAP path (ours, removable) |
 

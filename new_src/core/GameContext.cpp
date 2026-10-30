@@ -112,6 +112,7 @@ void GameContext::init(const Init& sys) {
 	mgEnv.loc = sys_.loc;
 	mgEnv.defs = sys_.defs;
 	mgEnv.upTimeMs = &upTimeMs;
+	mgEnv.hud = sys_.hud;
 	mgEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
 	minigames_.init(mgEnv);
 	LoadingManager::Env loadEnv;
@@ -319,6 +320,11 @@ void GameContext::tick() {
 			// DEBUG (removable, minigames): no calling thread, so finish()
 			// only returns to Playing.
 			minigames_.start(MiniGameHost::kVending, 1, -1, -1, nullptr);
+			continue;
+		}
+		if (a == Action::DebugHacking) {
+			// DEBUG (removable, minigames): map00 terminal args (3 columns, 15 turns).
+			minigames_.start(MiniGameHost::kHacking, 0, 3, 15, nullptr);
 			continue;
 		}
 		if (a == Action::DebugNextMap || a == Action::DebugPrevMap) {
@@ -755,6 +761,11 @@ void GameContext::debugGiveKeycards() {
 	// DEBUG (removable, minigames): credits for the vending buy menus.
 	sys_.player->give(0, 24, 1000, true);
 	std::fprintf(stderr, "[debug] credits inv[24]=%d\n", sys_.player->inventory[24]);
+	// DEBUG (removable): full health and armor cap (Player::addArmor clamps to 200).
+	sys_.player->addHealth(sys_.player->getMaxHealth(), false);
+	sys_.player->addArmor(200);
+	std::fprintf(stderr, "[debug] health=%d armor=%d\n",
+		sys_.player->getHealth(), sys_.player->ce.getStat(Enums::STAT_ARMOR));
 }
 
 void GameContext::debugToggleCoords() {

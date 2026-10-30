@@ -210,6 +210,7 @@ One folder per minigame plus `common/`. The layering rule applies per file role:
 | `common/MiniGameButtons.h` | Verbatim `GetTouchedButtonID` (inclusive rects, list order), highlight and release → `UiAction::MiniGameTouch`. |
 | `common/MiniGameAssets`, `MiniGameHelp`, `MiniGameHelpModel.h`, `MiniGameHelpView` | Shared `gameHelpBG.bmp`, plus the `MiniGameManager` help screen port (scroll, 16-line window, scrollbar). |
 | `vending/VendingMachine`, `VendingModel.h`, `VendingView`, `VendingAssets` | Vending terminal / help / 4-digit hack game; menu API (prices, buy, `returnFromBuying`, `endGame`) used by `MenuSession` for menus 83-87. |
+| `hacking/HackingGame`, `HackingModel.h`, `HackingView`, `HackingAssets` | **(planned, ADR 0038 / spec `hacking-minigame.md`)** `EV_MINIGAME` type 2 column-sort puzzle: board scramble (IQ-scaled), help → game → confirm, raw press-sample touch resolved in the tick; `MiniGameHost` gains `evaluateResults` (IQ +2 HUD message 236/237) and `Env::hud`. |
 | `hacking/`, `sentrybot/` | Placeholders (spec §9). |
 
 ## Wiring (startup → frame)
@@ -290,6 +291,7 @@ _See [adr/](adr/):_
 - [0035 — Map transitions run through a `LoadingManager` port; the old map stays resident until Loading phase 1; `MapData` is swapped in place](adr/0035-map-transition-flow-loadingmanager.md) (2026-10-29)
 - [0036 — Automap: seen marks flow through `ViewVisibility` and are applied by `GameContext`; the world pass keeps running under the map; `Automap` is a sibling of `Playing` in the input path](adr/0036-automap-seen-marking-and-state.md) (2026-10-30)
 - [0037 — Save files live on disk in the legacy payload layouts plus a CRC trailer; disk is the only store; no main menu yet](adr/0037-save-files-on-disk.md) (2026-10-30)
+- [0038 — Hacking column taps are resolved in the tick (release pass in `handleTouch`, drag-leave as pseudo button ids), not in draw](adr/0038-hacking-touch-resolved-in-tick.md) (2026-10-30)
 
 ## Specs
 

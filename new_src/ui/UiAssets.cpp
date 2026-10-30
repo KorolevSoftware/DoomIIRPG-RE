@@ -7,7 +7,7 @@
 namespace newcore {
 
 bool loadUiTexture(TextureStore& store, const UiAssets::ResourceReader& read,
-	const char* name, Texture& out, void (*fixIndices)(std::vector<uint8_t>&)) {
+	const char* name, Texture& out, FixIndicesFn fixIndices) {
 	std::vector<uint8_t> bmp;
 	if (!read(name, bmp)) {
 		std::fprintf(stderr, "UiAssets: missing resource %s\n", name);
@@ -23,8 +23,9 @@ bool loadUiTexture(TextureStore& store, const UiAssets::ResourceReader& read,
 		out.uploadIndexed(store, img->indices(), img->width(), img->height(), img->palette(), true);
 	} else {
 		std::vector<uint8_t> fixed = img->indices();
-		fixIndices(fixed);
-		out.uploadIndexed(store, fixed, img->width(), img->height(), img->palette(), true);
+		int w = img->width();
+		fixIndices(fixed, w, img->height());
+		out.uploadIndexed(store, fixed, w, img->height(), img->palette(), true);
 	}
 	if (!out.valid()) {
 		std::fprintf(stderr, "UiAssets: texture upload failed for %s\n", name);
