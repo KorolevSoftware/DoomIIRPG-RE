@@ -30,7 +30,8 @@ Usage:
 
   --verify runs the built-in map00 anchor suite (docs/original-code/
   tile-events-vm.md section 5, docs/research/2026-08-25 section 2-3) and exits
-  nonzero if any anchor fails. Intended to be run against tmp_map00.bin.
+  nonzero if any anchor fails. map00 only: on other maps it prints a skip line
+  and exits 0.
 
 Stdlib only. Output is deterministic (sorted, no timestamps).
 """
@@ -1304,8 +1305,8 @@ def main(argv=None):
                     help="game archive (optional). String-id resolution is not "
                          "implemented; raw ids are printed either way.")
     ap.add_argument("--verify", action="store_true",
-                    help="run the built-in map00 anchor suite after decoding "
-                         "(exit 1 on failure)")
+                    help="run the built-in anchor suite after decoding, map00 "
+                         "only; other maps skip it (exit 1 on failure)")
     args = ap.parse_args(argv)
 
     if args.ipa:
@@ -1337,6 +1338,10 @@ def main(argv=None):
         sys.stdout.write(text)
 
     if args.verify:
+        if not (sec.num_tile_events == 167 and sec.bytecode_size == 10015):
+            print("verify: anchors exist for map00 only (this map: numTileEvents=%d "
+                  "size=%d) — skipped" % (sec.num_tile_events, sec.bytecode_size))
+            return 0
         ok = run_verify(sec, dis)
         return 0 if ok else 1
     return 0
