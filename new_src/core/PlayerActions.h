@@ -14,7 +14,9 @@ class MapData;
 class Player;
 struct ScriptThread;
 class ScriptVM;
+class TargetPractice;
 class Targeting;
+class ZoomController;
 
 // Everything the player does on his turn (spec 2026-08-26-decomposition
 // §P1-G7): the ST_PLAYING input handler (src/PlayingInputHandler.cpp), the
@@ -31,6 +33,8 @@ public:
 		const Localization* loc = nullptr;
 		Targeting* targeting = nullptr;
 		StateHost* host = nullptr;
+		ZoomController* zoom = nullptr;      // zoomed ST_PLAYING input goes here first (ADR 0039)
+		TargetPractice* practice = nullptr;  // in-range input hooks (src/PlayingInputHandler.cpp)
 		std::function<void(int)> openMenu;   // enter Menu on a given MenuId (ACTION_ITEMS)
 	};
 

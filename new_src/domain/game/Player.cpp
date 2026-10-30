@@ -96,10 +96,6 @@ bool Player::attemptMove(int tx, int ty) {
 void Player::reset() {
 	baseCe.stats[Enums::STAT_MAX_HEALTH] = 100;
 	baseCe.stats[Enums::STAT_ARMOR] = 0;
-	baseCe.stats[Enums::STAT_DEFENSE] = 5;
-	baseCe.stats[Enums::STAT_STRENGTH] = 10;
-	baseCe.stats[Enums::STAT_ACCURACY] = 100;
-	baseCe.stats[Enums::STAT_AGILITY] = 100;
 	baseCe.setStat(Enums::STAT_HEALTH, 100);
 	ce.clone(baseCe);
 	weapon = -1;
@@ -132,6 +128,11 @@ void Player::reset() {
 	for (auto& v : buffs) v = 0;
 	numStatusEffects = 0;
 	for (auto& v : statusEffects) v = 0;
+	// src/Player.cpp:558-563, after the inventory clear so the credits stick.
+	// shortcut: the difficulty == 2 DEFENSE 0 override is skipped (Player has
+	// no Game access); add it when a difficulty other than 1 becomes selectable.
+	setStatsAccordingToCharacterChoice();
+	updateStats();
 	completedLevels = 0;
 	highestMap = 1;
 	moves = 0;
@@ -139,6 +140,37 @@ void Player::reset() {
 	bestGrades = 0;
 	chainsawStrengthBonusCount = 0;    // src/Player.cpp:519
 	gameCompleted = false;             // :572
+}
+
+void Player::setStatsAccordingToCharacterChoice() {
+	int n = 0;
+	switch (characterChoice) {
+	case 1:
+		baseCe.setStat(Enums::STAT_DEFENSE, 8);
+		baseCe.setStat(Enums::STAT_STRENGTH, 9);
+		baseCe.setStat(Enums::STAT_ACCURACY, 97);
+		baseCe.setStat(Enums::STAT_AGILITY, 12);
+		baseCe.setStat(Enums::STAT_IQ, 110);
+		n = 30;
+		break;
+	case 2:
+		baseCe.setStat(Enums::STAT_DEFENSE, 12);
+		baseCe.setStat(Enums::STAT_STRENGTH, 14);
+		baseCe.setStat(Enums::STAT_ACCURACY, 92);
+		baseCe.setStat(Enums::STAT_AGILITY, 6);
+		baseCe.setStat(Enums::STAT_IQ, 100);
+		n = 10;
+		break;
+	case 3:
+		baseCe.setStat(Enums::STAT_DEFENSE, 8);
+		baseCe.setStat(Enums::STAT_STRENGTH, 8);
+		baseCe.setStat(Enums::STAT_ACCURACY, 87);
+		baseCe.setStat(Enums::STAT_AGILITY, 6);
+		baseCe.setStat(Enums::STAT_IQ, 150);
+		n = 80;
+		break;
+	}
+	give(0, 24, n, true);
 }
 
 void Player::levelInit() {
@@ -304,7 +336,7 @@ void Player::stripInventoryForTargetPractice() {   // :2694-2705
 	give(2, 1, 8, true);
 }
 
-// forceRemoveFromScopeZoom (:2735, :2755) has no counterpart: no scope zoom.
+// forceRemoveFromScopeZoom (:2755) is done by the callers (TargetPractice::exit, EV_INVENTORY_OP 2).
 void Player::restoreInventory() {   // :2707-2759
 	if ((weapons & 0x1) != 0) {
 		currentWeaponCopy = weapon;

@@ -12,6 +12,8 @@
 #include "core/TravelMapSession.h"
 #include "core/MenuSession.h"
 #include "core/PlayerActions.h"
+#include "core/TargetPractice.h"
+#include "core/ZoomController.h"
 #include "domain/game/Automap.h"
 #include "domain/game/Game.h"
 #include "domain/game/Targeting.h"
@@ -127,6 +129,12 @@ public:
 	// GOTO/TURN_PLAYER handshake fields the VM writes (spec §P1-G7).
 	PlayerActions& actions() { return actions_; }
 
+	// Sniper scope zoom behaviour; the data is Game::zoom (ADR 0039).
+	ZoomController& zoom() { return zoom_; }
+
+	// Virtual target practice session; the VM enters it from opcode 84 (ADR 0039).
+	TargetPractice& targetPractice() { return practice_; }
+
 	// ST_MINI_GAME dispatcher; the VM starts minigames through it (ADR 0033).
 	MiniGameHost& minigames() { return minigames_; }
 
@@ -214,6 +222,13 @@ private:
 	// Playing input, movement commit, use chain, fire commit, arrival hooks
 	// (spec §P1-G7).
 	PlayerActions actions_;
+
+	// Sniper zoom: initZoom/zoomOut, zoomed input, render pose (ADR 0039).
+	ZoomController zoom_;
+
+	// Target practice: enter/assessShot/exit and the canvas-side fields (ADR 0039).
+	TargetPractice practice_;
+	Text practiceScoreText_;   // "Score:N" buffer the score bar borrows
 
 	// ST_MINI_GAME: calling thread, active game, shared endGame tail.
 	MiniGameHost minigames_;

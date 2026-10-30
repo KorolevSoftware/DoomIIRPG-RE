@@ -40,6 +40,10 @@ public:
 
 	void draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeight);
 	void drawOverlay(Graphics2D& g, int cinX, int cinY, int cinW);
+	// src/Hud.cpp:730-731: imgScope at (0, 20), anchor 0.
+	void drawScope(Graphics2D& g);
+	// src/Hud.cpp:753-767 + dial construction src/Canvas.cpp:241-243.
+	void drawScopeDial(Graphics2D& g, int curFovPercent, int minFovPercent);
 
 	// Screen shake (legacy Canvas::startShake + shakeTime/shakeIntensity/
 	// shakeX/shakeY, src/Canvas.cpp:1000-1018, src/Canvas.h:228-231).
@@ -158,6 +162,9 @@ public:
 	// Draws only the center-message + important-banner; works while the
 	// cockpit/HUD stay hidden (spec 2026-08-23-phase5-skeleton §2).
 	void drawMessages(Graphics2D& g, const Font& font);
+	// MiniGameManager::drawTargetPracticeScore (src/MiniGameManager.cpp:222-233): the
+	// "Score:N" bar in the important-message slot unless an important message is up.
+	void drawTargetPracticeScore(Graphics2D& g, const Font& font, const Text& text);
 
 	// Top panel strip + segmented monster health bar. Public for the
 	// GameContext::render caller (spec combat-stage1 §0.F); messages are NOT

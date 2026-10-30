@@ -20,6 +20,7 @@
 #include "domain/game/SpriteLerps.h"
 #include "domain/game/TraceSystem.h"
 #include "domain/game/ViewVisibility.h"
+#include "domain/game/ZoomState.h"
 #include "io/EntityDefs.h"
 #include "domain/world/MapData.h"
 
@@ -189,6 +190,7 @@ public:
 	GameSprites sprites;            // runtime sprites (ADR 0030); wired in loadEntities, ticked by GameContext
 	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
 	ItemPickup items;               // peer subsystem (spec 2026-08-29-world-item-pickup §G2); wired in Main
+	ZoomState zoom;                 // sniper zoom data (ADR 0039)
 
 	// Last rendered world frame (ADR 0029); written only by GameContext::render.
 	ViewVisibility visibility;

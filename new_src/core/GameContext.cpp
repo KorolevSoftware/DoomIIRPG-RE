@@ -17,6 +17,7 @@
 #include "io/Localization.h"
 #include "io/Tables.h"
 #include "render/Graphics2D.h"
+#include "render/World3D.h"
 #include "render/api/RenderBackend.h"
 #include "text/Font.h"
 #include "ui/AutomapView.h"
@@ -76,6 +77,7 @@ void GameContext::init(const Init& sys) {
 	tgtEnv.map = sys_.map;
 	tgtEnv.tables = sys_.tables;
 	tgtEnv.hud = sys_.hud;
+	tgtEnv.view = scene_.camera().viewInt();   // stable member array, refreshed by each world pass
 	targeting_.init(tgtEnv);
 	ViewWeapon::Env wpEnv;
 	wpEnv.world = sys_.world;
@@ -101,8 +103,37 @@ void GameContext::init(const Init& sys) {
 	actEnv.loc = sys_.loc;
 	actEnv.targeting = &targeting_;
 	actEnv.host = this;
+	actEnv.zoom = &zoom_;
+	actEnv.practice = &practice_;
 	actEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
 	actions_.init(actEnv);
+	ZoomController::Env zoomEnv;
+	zoomEnv.game = sys_.game;
+	zoomEnv.player = sys_.player;
+	zoomEnv.hud = sys_.hud;
+	zoomEnv.loc = sys_.loc;
+	zoomEnv.tables = sys_.tables;
+	zoomEnv.actions = &actions_;
+	zoomEnv.host = this;
+	zoomEnv.upTimeMs = &upTimeMs;
+	zoomEnv.gameTime = &gameTime;
+	zoomEnv.inTargetPractice = [this] { return practice_.active(); };
+	zoom_.init(zoomEnv);
+	TargetPractice::Env tpEnv;
+	tpEnv.game = sys_.game;
+	tpEnv.player = sys_.player;
+	tpEnv.hud = sys_.hud;
+	tpEnv.loc = sys_.loc;
+	tpEnv.map = sys_.map;
+	tpEnv.media = sys_.media;
+	tpEnv.vm = sys_.vm;
+	tpEnv.dialogs = sys_.dialogs;
+	tpEnv.actions = &actions_;
+	tpEnv.zoom = &zoom_;
+	tpEnv.host = this;
+	tpEnv.cinematic = &cinematic_;
+	tpEnv.upTimeMs = &upTimeMs;
+	practice_.init(tpEnv);
 	MiniGameHost::Env mgEnv;
 	mgEnv.vm = sys_.vm;
 	mgEnv.host = this;
@@ -182,6 +213,7 @@ void GameContext::enterState_(StateId s) {
 		// automapTime (src/Canvas.cpp:1188-1190).
 		break;
 	case StateId::Dialog:
+		zoom_.drop();                          // src/Canvas.cpp:1085-1091
 		// ST_DIALOG entry: clear soft keys + events (src/Canvas.cpp:1110-1111);
 		// soft keys are implicit in the rewrite, events are the queued actions.
 		pendingActions_.clear();
@@ -196,6 +228,7 @@ void GameContext::enterState_(StateId s) {
 		sys_.hud->clearCinematicText();
 		break;
 	case StateId::Dying:
+		zoom_.drop();                          // src/Canvas.cpp:1116-1124
 		// Player::died (src/Player.cpp:711-733). The hero is the marine
 		// (characterChoice 1, ScriptVM::updateScriptVars), hence sound 1092 (:720-722).
 		++sys_.player->currentLevelDeaths;
@@ -506,6 +539,10 @@ void GameContext::unloadMap_() {
 	sys_.player->facingEntity = nullptr;                // entity array is rebuilt
 	sys_.player->viewPitch = 0;                          // death tilt (tickDying)
 	sys_.player->viewRoll = 0;
+	sys_.game->zoom.isZoomedIn = false;                  // (src/LoadingManager.cpp:627)
+	// Player::reset clears the session (src/Player.cpp:504-505). Every reset path here
+	// (new game, load, restart) reloads the map, and the parked thread dies with resetPool.
+	practice_.reset();
 }
 
 // ---- Restart Level (spec 2026-09-22-monster-attacks §10) ----
@@ -859,6 +896,12 @@ void GameContext::buildHudModel(HudModel& m, bool showBottomBar, bool interactiv
 		m.softCenter = &softCenterText_;
 		m.softLeftHit = kSoftLeftHit;
 		m.softRightHit = kSoftRightHit;
+		// In the range: "Exit" on the left, no right key (src/SoftKeyController.cpp:81-83).
+		if (practice_.active()) {
+			setSoftKeyText(softLeftText_, sys_.loc->get(kTextMain, 30));
+			m.softRight = nullptr;
+			m.softRightHit = UiRect{};
+		}
 	}
 }
 
@@ -925,6 +968,7 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 	m.weapon = w;
 	m.weaponTile = Combat::getWeaponTileNum(w);
 	m.flashTile = Combat::getWeaponTileNum(0);                 // (:826-834)
+	if (w == 9) m.underlayTile = Combat::getWeaponTileNum(0);  // (:835-837)
 	m.poseX = wpX;
 	m.poseY = wpY;
 	m.lowerY = lowerY;
@@ -1023,7 +1067,13 @@ void GameContext::render(AppContext& app) {
 	// (src/MayaCamera.cpp:305-310 canvas->state == ST_DIALOG).
 	const bool underDialog = state_ == StateId::Dialog;
 
-	scene_.drawWorld(renderer, app.window(), cinePose, underDialog);
+	// Tile-149 layers every frame, also outside the range: unconditional in legacy.
+	int tpFrames[4];
+	practice_.layerFrames(upTimeMs, sys_.game->zoom.isZoomedIn, tpFrames);
+	sys_.world->setPracticeTargetFrames(tpFrames[0], tpFrames[1], tpFrames[2], tpFrames[3]);
+	ZoomPose zp;
+	const ZoomPose* zpp = (cinePose == nullptr && zoom_.renderPose(zp)) ? &zp : nullptr;
+	scene_.drawWorld(renderer, app.window(), cinePose, underDialog, zpp);
 	// The only writer of Game::visibility (ADR 0029). disableRenderActivate is
 	// tied to ST_CAMERA, not to the camera pose (src/Canvas.cpp:1038, :1211).
 	sys_.game->visibility = scene_.visibility();
@@ -1043,7 +1093,8 @@ void GameContext::render(AppContext& app) {
 	// deliberately deferred in the rewrite.
 	const bool gameplayView = state_ == StateId::Playing ||
 	                          state_ == StateId::Looting || underDialog;
-	if (cinePose == nullptr && !cinematic_.active() && gameplayView) {
+	// No view weapon while zoomed (src/Canvas.cpp:1348).
+	if (cinePose == nullptr && !cinematic_.active() && gameplayView && !sys_.game->zoom.isZoomedIn) {
 		ViewWeaponModel wp;
 		buildViewWeaponModel(wp);
 		// Legacy latches the finished lower/raise inside drawWeapon
@@ -1094,6 +1145,8 @@ void GameContext::render(AppContext& app) {
 	}
 	targeting_.feedHealthBar();
 	if (gameplayView) {
+		// Scope mask first in repaint bit 0x1 (src/Hud.cpp:728-733).
+		if (sys_.game->zoom.isZoomedIn) sys_.hud->drawScope(g);
 		// Buff box, before the damage arrow inside drawEffects (src/Hud.cpp:505-507);
 		// skipped in ST_DIALOG (src/Player.cpp:1211). ST_DYING is not a gameplayView.
 		if (state_ != StateId::Dialog && sys_.player->numbuffs != 0) {
@@ -1123,6 +1176,17 @@ void GameContext::render(AppContext& app) {
 		buildHudModel(hud, gameplayView, hudInteractive);
 		const UiResult r = drawHud(*ui, hud);
 		applyUiAction(r.action, r.index);
+	}
+	// Zoom dial in repaint bit 0x4, outside ST_DIALOG (src/Hud.cpp:747-768).
+	const ZoomState& zs = sys_.game->zoom;
+	if (gameplayView && zs.isZoomedIn && state_ != StateId::Dialog) {
+		sys_.hud->drawScopeDial(g, zs.zoomCurFOVPercent, zs.zoomMinFOVPercent);
+	}
+	// Range score bar whenever the session runs, any state (src/Canvas.cpp:419-421).
+	if (practice_.active() && sys_.loc != nullptr) {
+		practiceScoreText_.setLength(0);
+		practiceScoreText_.append(sys_.loc->get(kTextMain, 229) + std::to_string(practice_.score()));
+		sys_.hud->drawTargetPracticeScore(g, *sys_.font, practiceScoreText_);
 	}
 
 	// Messages overlay while cockpit/HUD stay hidden. Not while dying:

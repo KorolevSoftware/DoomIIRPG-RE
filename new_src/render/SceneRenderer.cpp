@@ -42,7 +42,7 @@ static bool isSpecialBossTile(int n) {
 }
 
 void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
-                              const MayaPose* cinePose, bool underDialog) {
+                              const MayaPose* cinePose, bool underDialog, const ZoomPose* zoomPose) {
 	env_.world->setTime((int)*env_.upTimeMs);
 	vis_ = ViewVisibility{};
 
@@ -89,7 +89,12 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 		camera_.setView(mx, my, mz, cyaw, mp.pitch, mp.roll, fov,
 			(fov << 14) / ((478 << 14) / 248));
 	} else {
-	int yaw = env_.player->viewAngle & 0x3FF;
+	// Zoomed: legacy Render::render receives the zoomed angle/pitch/fov
+	// (src/MovementController.cpp:541), so shake and pull-back use it too.
+	const int viewYaw = zoomPose ? zoomPose->yaw : env_.player->viewAngle;
+	const int viewPitch = zoomPose ? zoomPose->pitch : env_.player->viewPitch;
+	const int fov = zoomPose ? zoomPose->fov : 290;
+	int yaw = viewYaw & 0x3FF;
 	int viewSin = sinTable[yaw];
 	int viewCos = sinTable[(yaw + 256) & 0x3FF];
 	// Legacy order: rock, shake, then the pull-back (src/Render.cpp:2248-2282).
@@ -112,12 +117,12 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 	rvx -= 160 * viewCos >> 16;
 	rvy += 160 * viewSin >> 16;
 	// Pitch feeds the view matrix (positive = up; the loot crouch writes
-	// player->viewPitch). FOV stays at the documented 290: legacy widened by
-	// |pitch| only on the mvp2D billboard path (src/TinyGL.cpp:195-200), the
-	// world/GL projection kept viewFov — the rewrite has a single projection.
+	// player->viewPitch). FOV stays at the documented 290 (zoom aside): legacy
+	// widened by |pitch| only on the mvp2D billboard path (src/TinyGL.cpp:195-200),
+	// the world/GL projection kept viewFov — the rewrite has a single projection.
 	// viewAspect over the 478x248 world viewport (src/Render.cpp:2223).
-	camera_.setView(rvx, rvy, rvz, env_.player->viewAngle, env_.player->viewPitch, env_.player->viewRoll, 290,
-		(290 << 14) / ((478 << 14) / 248));
+	camera_.setView(rvx, rvy, rvz, viewYaw, viewPitch, env_.player->viewRoll, fov,
+		(fov << 14) / ((478 << 14) / 248));
 	}
 
 	if (env_.world->initialized() && env_.map->numNodes > 0) {

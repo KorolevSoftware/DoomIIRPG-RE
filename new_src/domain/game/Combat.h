@@ -19,6 +19,7 @@ class Localization;
 class MapData;
 class Player;
 struct EntityDef;
+struct MediaMappings;
 struct Tables;
 
 // Peer combat subsystem mirroring legacy app->combat (src/Combat.h:12-176):
@@ -50,6 +51,7 @@ public:
 		MapData* map = nullptr;
 		const int64_t* gameTime = nullptr;   // ctx->gameTime
 		const int64_t* upTimeMs = nullptr;   // ctx->upTimeMs: legacy app->time for HUD/camera effects
+		const MediaMappings* media = nullptr; // frame bounds for the scope crit zones (shotZone)
 	};
 
 	void init(const Env& env);         // builds tileDistances + monsterTemplates[51]

@@ -675,6 +675,24 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 	int lo = m.mappings[tileNum];
 	int hi = (tileNum + 1 < (int)m.mappings.size()) ? m.mappings[tileNum + 1] : lo + 1;
 	if (lo < 0) return;
+	// TILENUM_PRACTICE_TARGET (src/Render.cpp:1672-1713): four billboards of tile 149 at the
+	// sprite position in order legs, body, head, board, flags & ~0x20000; frames chosen by
+	// TargetPractice::layerFrames (-1 = layer skipped this frame).
+	if (tileNum == Enums::TILENUM_PRACTICE_TARGET) {
+		if ((info & (SpriteInfo::ORIENTED | Enums::SPRITE_FLAG_FLAT)) != 0) {
+			static bool logged = false;
+			if (!logged) { logged = true; fprintf(stderr, "[dbg] practice target has wall flags\n"); }
+		}
+		const int flags = info & ~0x20000;
+		for (int f : practiceFrames_) {
+			if (f < 0 || lo + f >= hi) continue;
+			const int mid = lo + f;
+			if (!spriteTexByMedia_.count(mid)) ensureSpriteTexture(media, tileNum, mid);
+			if (!spriteTexByMedia_.count(mid)) continue;
+			drawBillboardPart(map, media, x, y, z, tileNum, mid, flags, scaleFactor);
+		}
+		return;
+	}
 	int mediaId = lo + frame;
 	if (mediaId >= hi) mediaId = lo;
 	// Lazy-create-and-cache (legacy Render::setupTexture): a scripted

@@ -6,6 +6,7 @@
 
 #include "core/MayaCamera.h"       // MayaPose (plain value; pulls only MapData.h)
 #include "domain/game/ViewVisibility.h"
+#include "domain/game/ZoomState.h"
 #include "render/Camera3D.h"
 
 namespace newcore {
@@ -43,9 +44,10 @@ public:
 
 	// One world pass. cinePose != nullptr => cinematic takeover (fov 315, or
 	// 290 when a dialog runs inside it: underDialog). Falls back to the flat
-	// fill when the world is not initialized.
+	// fill when the world is not initialized. zoomPose != nullptr => sniper zoom
+	// yaw/pitch/fov replace the player's (src/MovementController.cpp:541).
 	void drawWorld(RenderBackend& renderer, Window& window, const MayaPose* cinePose,
-		bool underDialog);
+		bool underDialog, const ZoomPose* zoomPose);
 
 	// The camera actually used this frame (the view weapon derives its
 	// magnification from it).

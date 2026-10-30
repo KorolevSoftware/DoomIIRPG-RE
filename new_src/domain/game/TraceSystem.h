@@ -45,6 +45,12 @@ public:
 	// sentinel 16384 (src/Render.cpp:1119-1125,1195-1209).
 	TraceHit trace(int x0, int y0, int x1, int y1, Entity* skipEnt, int mask, int radius);
 
+	// Zoomed fire trace: legacy Game::trace 10-arg with b == true (src/Game.cpp:199-327).
+	// Same sweep as trace(); circle-branch entity hits additionally need the ray height at the
+	// hit frac within ±(32 + radius) of the entity Z (:277-283). Line (wall-sprite) hits and
+	// the world pass are unchanged.
+	TraceHit trace3D(int x0, int y0, int z0, int x1, int y1, int z1, Entity* skipEnt, int mask, int radius);
+
 	// Sorted (frac asc) hit list of the most recent trace — the legacy
 	// traceEntities/traceFracs pair (src/Game.cpp:312-326). Consumed by the
 	// facing probe's monster-preference rescan
@@ -89,6 +95,9 @@ private:
 	// else the ray end. ET_WORLD distance queries resolve through it
 	// (Entity::calcPosition src/Entity.cpp:1375-1378 analog).
 	int traceCollisionX_ = 0, traceCollisionY_ = 0;
+	// Z band of trace3D (legacy b / n3 / traceCollisionZ, src/Game.cpp:277-283).
+	bool zCheck_ = false;
+	int z0_ = 0, z1_ = 0;
 
 	// The ONE place where the "world hit == entities[0] with def == nullptr"
 	// convention is decoded (ADR 0011 decision 2).

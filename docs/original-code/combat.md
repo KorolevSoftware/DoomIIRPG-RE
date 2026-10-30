@@ -108,7 +108,7 @@ Every claim cites `src/` (legacy RE port). Values extracted from the shipped
   `ammo[8] > 0`, else tile 15 frame 0 (def(6,1,14) placeholder,
   `src/Player.cpp:1636-1656`); muzzle flash for weapons {0,7,8} = tile 1
   **frame 3** at `(x+flashX+40, y+flashY+40)`, renderMode 5, scale 0x8000
-  (`:826-834`); weapon 9 underlays tile 1 before its own tile (`:835-837`);
+  (`:826-834`); weapon 9 underlays tile 1 (weapon 0's rifle body, same x/y/frame/renderFlags/scale) before its own tile 8, which is only the scope piece (`:835-837`, tile 8 = `1+9-2` per `:1780-1781`);
   `frame = 1` during chainsaw-return or weapons 13/8 attack pose
   (`:822-825`); main draw `:839`.
 * Fire animation: hold attack offsets until `flashDone`, then 16.16 lerp

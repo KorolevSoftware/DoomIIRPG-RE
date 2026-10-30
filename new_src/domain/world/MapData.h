@@ -68,6 +68,13 @@ public:
 		return heightMap[(hy >> 6) * 32 + (hx >> 6)] << 3;
 	}
 
+	// Legacy baked S_Z (postProcessSprites, src/Render.cpp:2459-2467): stored Z + terrain,
+	// z-sprites -32. The rewrite stores raw Z and bakes at use (SpriteLerps::spriteZBias).
+	int spriteZ(int s) const {
+		const int x = mapSprites[s], y = mapSprites[numSprites + s];
+		return mapSprites[2 * numSprites + s] + heightAt(x, y) - (s >= numNormalSprites ? 32 : 0);
+	}
+
 	// ---- Sprites ----
 	// mapSprites is a flat array with 9 fields per sprite (X,Y,Z,RENDERMODE,
 	// NODE,NODENEXT,VIEWNEXT,ENT,SCALEFACTOR). mapSpriteInfo carries per-sprite

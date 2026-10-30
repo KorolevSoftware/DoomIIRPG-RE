@@ -49,6 +49,30 @@ void Hud::drawOverlay(Graphics2D& g, int cinX, int cinY, int cinW) {
 		Graphics2D::kAnchorTop | Graphics2D::kAnchorRight, 4);
 }
 
+void Hud::drawScope(Graphics2D& g) {
+	if (!art().scope.valid()) return;
+	g.drawImage(art().scope, 0, 20, 0);
+}
+
+void Hud::drawScopeDial(Graphics2D& g, int curFovPercent, int minFovPercent) {
+	const Texture& dial = art().sniperDial;
+	const Texture& knob = art().sniperKnob;
+	if (!dial.valid() || !knob.valid() || minFovPercent <= 0) return;
+	// fmScrollButton(400, 67, dialW, dialH) + SetScrollBox(0, 0, 1, 1, 16) (src/Canvas.cpp:241-242,
+	// src/Button.cpp:380-406); thumb position as ZoomController updates it (src/ZoomController.cpp:126-128).
+	const int bx = 400, by = 67;
+	const int barH = dial.height();
+	const int thumb = barH / 16;
+	const int maxScr = barH - thumb;
+	const int pos = (int)((float)maxScr - (float)maxScr * ((float)curFovPercent / (float)minFovPercent));
+	const int knobY = pos + (thumb >> 1);
+	g.drawImage(dial, bx, by, 0);
+	// Legacy centres with menuSystem->imgMenuDialKnob, which src/ never loads
+	// (src/MenuSystem.h:179); the knob's own size is used instead.
+	g.drawImage(knob, bx - (knob.width() >> 1) + (dial.width() >> 1),
+		by + (knobY << 2) / 5 - (knob.height() >> 1) + 16, 0);
+}
+
 // DEBUG POSITION OVERLAY — REWRITE-ONLY, NOT A PORT OF ANYTHING IN src/.
 // Do not go looking for a legacy original: the reference build has no such
 // readout. It only exists so acceptance testing can talk in tile coordinates.
@@ -505,6 +529,12 @@ void Hud::drawBubbleText(Graphics2D& g, const Font& font, int scrCx, int viewTop
 	if (art().uiImages.valid()) {
 		g.drawRegion(art().uiImages, n3, n4, 10, 6, n7 + 5, n + n6, 0);
 	}
+}
+
+void Hud::drawTargetPracticeScore(Graphics2D& g, const Font& font, const Text& text) {
+	// An important message at the queue head wins (src/MiniGameManager.cpp:224-226).
+	if (!messages_.empty() && (messages_.front().flags & kMsgFlagImportant) != 0) return;
+	drawImportantMessage(g, font, text, 0xFF7F0000);
 }
 
 // Dialog boxes are drawn by DialogSystem::draw (spec GROUP 1); Hud only

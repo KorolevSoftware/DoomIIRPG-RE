@@ -155,9 +155,16 @@ void TraceSystem::traceEntityHits(const MapData& map, Entity* skipEnt, int mask,
 				} else {                                                        // :270-288
 					const int circleR2 = (ent->def->eType == Enums::ET_ENV_DAMAGE) ? 256 : 625; // :271-274
 					const int frac = capsuleToCircleTrace(tracePoints_, radius * radius, cx, cy, circleR2); // :275
-					// Z filter (src/Game.cpp:277-283) omitted: walking always
-					// uses the z-less 7-arg trace (zCheck=false, :195-197).
-					if (frac < 16384) pushHit(frac, ent);                        // :276-287
+					if (frac >= 16384) continue;                                 // :276
+					// Z band of the zoomed trace only (:277-283); walking uses the
+					// z-less 7-arg form (:195-197). destZ is S_Z even for a monster
+					// on its goal tile (:228-231). The ET_PLAYER arm (canvas->destZ)
+					// is unreachable: the fire trace skips the player entity.
+					if (zCheck_ && z0_ >= 0 && z1_ >= 0 && sprite >= 0) {
+						const int rel = z0_ + ((z1_ - z0_) * frac >> 14) - map.spriteZ(sprite);
+						if (!(rel > -(32 + radius) && rel < 32 + radius)) continue;
+					}
+					pushHit(frac, ent);                                          // :276-287
 				}
 			}
 		}
@@ -197,6 +204,16 @@ int TraceSystem::traceWorldFrac(const MapData& map, int mask, int radius2) {
 		minFrac = frac;                                                         // :1264
 	}
 	return minFrac;
+}
+
+TraceHit TraceSystem::trace3D(int x0, int y0, int z0, int x1, int y1, int z1,
+                              Entity* skipEnt, int mask, int radius) {
+	zCheck_ = true;
+	z0_ = z0;
+	z1_ = z1;
+	TraceHit h = trace(x0, y0, x1, y1, skipEnt, mask, radius);
+	zCheck_ = false;
+	return h;
 }
 
 // Orchestrates one swept-capsule move trace (src/Game.cpp:199-327). See

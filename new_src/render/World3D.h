@@ -95,6 +95,11 @@ public:
 	// Sets the game time (ms) used for animated textures/sprites (lava UV
 	// shift, auto-animate sprite frames). Mirrors legacy app->time.
 	void setTime(int timeMs) { timeMs_ = timeMs; }
+	// Tile-149 layer frames for this frame (TargetPractice::layerFrames), -1 = skip.
+	void setPracticeTargetFrames(int legs, int body, int head, int board) {
+		practiceFrames_[0] = legs; practiceFrames_[1] = body;
+		practiceFrames_[2] = head; practiceFrames_[3] = board;
+	}
 
 	bool initialized() const { return initialized_; }
 
@@ -184,6 +189,8 @@ private:
 
 	// Sprite textures keyed by mediaId (RLE-decoded where needed).
 	std::map<int, Texture> spriteTexByMedia_;
+	int practiceFrames_[4] = { 5, 6, 7, 4 };   // legs, body, head, board
+
 	// Whether the media's texel was column-RLE (drives billboard branch: RLE
 	// sprites use full-texture UVs + fixed 518/1036 size, raw use bounds UVs).
 	std::map<int, bool> spriteIsRle_;

@@ -2,6 +2,8 @@
 
 #include <cstdio>
 
+#include "core/TargetPractice.h"
+#include "core/ZoomController.h"
 #include "domain/game/Automap.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
@@ -122,17 +124,22 @@ void PlayerActions::handleAction(Action a) {
 	// player's own attack swallows all input. No idle gate here (legacy has
 	// none), so quick presses stack.
 	if (env_.game->combat.active) {
-		if (env_.game->combat.curAttacker != nullptr) {
+		if (env_.game->combat.curAttacker != nullptr && !env_.game->zoom.isZoomedIn) {
 			if (a == Action::TurnRight) p.destAngle -= 256;
 			else if (a == Action::TurnLeft) p.destAngle += 256;
 			p.startRotation();
 		}
 		return;
 	}
-	// Legacy gate: all playing input is ignored while any animation runs
-	// (src/PlayingInputHandler.cpp:25-27).
+	// Zoomed ST_PLAYING input goes to the zoom handler first; only FIRE comes
+	// back (src/InputEventController.cpp:358-361).
+	const bool zoomed = env_.game->zoom.isZoomedIn && env_.host->state() == StateId::Playing;
+	if (zoomed && env_.zoom->handle(a)) return;
+	const bool inTP = env_.practice != nullptr && env_.practice->active();
+	// Legacy gate: all playing input is ignored while any animation runs,
+	// skipped while zoomed (src/PlayingInputHandler.cpp:25-27).
 	bool gateBlocked = (p.viewX != p.destX || p.viewY != p.destY || p.viewAngle != p.destAngle);
-	if (gateBlocked) return;
+	if (!zoomed && gateBlocked) return;
 	// Monster gate (src/PlayingInputHandler.cpp:71-74): everything but turning
 	// waits for the monsters to be snapped and animating effects to end.
 	// snapMonsters may start a queued monster attack, which swallows the
@@ -225,7 +232,8 @@ void PlayerActions::handleAction(Action a) {
 		// The chainsaw is the exception: for melee the corpse branch elects an
 		// ATTACK target (gib) instead of a loot session
 		// (src/PlayingInputHandler.cpp:280-317 vs :318-334).
-		Entity* corpse = (p.ce.weapon == 1) ? nullptr
+		// No corpse loot while zoomed (:323, `else if (!canvas->isZoomedIn)`).
+		Entity* corpse = (p.ce.weapon == 1 || zoomed) ? nullptr
 			: env_.game->loot.findLootableCorpseFacing(
 				p.viewX, p.viewY, p.viewStepX, p.viewStepY);
 		if (corpse != nullptr) {
@@ -316,9 +324,10 @@ void PlayerActions::handleAction(Action a) {
 			}
 			if (outcome == kWallPush) {
 				// Within 1 tile of a wall: lower the weapon, jolt the view 2
-				// units toward the wall, NO turn consumed (:467-487). Zoom
-				// guard (:468-470) moot: no zoom in the rewrite. Hero is
-				// forced to characterChoice 1 -> no_use2 (:472-480).
+				// units toward the wall, NO turn consumed (:467-487); while
+				// zoomed the press is swallowed (:468-470). Hero is forced to
+				// characterChoice 1 -> no_use2 (:472-480).
+				if (zoomed) break;
 				Combat& c = env_.game->combat;
 				std::fprintf(stderr, "[sound] 1073\n");
 				c.shiftWeapon(true);                                   // :482
@@ -327,12 +336,10 @@ void PlayerActions::handleAction(Action a) {
 				env_.hud->startRockView(*c.env().upTimeMs, 1000,       // :485
 					p.viewX + (p.viewStepX >> 6) * 2, p.viewY + (p.viewStepY >> 6) * 2, p.viewZ);
 			} else {
-				// Zoom entry (mask 512 -> initZoom): consumes the input like
-				// legacy (:504-507); deferred here, log once.
-				static bool zoomLogged = false;
-				if (((1 << weapon2) & 512) != 0 && !zoomLogged) {
-					zoomLogged = true;
-					std::fprintf(stderr, "[combat] zoom-entry weapons deferred (initZoom)\n");
+				// Zoom entry (mask 512 -> initZoom) consumes the input (:504-507).
+				if (!zoomed && Combat::checkWeaponMask(weapon2, 512) &&
+				    p.ammo[env_.game->combat.weaponDef(weapon2).ammoType] > 0) {
+					env_.zoom->initZoom();
 					break;
 				}
 				// Air/world shots target the WORLD slot; elected targets pass
@@ -348,10 +355,27 @@ void PlayerActions::handleAction(Action a) {
 						ax = env_.map->mapSprites[s];
 						ay = env_.map->mapSprites[env_.map->numSprites + s];
 					}
+					if (zoomed) {                              // :518-522
+						const int* e = env_.targeting->fireEnd();
+						ZoomState& z = env_.game->zoom;
+						z.zoomCollisionX = p.viewX + (elected.frac * (e[0] - p.viewX) >> 14);
+						z.zoomCollisionY = p.viewY + (elected.frac * (e[1] - p.viewY) >> 14);
+						z.zoomCollisionZ = p.viewZ + (elected.frac * (e[2] - p.viewZ) >> 14);
+					}
 				}
 				p.fireWeapon(env_.game->combat, target, ax, ay);
 				// NO advanceTurn here — the seq completion in tickPlaying
 				// consumes the turn (spec §0.C).
+				// Range scoring, even when fireWeapon refused (:524-531, :537-543).
+				if (inTP) {
+					if (p.ammo[1] == 0) {
+						env_.practice->exit();
+					} else if (outcome == kElected) {
+						env_.practice->assessShot(target);
+					} else if (env_.loc != nullptr) {
+						env_.hud->addMessage(env_.loc->get(kTextMain, 68), 0xAA000000, 0);
+					}
+				}
 			}
 		}
 		break;
@@ -367,7 +391,8 @@ void PlayerActions::handleAction(Action a) {
 		}
 		env_.game->advanceTurn();
 		break;
-	case Action::Automap:   // src/PlayingInputHandler.cpp:86-98 (inTargetPractice not ported)
+	case Action::Automap:   // src/PlayingInputHandler.cpp:86-98
+		if (inTP) break;
 		env_.host->requestState(env_.host->state() != StateId::Automap ? StateId::Automap
 		                                                               : StateId::Playing);
 		break;
@@ -378,6 +403,8 @@ void PlayerActions::handleAction(Action a) {
 		}
 		[[fallthrough]];
 	case Action::Menu:
+		// In the range both leave it instead (:142-143, :150-151).
+		if (inTP) { env_.practice->exit(); break; }
 		// Both open the in-game menu, from the playing input handler and
 		// therefore behind the same animation gate as every other playing
 		// action (src/PlayingInputHandler.cpp:137-158). The message queue is
@@ -386,14 +413,18 @@ void PlayerActions::handleAction(Action a) {
 		env_.host->requestState(StateId::Menu);
 		break;
 	case Action::Items:                       // src/PlayingInputHandler.cpp:159-168
+		if (inTP) { env_.practice->exit(); break; }
 		env_.hud->clearMessages();            // msgCount = 0 (:165)
 		if (env_.openMenu) env_.openMenu(kMenuItems);
 		break;
 	case Action::ItemsDrinks:                 // src/PlayingInputHandler.cpp:169-178
+		if (inTP) { env_.practice->exit(); break; }
 		env_.hud->clearMessages();            // msgCount = 0
 		if (env_.openMenu) env_.openMenu(kMenuItemsDrinks);
 		break;
 	default:
+		// shortcut: NextWeapon/PrevWeapon only act while zoomed (ZoomController::handle);
+		// Player::selectNext/PrevWeapon is not ported, port it if weapon cycling keys are wanted.
 		break;
 	}
 }

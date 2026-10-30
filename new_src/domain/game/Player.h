@@ -55,6 +55,7 @@ public:
 	int vendingMachineHackTriesLeft1 = 0;
 	int vendingMachineHackTriesLeft2 = 0;
 	bool god = false;
+	int helpBitmask = 0;   // src/Player.cpp:30, :1185-1188; session-only (config persistence not ported)
 
 	// ---- Discrete movement (legacy Canvas) ----
 	// Positions/angles in canvas units (tile = 64). view* is the interpolated
@@ -99,8 +100,11 @@ public:
 	// Sets the Z step per frame based on height difference.
 	void setZStep(int diff) { zStep = (diff < 0 ? -diff : diff); if (zStep) zStep = (zStep + animFrames - 1) / animFrames; }
 
-	// Starts the player at default stats (3 classes not implemented yet).
+	// No character select: always marine (ScriptVM.cpp:315); 1..3 like legacy.
+	int characterChoice = 1;
 	void reset();
+	// src/Player.cpp:454-486: base DEF/STR/ACC/AGI/IQ + starting credits.
+	void setStatsAccordingToCharacterChoice();
 
 	// src/Player.cpp:222-245: adds n2 to stat n (cap 200 for IQ, 99 else; n 0
 	// = health) and returns the change actually applied.

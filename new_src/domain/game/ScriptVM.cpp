@@ -788,27 +788,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
-		case Enums::EV_START_TARGETPRACTICE: {     // src/ScriptThread.cpp:1806-1813 +
-			                                       // src/Player.cpp:2521-2551 teleport subset
+		case Enums::EV_START_TARGETPRACTICE: {     // src/ScriptThread.cpp:1806-1813
 			int v = readUShort(t);
-			int tx = (v >> 8) & 0x1F;
-			int ty = (v >> 3) & 0x1F;
-			int dir = v & 7;
-			Player& p = *env_.player;
-			// Angle map {4:W, 0:E, 2:N, else:S} << 7 (src/Player.cpp:2530-2543).
-			int angle = dir == 4 ? 512 : dir == 0 ? 0 : dir == 2 ? 256 : 768;
-			p.destX = p.viewX = (tx << 6) + 32;    // :2544-2545
-			p.destY = p.viewY = (ty << 6) + 32;
-			p.destZ = p.viewZ = env_.map->heightAt(p.viewX, p.viewY) + 36;   // :2546
-			p.destAngle = p.viewAngle = angle;     // :2543 snap
-			// Deviation D1 (spec 2026-09-22-monster-attacks §2.1): legacy does not
-			// relink here and leaves a stale player link on the old tile.
-			env_.game->relinkPlayer(p);
-			env_.ctx->actions().finishRotationFired(); // step-vector refresh + FACE event
-			std::fprintf(stderr,
-				"[targetpractice] enter tile=%d,%d dir=%d (inventory strip/score deferred)\n",
-				tx, ty, dir);
-			t->unpauseTime = -1;                   // :1810 park; exit protocol deferred
+			env_.ctx->targetPractice().enter((v >> 8) & 0x1F, (v >> 3) & 0x1F, v & 7, t);
+			t->unpauseTime = -1;                   // parked until TargetPractice::exit resumes it
 			n = 2;
 			break;
 		}
@@ -1576,6 +1559,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			Player& player = *env_.player;
 			if (op == 2) {
 				const bool vios = (player.weapons & 0x1) != 0;
+				env_.ctx->zoom().forceRemove();    // hoisted out of restoreInventory (src/Player.cpp:2755)
 				player.restoreInventory();
 				if (vios) env_.game->angryVIOS = false;    // src/Player.cpp:2741
 			} else if (op == 1) {

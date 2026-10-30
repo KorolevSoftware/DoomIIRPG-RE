@@ -78,8 +78,7 @@ void ViewWeapon::init(const Env& env) {
 void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel& m) {
 	// The gameplay-state gate (src/Combat.cpp:706-708 state check) and the
 	// "a cinematic owns the view" suppression live at the single call site
-	// now (spec §4). Zoom skip (src/Canvas.cpp:1348 isZoomedIn) is implicit
-	// — no zoom system yet.
+	// now (spec §4), including the zoom skip (src/Canvas.cpp:1348 isZoomedIn).
 	// The Player / Game::combat / Tables reads, the wpinfo lookup, the pose
 	// lerp and the two flash gates moved to
 	// GameContext::buildViewWeaponModel (spec 2026-08-27-ui-layer §6): the
@@ -131,12 +130,18 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel&
 
 	// Weapon art frame 0; the chainsaw-return/weapons 8+13 frame-1 rule
 	// (:822-825) is dead on the map00 rifle route. Sentry-bot stack
-	// (:797-813), weapon 14 (:814-820) and weapon 9 underlay (:835-837)
-	// deferred (hero-choice doc §B.3 exclusions).
+	// (:797-813) and weapon 14 (:814-820) deferred (hero-choice doc §B.3
+	// exclusions).
+	// RENDER_NORMAL + BRIGHTREDSHIFT -> glColor4f(1, .5, .5, 1) (src/GLES.cpp:625-631).
+	const uint8_t gb = m.brightRed ? 128 : 255;
+	// Weapon 9: the rifle body (weapon 0 tile) first, same placement and tint,
+	// then the scope tile on top (:835-839).
+	if (m.underlayTile >= 0) {
+		const Texture* utex = env_.world->spriteTexture(*env_.media, m.underlayTile, 0);
+		if (utex != nullptr) drawWeaponQuad(g, *utex, x, y, 176, 255, gb, gb, magX, magY);
+	}
 	const Texture* tex = env_.world->spriteTexture(*env_.media, m.weaponTile, 0);
 	if (tex != nullptr) {
-		// RENDER_NORMAL + BRIGHTREDSHIFT -> glColor4f(1, .5, .5, 1) (src/GLES.cpp:625-631).
-		const uint8_t gb = m.brightRed ? 128 : 255;
 		drawWeaponQuad(g, *tex, x, y, 176, 255, gb, gb, magX, magY);
 	}
 }

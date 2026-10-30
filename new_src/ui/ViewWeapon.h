@@ -25,6 +25,9 @@ struct ViewWeaponModel {
 	// (always tile of weapon 0, src/Combat.cpp:826-834).
 	int weaponTile = -1;
 	int flashTile = -1;
+	// Weapon 9 only: rifle body drawn under the scope tile (src/Combat.cpp:835-837),
+	// tile of weapon 0; -1 = no underlay.
+	int underlayTile = -1;
 	// Resolved pose: idle, held attack, or the SHOTHOLD return lerp
 	// (src/Combat.cpp:735-767).
 	int poseX = 0;

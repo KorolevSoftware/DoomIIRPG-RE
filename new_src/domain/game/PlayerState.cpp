@@ -1,5 +1,6 @@
 #include "domain/game/PlayerState.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -17,7 +18,6 @@ namespace {
 
 constexpr int kNumMaps = 10;
 constexpr int kMaxEffects = Enums::MAX_STATUS_EFFECTS;   // 18
-constexpr int kCharacterMarine = 1;                       // ScriptVM.cpp:313-318
 
 // CombatEntity::saveState(OS, true) (src/CombatEntity.cpp:118-129).
 void saveCe(const CombatEntity& ce, DataWriter& w) {
@@ -55,7 +55,7 @@ void save(const Player& p, const Header& h, DataWriter& w) {
 
 	saveCe(p.baseCe, w);                                      // src/Player.cpp:1351-1420
 	saveCe(p.ce, w);
-	w.writeShort(kCharacterMarine);
+	w.writeShort(static_cast<int16_t>(p.characterChoice));
 	w.writeInt(p.weapons);
 	w.writeInt(p.weaponsCopy);
 	w.writeByte(static_cast<uint8_t>(p.level));
@@ -117,7 +117,7 @@ bool load(DataReader& r, Player& p, Header& h) {
 	Player tp = p;                                            // src/Player.cpp:1270-1349
 	loadCe(r, tp.baseCe);
 	loadCe(r, tp.ce);
-	r.readShort();                                            // characterChoice: always marine
+	tp.characterChoice = std::min(std::max<int>(r.readShort(), 1), 3);
 	tp.weapons = r.readInt();
 	tp.weaponsCopy = r.readInt();
 	tp.level = r.readByte();
@@ -187,6 +187,7 @@ void selfCheck() {
 	src.ce.weapon = -1;
 	src.weapons = 0x1A5;
 	src.weaponsCopy = 0x3;
+	src.characterChoice = 3;
 	src.level = 4;
 	src.currentXP = 1234;
 	src.completedLevels = 0x7;
@@ -235,7 +236,7 @@ void selfCheck() {
 	       hd.viewPitch == -12 && hd.prevX == 100000 && hd.saveZ == -7 && hd.savePitch == 3);
 	for (int i = 0; i < 8; ++i) assert(dst.baseCe.stats[i] == src.baseCe.stats[i]);
 	assert(dst.baseCe.weapon == 2 && dst.ce.weapon == -1 && dst.ce.stats[0] == 87);
-	assert(dst.weapons == src.weapons && dst.weaponsCopy == src.weaponsCopy);
+	assert(dst.weapons == src.weapons && dst.weaponsCopy == src.weaponsCopy && dst.characterChoice == 3);
 	assert(dst.level == 4 && dst.currentXP == 1234 && dst.nextLevelXP == dst.calcLevelXP(4));
 	assert(dst.completedLevels == 0x7 && dst.foundSecretsLevels == 0x2 && dst.disabledWeapons == 0x10);
 	assert(dst.highestMap == 5 && dst.hackedVendingMachines == 0x48 &&

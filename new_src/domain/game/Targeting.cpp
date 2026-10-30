@@ -43,13 +43,28 @@ TraceHit Targeting::electFireTarget(int weapon) {
 	if (weapon == 2) mask |= Contents::HOLY_WATER_EXTRA;    // holy water: ENV_DAMAGE + DECOR_NOCLIP (:203-205)
 	if (melee) mask |= Contents::MELEE_EXTRA;               // chainsaw: PLAYERCLIP (:212-215)
 	const int tiles = melee ? 1 : 6;                        // :208-215
-	int fwdX = 0, fwdY = 0;
-	viewForward(fwdX, fwdY);
-	const int endX = p.viewX + ((tiles * 64 * fwdX) >> 16); // :218 n7*-view[2]>>8 = n7 tiles
-	const int endY = p.viewY + ((tiles * 64 * fwdY) >> 16);
 	TraceSystem& trace = env_.game->trace;
-	trace.trace(p.viewX, p.viewY, endX, endY,
-		env_.game->db.playerEntity(), mask, 2);
+	int endX, endY, endZ;
+	if (env_.game->zoom.isZoomedIn && env_.view != nullptr) {
+		// Zoomed: 3D ray along the rendered view, with the entity Z band (:216-221).
+		const int* view = env_.view;
+		endX = p.viewX + (tiles * -view[2] >> 8);
+		endY = p.viewY + (tiles * -view[6] >> 8);
+		endZ = p.viewZ + (tiles * -view[10] >> 8);
+		trace.trace3D(p.viewX, p.viewY, p.viewZ, endX, endY, endZ,
+			env_.game->db.playerEntity(), mask, 2);
+	} else {
+		int fwdX = 0, fwdY = 0;
+		viewForward(fwdX, fwdY);
+		endX = p.viewX + ((tiles * 64 * fwdX) >> 16); // :218 n7*-view[2]>>8 = n7 tiles
+		endY = p.viewY + ((tiles * 64 * fwdY) >> 16);
+		endZ = p.viewZ;
+		trace.trace(p.viewX, p.viewY, endX, endY,
+			env_.game->db.playerEntity(), mask, 2);
+	}
+	fireEnd_[0] = endX;
+	fireEnd_[1] = endY;
+	fireEnd_[2] = endZ;
 
 	TraceHit elected;            // legacy entity (kind None = nothing elected)
 	TraceHit melee13;            // legacy entity2 (:249-254)

@@ -9,7 +9,9 @@
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
+#include "domain/game/ShotZones.h"
 #include "domain/game/WeaponTable.h"
+#include "domain/world/MapData.h"
 
 namespace newcore {
 
@@ -95,8 +97,7 @@ void CombatEntity::calcCombat(Combat& c, CombatEntity& attackerCe, Entity* targe
 int CombatEntity::calcHit(Combat& c, CombatEntity& attackerCe, CombatEntity& defenderCe,
                           bool vsPlayer, int worldDist, bool zoomB2) {
 	// src/CombatEntity.cpp:157-298. Omitted: oneShotCheat (:169-171), the
-	// sniper-zoom pixel-bbox block (:173-216), the punch branches
-	// (:233-238 crFlags 0x10 gate, :253-261 punchingMonster).
+	// punch branches (:233-238 crFlags 0x10 gate, :253-261 punchingMonster).
 	// :159 attackerWeapon (the pre-scaled attackerWeaponId * 9) is replaced by
 	// the row lookup below; both come from the same weapon id.
 	const int attackerWeaponId = c.attackerWeaponId;             // :160
@@ -107,11 +108,28 @@ int CombatEntity::calcHit(Combat& c, CombatEntity& attackerCe, CombatEntity& def
 	} else {
 		eType = curTarget->def->eType;
 	}
-	// Zoom path (weapon mask 0x200, :173-216): pixel-bbox body-part test is
-	// unsupported in the rewrite; log if ever reached.
+	// Scoped weapons (mask 0x200, :173-216): the frame-bounds zone of the zoom
+	// collision point decides the crit flags; never a regular hit roll.
 	if (Combat::checkWeaponMask(attackerWeaponId, 0x200)) {
-		std::fprintf(stderr, "[combat] zoom bbox path unsupported\n");
-		return c.crFlags;
+		if (eType == Enums::ET_MONSTER && c.env().media != nullptr) {
+			const MapData& m = *c.env().map;
+			const ZoomState& z = c.env().game->zoom;
+			const int s = curTarget->getSprite(), n = m.numSprites;
+			const int tile = curTarget->def->tileIndex;
+			const bool rev = tile >= Enums::TILENUM_MONSTER_REVENANT &&
+			                 tile <= Enums::TILENUM_MONSTER_REVENANT3;   // isRevenant
+			const int zone = shotZone(*c.env().media, tile,
+				z.zoomCollisionX - m.mapSprites[s], z.zoomCollisionY - m.mapSprites[n + s],
+				z.zoomCollisionZ - m.spriteZ(s), rev ? -1 : 0, rev ? 60 : 0);
+			const int anim = (m.mapSpriteInfo[s] >> 8) & 0xF0;
+			if (zone != -1) {
+				if (zone == 0 || anim == Enums::MANIM_IDLE_BACK) c.crFlags |= 0x2;   // :203-205
+				else if (zone == 1) c.crFlags |= 0x1;                                // :206-208
+				else c.crFlags |= 0x5;                                               // :209-211
+			}
+			std::fprintf(stderr, "[combat] scope zone=%d tile=%d crFlags=0x%X\n", zone, tile, c.crFlags);
+		}
+		return c.crFlags;                                        // :214 (every eType)
 	}
 
 	bool farCap = false;                                         // :218

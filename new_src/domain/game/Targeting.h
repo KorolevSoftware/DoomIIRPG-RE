@@ -16,7 +16,7 @@ class Tables;
 // vector, the health-bar facing probe and the ordered fire-target election
 // (spec 2026-08-26-decomposition §P1-G4). Moved verbatim out of GameContext;
 // the probe and its only readout (the HUD monster health bar) live together.
-// Owns no persistent state: the probe result keeps living on
+// Owns no persistent state beyond the last fire end point: the probe result keeps living on
 // Player::facingEntity, which the HUD reads.
 class Targeting {
 public:
@@ -26,6 +26,7 @@ public:
 		MapData* map = nullptr;
 		const Tables* tables = nullptr;   // sin table
 		Hud* hud = nullptr;
+		const int* view = nullptr;        // 14.14 view matrix of the last world pass (tinyGL->view)
 	};
 
 	void init(const Env& env);
@@ -43,6 +44,9 @@ public:
 	// Returns the elected hit; kind None (!blocks()) means nothing was elected
 	// = air shot (ADR 0011; the old Entity*/int* outFrac pair is gone).
 	TraceHit electFireTarget(int weapon);
+	// End point {x, y, z} of the last fire trace (legacy n8/n9/n10,
+	// src/PlayingInputHandler.cpp:216-218); the zoom collision lerps toward it.
+	const int* fireEnd() const { return fireEnd_; }
 
 	// Resolve the facing probe into the HUD monster-health-bar inputs
 	// (legacy gates src/Hud.cpp:825-835,866-874).
@@ -50,6 +54,7 @@ public:
 
 private:
 	Env env_;
+	int fireEnd_[3] = { 0, 0, 0 };
 };
 
 } // namespace newcore

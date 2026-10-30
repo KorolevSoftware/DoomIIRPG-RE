@@ -78,6 +78,9 @@ bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	ok &= loadUiTexture(store, read, "HUD_Player_frame_Active.bmp", playerFrameActive);
 	ok &= loadUiTexture(store, read, "Hud_Numbers.bmp", numbers);
 	ok &= loadUiTexture(store, read, "cockpit.bmp", cockpitOverlay);
+	ok &= loadUiTexture(store, read, "scope.bmp", scope);
+	ok &= loadUiTexture(store, read, "SniperScope_Dial.bmp", sniperDial);
+	ok &= loadUiTexture(store, read, "SniperScope_Knob.bmp", sniperKnob);
 	// In-game menu sheets, in the original's load order
 	// (src/MenuSystem.cpp:120-131 for the gameMenu_* block; the softkey comes
 	// from src/Hud.cpp:57). inGame_menu_option_button.bmp is declared but never

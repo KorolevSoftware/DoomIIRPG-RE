@@ -36,6 +36,8 @@ public:
 	Texture playerFaces, playerActive, playerFrameNormal, playerFrameActive;
 	Texture numbers;
 	Texture cockpitOverlay;
+	// Sniper scope mask (src/App.cpp:456) and zoom dial (src/Canvas.cpp:234-235).
+	Texture scope, sniperDial, sniperKnob;
 	Texture arrowUp, arrowDown, arrowLeft, arrowRight;
 	Texture arrowUpPressed, arrowDownPressed, arrowLeftPressed, arrowRightPressed;
 	Texture uiImages, portraitsSmall, pageUp, pageDown, pageOk;
