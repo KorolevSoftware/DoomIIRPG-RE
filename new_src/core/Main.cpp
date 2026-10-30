@@ -42,7 +42,9 @@ int main(int argc, char* argv[]) {
 	// Combat rolls use std::rand like the RE port (src/App.cpp:506-512).
 	std::srand((unsigned)std::time(nullptr));
 
-	// Command line: [archive]. The archive is the first non-option argument.
+	// Command line: [--newgame] [archive]. The archive is the first non-option
+	// argument; --newgame wipes the save slot (New Game + confirm 14 stand-in,
+	// ADR 0037 §6).
 	// --backend= and DOOM2RPG_BACKEND chose between gl and sokol until group G8
 	// of spec 2026-09-11-sokol-gfx-backend retired render/gl/; they are still
 	// accepted so old command lines keep working, and are otherwise ignored.
@@ -54,10 +56,13 @@ int main(int argc, char* argv[]) {
 		}
 	};
 	if (const char* env = std::getenv("DOOM2RPG_BACKEND")) noteBackendRequest(env);
+	bool forceNewGame = false;
 	for (int i = 1; i < argc; ++i) {
 		const char* arg = argv[i];
 		if (std::strncmp(arg, "--backend=", 10) == 0) {
 			noteBackendRequest(arg + 10);
+		} else if (std::strcmp(arg, "--newgame") == 0) {
+			forceNewGame = true;
 		} else if (arg[0] == '-') {
 			std::fprintf(stderr, "Unknown option '%s'\n", arg);
 			return 1;
@@ -356,7 +361,12 @@ int main(int argc, char* argv[]) {
 		});
 	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
 		&ctx, &vm, &game, &loc, &hud, &font, &tables });
-	ctx.loading().loadMap(1, false, true);   // new game, startupMap 1 (src/IntroSequenceManager.cpp:135)
+	// Golden capture runs never read, write or wipe the user's save.
+	if (std::getenv("DOOM2RPG_CAPTURE_TICKS")) {
+		ctx.loading().save().setDiskEnabled(false);
+		forceNewGame = true;
+	}
+	ctx.loading().boot(forceNewGame);
 
 	// Revived frame path: AppContext::run -> GameLoop::run drives the
 	// fixed-step ticks, queued-input actions and per-frame rendering.

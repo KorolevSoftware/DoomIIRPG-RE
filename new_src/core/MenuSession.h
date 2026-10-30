@@ -60,6 +60,9 @@ public:
 		const MapData* map = nullptr;        // totalSecrets (level counters)
 		const int64_t* gameTime = nullptr;   // level timer (level counters)
 		std::function<void()> restartLevel;  // ACTION_RESTARTLEVEL target (GameContext::restartLevel)
+		std::function<void(int saveType)> saveGame;   // canvas->saveState(type, 3, 196)
+		std::function<bool()> loadGame;      // loadState(getRecentLoadType()); false = no usable save
+		std::function<void()> backToMain;    // canvas->backToMain stand-in: quit (ADR 0037 §6)
 		std::function<void()> continueLevelStats;   // MENU_LEVEL_STATS select: loadMap(next, true, false)
 		VendingMachine* vending = nullptr;   // vending menus 83-85: prices, exits
 	};

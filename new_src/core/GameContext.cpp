@@ -6,6 +6,7 @@
 #include <cstdlib>
 
 #include "core/AppContext.h"
+#include "domain/game/Automap.h"
 #include "domain/game/DialogSystem.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
@@ -18,6 +19,7 @@
 #include "render/Graphics2D.h"
 #include "render/api/RenderBackend.h"
 #include "text/Font.h"
+#include "ui/AutomapView.h"
 #include "ui/DialogView.h"
 #include "ui/Hud.h"
 #include "ui/HudView.h"
@@ -62,6 +64,9 @@ void GameContext::init(const Init& sys) {
 	menuEnv.map = sys_.map;
 	menuEnv.gameTime = &gameTime;
 	menuEnv.restartLevel = [this] { restartLevel(); };
+	menuEnv.saveGame = [this](int type) { loading_.requestSave(type); };
+	menuEnv.loadGame = [this] { return loadGame(loading_.recentLoadType()); };
+	menuEnv.backToMain = [this] { quitRequested_ = true; };
 	menuEnv.continueLevelStats = [this] { loading_.loadMap(loading_.nextMap(), true, false); };
 	menuEnv.vending = &minigames_.vending();
 	menu_.init(menuEnv);
@@ -120,7 +125,9 @@ void GameContext::init(const Init& sys) {
 	loadEnv.loc = sys_.loc;
 	loadEnv.host = this;
 	loadEnv.gameTime = &gameTime;
+	loadEnv.upTimeMs = &upTimeMs;
 	loadEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
+	loadEnv.quit = [this] { quitRequested_ = true; };
 	loading_.init(loadEnv);
 	TravelMapSession::Env travelEnv;
 	travelEnv.upTimeMs = &upTimeMs;
@@ -169,6 +176,10 @@ void GameContext::enterState_(StateId s) {
 		break;
 	case StateId::InterCamera:
 		break; // no entry side effects (no dedicated ST_INTER_CAMERA handler exists)
+	case StateId::Automap:
+		// No queue clear, no side effects: entry only resets automapDrawn /
+		// automapTime (src/Canvas.cpp:1188-1190).
+		break;
 	case StateId::Dialog:
 		// ST_DIALOG entry: clear soft keys + events (src/Canvas.cpp:1110-1111);
 		// soft keys are implicit in the rewrite, events are the queued actions.
@@ -238,13 +249,14 @@ void GameContext::enterState_(StateId s) {
 
 void GameContext::tick() {
 	upTimeMs += kTickMs;                                   // app->upTimeMs / app->time
-	// gameTime advances in PLAYING, CAMERA and LOOTING (scripts + the camera
+	// gameTime advances in PLAYING, CAMERA, LOOTING and AUTOMAP (scripts + the camera
 	// clock share it, src/Game.cpp:3259; the loot crouch runs on the shared
-	// clock too). Frozen elsewhere (deviation C5, narrowed by the cinematic
+	// clock too; the automap never pauses, Player::unpause is a stub,
+	// src/Player.cpp:1419-1423). Frozen elsewhere (deviation C5, narrowed by the cinematic
 	// group). Freezing during Dialog is what pauses the camera clock over a
 	// dialog (legacy activeCameraTime flip, src/Canvas.cpp:1092-1094).
 	if (!pauseGameTime && (state_ == StateId::Playing || state_ == StateId::Camera ||
-	                       state_ == StateId::Looting)) gameTime += kTickMs;
+	                       state_ == StateId::Looting || state_ == StateId::Automap)) gameTime += kTickMs;
 
 	// Expired-latch sweep: legacy runInputEvents zeroes blockInputTime once
 	// gameTime passes it, independent of thread state
@@ -301,7 +313,8 @@ void GameContext::tick() {
 			if (travel_.handleAction(a)) loading_.finishTravelMap();
 			continue;
 		}
-		if (blocked || state_ != StateId::Playing) break;
+		// ST_AUTOMAP runs the playing handler unchanged (src/InputEventController.cpp:354-356).
+		if (blocked || (state_ != StateId::Playing && state_ != StateId::Automap)) break;
 		if (a == Action::DebugVending) {
 			// DEBUG (removable, minigames): no calling thread, so finish()
 			// only returns to Playing.
@@ -338,8 +351,8 @@ void GameContext::tick() {
 	// SpriteLerp pool + door anims tick in every state legacy covers with
 	// updateLerpSprites: PLAYING/INTER_CAMERA (src/GameStateRunner.cpp:25,
 	// :184), ST_DIALOG (src/Canvas.cpp:921), ST_CAMERA (:953); ST_COMBAT
-	// (:25) is Playing with combat.active here. Automap
-	// (src/AutomapController.cpp:22) has no rewrite counterpart.
+	// (:25) is Playing with combat.active here, ST_AUTOMAP
+	// (src/AutomapController.cpp:22) is Automap.
 	// Centralized here so no state can regress out of coverage again. Safe
 	// under a dialog: legacy resumes blocking door/lerp owners from its
 	// ST_DIALOG branch too (updateLerpSprites -> callThreads flush). Playing
@@ -347,7 +360,7 @@ void GameContext::tick() {
 	// in CAMERA this runs before the camera clock (legacy swaps those two —
 	// within-tick difference only).
 	if (state_ == StateId::Playing || state_ == StateId::InterCamera ||
-	    state_ == StateId::Camera || state_ == StateId::Dialog) {
+	    state_ == StateId::Camera || state_ == StateId::Dialog || state_ == StateId::Automap) {
 		// Walk-writer view feed (spec §4): the chooser compares move vectors
 		// against the last rendered view — maya pose during a cinematic key,
 		// else the player view angle (same two sources render() uses,
@@ -376,6 +389,7 @@ void GameContext::tick() {
 		// threads resume via their owners only (runScriptThreads gates above).
 		break;
 	case StateId::Camera:  tickCamera(); break;
+	case StateId::Automap: tickAutomap(); break;
 	case StateId::Looting: loot_.tick(); break;
 	case StateId::Dialog:
 		// Lerps+doors ticked in the globals section above (legacy ST_DIALOG
@@ -490,18 +504,22 @@ void GameContext::unloadMap_() {
 
 // ---- Restart Level (spec 2026-09-22-monster-attacks §10) ----
 
-// loadState(2) (src/MenuSystem.cpp:3106, src/Game.cpp:2191-2215) through
-// LoadingManager: the level-entry world slot and player snapshot come back and
-// the map reloads via the gateway. Only deviation: the player snapshot is a
-// value copy, not savePlayerState (ADR 0034).
-void GameContext::restartLevel() {
+bool GameContext::loadGame(int loadType) {
 	Player& p = *sys_.player;
 	p.viewPitch = 0;                                     // death tilt (tickDying)
 	p.viewRoll = 0;
 	sys_.hud->clearScreenEffects();                      // endFade (src/Canvas.cpp:1380)
+	return loading_.loadState(loadType);
+}
+
+// loadState(2) (src/MenuSystem.cpp:3106, src/Game.cpp:2191-2215): the
+// level-entry BRIEFPLAYER + SB_<map> come back from disk and the map reloads
+// via the gateway.
+void GameContext::restartLevel() {
 	std::fprintf(stderr, "[restart] level restart -> loadState(2)\n");
-	if (loading_.restartLevel()) return;
-	// No snapshot (cannot happen after the first load): fresh start.
+	if (loadGame(2)) return;
+	// No usable snapshot file: fresh start of the current map.
+	Player& p = *sys_.player;
 	p.reset();
 	p.currentLevelDeaths = 0;                            // src/Game.cpp:2200-2202; totalDeaths kept
 	p.viewZ = p.destZ;                                   // death drop; spawnPlayer re-derives both
@@ -697,6 +715,27 @@ void GameContext::tickCamera() {
 	} else if (!sys_.hud->isFading() || (sys_.hud->fadeFlags() & 0xC) == 0) {
 		sys_.hud->startFade(upTimeMs, 500, Hud::kFadeIn);   // end of skipCinematic (src/Game.cpp:2530-2532)
 	}
+}
+
+void GameContext::tickAutomap() {
+	// Leaves exactly like the original: an attack seq means ST_COMBAT
+	// (src/Combat.cpp:165), a paused blocking script forces ST_PLAYING
+	// (src/Game.cpp:3256-3258).
+	if (sys_.game->combat.active || sys_.vm->isInputBlockedByScript()) {
+		setState(StateId::Playing);
+		return;
+	}
+	sys_.game->doors.snapAll();                               // src/Game.cpp:1153
+	// Sight wake of the last rendered frame (ADR 0029); the original's automap
+	// updateView renders too (src/AutomapController.cpp:23-24).
+	sys_.game->monsters.renderActivate(sys_.game->visibility);
+	Player& p = *sys_.player;
+	const bool moved = p.viewX != p.destX || p.viewY != p.destY;
+	const bool turned = p.viewAngle != p.destAngle;
+	// updateView in ST_AUTOMAP snaps view to dest (src/MovementController.cpp:492-498).
+	p.viewX = p.destX; p.viewY = p.destY; p.viewZ = p.destZ; p.viewAngle = p.destAngle;
+	if (moved) actions_.finishMovement();                     // (:510-512)
+	if (turned && state_ == StateId::Automap) actions_.finishRotationFired();   // (:514-516)
 }
 
 void GameContext::debugGiveKeycards() {
@@ -978,6 +1017,9 @@ void GameContext::render(AppContext& app) {
 	// tied to ST_CAMERA, not to the camera pose (src/Canvas.cpp:1038, :1211).
 	sys_.game->visibility = scene_.visibility();
 	sys_.game->visibility.cinematic = state_ == StateId::Camera;
+	// Seen marks of this frame (ADR 0036); gate = legacy updateAutomap.
+	Automap::markSeen(*sys_.map, sys_.game->visibility,
+	                  state_ == StateId::Playing || state_ == StateId::Automap);
 
 	// View weapon paints over the world in full canvas space; its legacy
 	// anchors already include the world viewport origin (ADR 0009). The two
@@ -1183,6 +1225,18 @@ void GameContext::render(AppContext& app) {
 	// world pass above is covered; `gameplayView` excludes HUD and weapon.
 	if (state_ == StateId::MiniGame && ui != nullptr) {
 		const UiResult r = minigames_.draw(*ui);
+		applyUiAction(r.action, r.index);
+	}
+
+	// Automap (drawAutomap, src/AutomapController.cpp:65-348): opaque 480x320
+	// over the world pass, which keeps running for the seen marks (ADR 0036).
+	if (state_ == StateId::Automap && ui != nullptr) {
+		Automap::buildModel(automapModel_, *sys_.map, sys_.game->db, *sys_.player, upTimeMs, automapBlink_);
+		setSoftKeyText(automapLeftText_, sys_.loc->get(kTextMain, 52));    // "Menu"  (src/SoftKeyController.cpp:88-89)
+		setSoftKeyText(automapRightText_, sys_.loc->get(kTextMain, 53));   // "Leave"
+		automapModel_.softLeft = &automapLeftText_;
+		automapModel_.softRight = &automapRightText_;
+		const UiResult r = drawAutomap(*ui, automapModel_);
 		applyUiAction(r.action, r.index);
 	}
 

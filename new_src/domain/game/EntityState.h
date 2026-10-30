@@ -9,8 +9,8 @@ class EntityDefs;
 class Game;
 class MapData;
 
-// Entity records of the brief world state (ADR 0034, field 7): port of
-// Game::saveEntityStates(OS, true) / loadEntityStates and the Entity
+// Entity records of the world state (ADR 0034 field 7, ADR 0037): port of
+// Game::saveEntityStates(OS, b) / loadEntityStates and the Entity
 // save-handle, saveState, loadState and restoreBinaryState helpers.
 namespace EntityState {
 
@@ -20,8 +20,10 @@ struct Env {
 	const EntityDefs* defs = nullptr;
 };
 
-void save(const Env& env, DataWriter& w);   // Game::saveEntityStates(OS, true) (src/Game.cpp:3379-3395)
-bool load(const Env& env, DataReader& r);   // Game::loadEntityStates (src/Game.cpp:3371-3377)
+void save(const Env& env, DataWriter& w, bool brief);   // Game::saveEntityStates(OS, b) (src/Game.cpp:3379-3395)
+// Game::loadEntityStates (src/Game.cpp:3371-3377). False = corrupt record
+// (bad entity index or linkIndex), possibly partially applied.
+bool load(const Env& env, DataReader& r);
 
 } // namespace EntityState
 

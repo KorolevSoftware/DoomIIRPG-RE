@@ -450,7 +450,8 @@ void Combat::playerPain(int n, Entity* src, bool showMsg) {
 		env_.hud->addMessage(env_.loc->get(kTextMain, warnId), 0xAA000000,
 			Hud::kMsgFlagForce | Hud::kMsgFlagCenter);           // addMessage(id, 3)
 	}
-	// ST_AUTOMAP -> ST_PLAYING (:703-705): no automap state. Death (:706-708)
+	// ST_AUTOMAP -> ST_PLAYING (:703-705) lives at the script pain sites
+	// (ScriptVM EV_DAMAGEPLAYER / EV_DESTROY_PLAYER). Death (:706-708)
 	// is detected by the caller (ADR 0028 decision 4).
 }
 

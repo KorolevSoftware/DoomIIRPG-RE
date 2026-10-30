@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "domain/game/Automap.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
@@ -69,8 +70,19 @@ void PlayerActions::finishMovement() {
 	// advanceTurn unless a script claimed/skipped the turn this arrival; a
 	// still-parked gotoThread (angle not settled yet, or re-parked by the
 	// resumed script) means a scripted walk — no turn consumed
-	// (src/MovementController.cpp:178).
-	if (gotoThread == nullptr && env_.game->monstersTurn == 0 && !env_.game->skipAdvanceTurn) {
+	// (src/MovementController.cpp:178). The automap arm resolves the whole
+	// monster turn at once and ignores those gates (:185-195).
+	if (env_.host->state() == StateId::Automap) {
+		Automap::uncover(*env_.map, p.destX, p.destY);
+		env_.game->advanceTurn();
+		if (env_.game->lerps.animatingEffects() != 0) {
+			env_.host->requestState(StateId::Playing);
+		} else {
+			env_.game->monsters.snapMonsters(true);
+			env_.game->lerps.snap(-1);
+		}
+	} else if (gotoThread == nullptr && env_.game->monstersTurn == 0 && !env_.game->skipAdvanceTurn) {
+		Automap::uncover(*env_.map, p.destX, p.destY);     // src/MovementController.cpp:182
 		env_.game->advanceTurn();
 	}
 }
@@ -127,7 +139,7 @@ void PlayerActions::handleAction(Action a) {
 	// action. activePropogators is tested first: it short-circuits snapMonsters.
 	if (a != Action::TurnLeft && a != Action::TurnRight &&
 	    (env_.game->sprites.activePropogators() != 0 ||
-	     !env_.game->monsters.snapMonsters(false) || env_.game->lerps.animatingEffects() != 0)) {
+	     !env_.game->monsters.snapMonsters(env_.host->state() == StateId::Automap) || env_.game->lerps.animatingEffects() != 0)) {
 		return;
 	}
 
@@ -185,6 +197,8 @@ void PlayerActions::handleAction(Action a) {
 				h.isEntity() ? h.eType : -1,       // world hit logged as -1, as before
 				(h.entity && (h.entity->info & Entity::kInfoLinked)) != 0 ? 1 : 0,
 				h.frac);
+			// A blocked step in the automap still costs a turn (src/MovementController.cpp:351-353).
+			if (env_.host->state() == StateId::Automap) env_.game->advanceTurn();
 		}
 		break;
 	}
@@ -353,8 +367,17 @@ void PlayerActions::handleAction(Action a) {
 		}
 		env_.game->advanceTurn();
 		break;
-	case Action::Menu:
+	case Action::Automap:   // src/PlayingInputHandler.cpp:86-98 (inTargetPractice not ported)
+		env_.host->requestState(env_.host->state() != StateId::Automap ? StateId::Automap
+		                                                               : StateId::Playing);
+		break;
 	case Action::BackKey:
+		if (env_.host->state() == StateId::Automap) {   // src/PlayingInputHandler.cpp:138-141
+			env_.host->requestState(StateId::Playing);
+			break;
+		}
+		[[fallthrough]];
+	case Action::Menu:
 		// Both open the in-game menu, from the playing input handler and
 		// therefore behind the same animation gate as every other playing
 		// action (src/PlayingInputHandler.cpp:137-158). The message queue is

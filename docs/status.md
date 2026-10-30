@@ -11,8 +11,9 @@ _Last updated: 2026-10-30_
 | A / D | turn (deviation: the original strafes; no strafe in the rewrite) |
 | RETURN | attack / talk / use, menu select, dialog page advance, loot page |
 | C | pass turn (also closes the loot list) |
-| TAB | automap (logs only, no screen yet) |
+| TAB | automap toggle (also Backspace/Leave to exit; menu "View Map"); moving with the map open advances turns like the original |
 | ESCAPE | open menu / back — **does not quit** |
+| (cmd line) `--newgame` | wipe the save slot and start a new game; without it boot continues from `build_new/new_src/Doom2rpg.app/` if a save exists |
 | BACKSPACE | back (ours; also closes the loot list) |
 | I | open Inventory (items menu 72; legacy AVK_ITEMS_INFO, `src/Input.cpp:92`) |
 | O | open Nano Drinks (menu 75; legacy AVK_DRINKS, `src/Input.cpp:93`) |

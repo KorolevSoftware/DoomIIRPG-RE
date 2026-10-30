@@ -1,6 +1,6 @@
 # ADR 0034 — Per-map world state is an in-memory byte blob in the legacy brief world-record layout
 
-Date: 2026-10-29. Status: accepted. Spec: `../specs/2026-10-29-map-change.md` (G2a/G2b).
+Date: 2026-10-29. Status: accepted; storage (§1 slots), §3, §4 and §5 amended by [ADR 0037](0037-save-files-on-disk.md) (files on disk, full variant, player file). Spec: `../specs/2026-10-29-map-change.md` (G2a/G2b).
 
 ## Context
 

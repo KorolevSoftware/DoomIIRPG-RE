@@ -122,6 +122,10 @@ bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	ok &= loadUiTexture(store, read, "TravelMap.bmp", tmBackground);
 	ok &= loadUiTexture(store, read, "travelMapHorzGrid.bmp", tmGridHorz);
 	ok &= loadUiTexture(store, read, "travelMapVertGrid.bmp", tmGridVert);
+	ok &= loadUiTexture(store, read, "gameHelpBG.bmp", automapBackground);
+	ok &= loadUiTexture(store, read, "Automap_Cursor.bmp", automapCursor);
+	// Frame layout of the cursor sheet is unverified (AM open question).
+	std::fprintf(stderr, "[automap] cursor %dx%d\n", automapCursor.width(), automapCursor.height());
 	return ok;
 }
 

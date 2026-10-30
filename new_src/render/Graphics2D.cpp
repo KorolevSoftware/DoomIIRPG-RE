@@ -66,6 +66,12 @@ void Graphics2D::drawLine(int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, 
 	if (!dev_) return;
 	int dx = x1 > x0 ? x1 - x0 : x0 - x1;
 	int dy = y1 > y0 ? y1 - y0 : y0 - y1;
+	// Axis-aligned: one quad, same pixels as the loop (keeps a full automap
+	// out of the per-pixel path, ADR 0025 point 6).
+	if (x0 == x1 || y0 == y1) {
+		fillRect(x0 < x1 ? x0 : x1, y0 < y1 ? y0 : y1, dx + 1, dy + 1, r, g, b, a);
+		return;
+	}
 	int sx = x0 < x1 ? 1 : -1;
 	int sy = y0 < y1 ? 1 : -1;
 	int err = dx - dy;

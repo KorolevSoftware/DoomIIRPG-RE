@@ -13,7 +13,8 @@ struct ViewVisibility {
 	bool valid = false;        // a world frame was rendered since the last consume
 	bool cinematic = false;    // that frame was rendered in ST_CAMERA (src/Canvas.cpp:1211)
 	std::vector<int> drawnSprites;   // sprites the legacy renderBSP would submit (visited leaves + split rescue), ADR 0031
-	uint32_t tiles[32] = {};         // bit x of tiles[y]: checkTileVisibilty per tile (ADR 0031)
+	std::vector<int> seenLines;      // drawNodeLines candidates for line bit 8 (ADR 0036)
+	uint32_t tiles[32] = {};        // bit x of tiles[y]: checkTileVisibilty per tile (ADR 0031)
 	bool tileVisible(int tx, int ty) const {
 		return tx >= 0 && ty >= 0 && tx < 32 && ty < 32 && ((tiles[ty] >> tx) & 1u) != 0;
 	}

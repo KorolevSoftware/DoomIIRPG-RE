@@ -66,6 +66,10 @@ public:
 	// call at the tail of Game::update).
 	void update(int dtMs);
 
+	// ST_AUTOMAP door snap (src/Game.cpp:1153): finish every active door animation now,
+	// through updateDoors so every completion side effect runs.
+	void snapAll();
+
 private:
 	Env env_;
 

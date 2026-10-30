@@ -20,7 +20,8 @@ public:
 	// occludeClippedLine for a world-space segment (world units = canvas << 4).
 	// sortX: swap the projected ends so x0 <= x1 (occludeSpriteLine, src/Render.cpp:708-713);
 	// false for map lines (drawNodeLines, src/Render.cpp:735).
-	void occludeLine(int x0, int y0, int x1, int y1, bool sortX);
+	// Returns true iff at least one column was tightened (src/TinyGL.cpp:719-745).
+	bool occludeLine(int x0, int y0, int x1, int y1, bool sortX);
 	// Render::cullBoundingBox(n, n2, n3, n4, true) (src/Render.cpp:750-823): true = culled.
 	bool cullBox(int x1, int y1, int x2, int y2) const;
 

@@ -9,6 +9,7 @@
 #include "domain/game/EntityState.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
+#include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapData.h"
 #include "io/DataReader.h"
@@ -105,7 +106,7 @@ void roundTripSelfCheck() {
 
 	WorldState ws;
 	ws.init({ g.get(), p.get(), vm.get(), &m, nullptr, &now });
-	ws.saveLevel(1);
+	const std::vector<uint8_t> blob = ws.save(true);
 	assert(g->totalLevelTime == 1000 && g->curLevelTime == 5000);
 
 	const MapData want = m;
@@ -126,7 +127,7 @@ void roundTripSelfCheck() {
 	g->angryVIOS = false;
 	p->moves = 0;
 
-	const bool ok = ws.restoreLevel(1);
+	const bool ok = ws.restore(blob) == WorldState::Restore::Applied;
 	assert(ok);
 	(void)ok;
 	assert(m.lineFlags == want.lineFlags);
@@ -145,6 +146,33 @@ void roundTripSelfCheck() {
 	assert(g->entityDeathFunctions[0] == 2 && g->entityDeathFunctions[1] == 7693 &&
 	       g->entityDeathFunctions[2] == -1 && g->entityDeathFunctions[7] == -1 && g->useCaldexHack);
 	assert(g->useMastermindHack && g->angryVIOS);
+
+	// Full variant: a live monster keeps its long record with health, effects
+	// and goal (src/Entity.cpp:1542-1546).
+	mon.ce.stats[Enums::STAT_HEALTH] = 37;
+	mon.monsterEffects = 0x123;
+	mon.goalType = 3;
+	mon.goalFlags = 1;
+	mon.goalTurns = 2;
+	mon.goalX = 31;
+	mon.goalY = 17;
+	mon.goalParam = 1023;
+	std::vector<uint8_t> full = ws.save(false);
+	mon.ce.stats[Enums::STAT_HEALTH] = 0;
+	mon.monsterEffects = 0;
+	mon.resetGoal();
+	const bool okFull = ws.restore(full) == WorldState::Restore::Applied;
+	assert(okFull);
+	(void)okFull;
+	assert(mon.ce.stats[Enums::STAT_HEALTH] == 37 && mon.monsterEffects == 0x123);
+	assert(mon.goalType == 3 && mon.goalFlags == 1 && mon.goalTurns == 2 &&
+	       mon.goalX == 31 && mon.goalY == 17 && mon.goalParam == 1023);
+	assert(spr(0, 2) == 320 && spr(1, 2) == 96 && (ents[3].info & Entity::kInfoLinked) != 0);
+
+	full.pop_back();
+	const bool corrupt = ws.restore(full) == WorldState::Restore::Corrupt;
+	assert(corrupt);
+	(void)corrupt;
 	std::fprintf(stderr, "[world] round-trip self-check OK\n");
 }
 #endif
@@ -162,8 +190,7 @@ void WorldState::init(const Env& env) {
 #endif
 }
 
-void WorldState::saveLevel(int mapId) {
-	if (mapId < 1 || mapId > kNumMaps) return;               // src/Game.cpp:1741-1743
+std::vector<uint8_t> WorldState::save(bool brief) {
 	Game& game = *env_.game;
 	Player& player = *env_.player;
 	MapData& map = *env_.map;
@@ -179,8 +206,8 @@ void WorldState::saveLevel(int mapId) {
 	for (int i = 0; i < 6; ++i) w.writeInt(0);               // fog (:1591-1596): no fog state
 	if (player.ce.weapon == 14)                              // :1597-1599
 		w.writeByte(player.activeWeaponDef != nullptr ? static_cast<uint8_t>(player.activeWeaponDef->tileIndex) : 0);
-	for (int i = 0; i < 4; ++i) w.writeShort(0);             // placedBombs, brief (:1600-1607)
-	EntityState::save({ &game, &map, env_.defs }, w);        // saveEntityStates (:1608)
+	for (int i = 0; i < 4; ++i) w.writeShort(0);             // placedBombs (:1600-1607): no bombs
+	EntityState::save({ &game, &map, env_.defs }, w, brief); // saveEntityStates (:1608)
 
 	int bits = 0, n = 0;                                     // line bits (:1609-1624)
 	for (int j = 0; j < map.numLines; ++j) {
@@ -205,7 +232,7 @@ void WorldState::saveLevel(int mapId) {
 			bool hidden = false;
 			const Entity* e = game.db.findEntityBySprite(k);
 			// Brief corpse rule (:1643-1650); legacy dereferences monster unguarded.
-			if (e != nullptr && e->def->eType == Enums::ET_CORPSE && e->def->eSubType != Enums::CORPSE_SKELETON &&
+			if (brief && e != nullptr && e->def->eType == Enums::ET_CORPSE && e->def->eSubType != Enums::CORPSE_SKELETON &&
 			    e->monster != nullptr && (e->monster->flags & 0x80) == 0) hidden = true;
 			if ((map.mapSpriteInfo[k] & 0x10000) != 0) hidden = true;
 			if (hidden) v |= 1 << b;
@@ -253,13 +280,11 @@ void WorldState::saveLevel(int mapId) {
 	w.writeInt(game.angryVIOS ? 0x40000000 : 0);             // VIOS mallocs (none) | angryVIOS (:1726-1730)
 	w.writeShort(game.lootFound);
 	w.writeShort(static_cast<int16_t>(game.destroyedObj));
-	levels_[mapId - 1] = w.buffer();
+	return w.buffer();
 }
 
-bool WorldState::restoreLevel(int mapId) {
-	if (mapId < 1 || mapId > kNumMaps) return false;         // src/Game.cpp:1741-1743
-	const std::vector<uint8_t>& blob = levels_[mapId - 1];
-	if (blob.empty()) return false;
+WorldState::Restore WorldState::restore(const std::vector<uint8_t>& blob) {
+	if (blob.empty()) return Restore::Rejected;
 	Game& game = *env_.game;
 	Player& player = *env_.player;
 	MapData& map = *env_.map;
@@ -270,14 +295,14 @@ bool WorldState::restoreLevel(int mapId) {
 	if (stored != map.compileDate) {                         // :1902-1909
 		if (stored != 0) game.spawnParam = -1;               // legacy spawnParam = 0, its "none"
 		game.totalLevelTime = 0;
-		return false;
+		return Restore::Rejected;
 	}
 	game.totalLevelTime = r.readInt();
 	game.mapSecretsFound = r.readByte();
 	r.skip(6 * 4);                                           // fog: no fog state
 	if (player.ce.weapon == 14) r.readByte();                // setPickUpWeapon not ported
 	r.skip(4 * 2);                                           // placedBombs
-	if (!EntityState::load({ &game, &map, env_.defs }, r)) return false;   // loadEntityStates (:1771)
+	if (!EntityState::load({ &game, &map, env_.defs }, r)) return Restore::Corrupt;   // loadEntityStates (:1771)
 
 	int bits = 0, n = 8;                                     // line bits, OR only (:1784-1795)
 	for (int j = 0; j < map.numLines; ++j) {
@@ -285,7 +310,12 @@ bool WorldState::restoreLevel(int mapId) {
 		if ((bits & (1 << n)) != 0) map.lineFlags[j >> 1] |= static_cast<uint8_t>(8 << ((j & 1) << 2));
 		++n;
 	}
-	for (int b = 0, numFuncs = r.readByte(); b < numFuncs; ++b) {   // death funcs (:1797-1800)
+	const int numFuncs = r.readByte();                       // death funcs (:1797-1800)
+	if (numFuncs > 64) {
+		std::fprintf(stderr, "[world] bad death-function count %d\n", numFuncs);
+		return Restore::Corrupt;
+	}
+	for (int b = 0; b < numFuncs; ++b) {
 		game.entityDeathFunctions[b * 2 + 0] = r.readShort();
 		game.entityDeathFunctions[b * 2 + 1] = r.readShort();
 	}
@@ -315,8 +345,8 @@ bool WorldState::restoreLevel(int mapId) {
 	}
 
 	if (r.readByte() != 0) {                                 // numLerpSprites
-		std::fprintf(stderr, "[world] map %d: lerp records not supported\n", mapId);
-		return false;
+		std::fprintf(stderr, "[world] lerp records not supported\n");
+		return Restore::Corrupt;
 	}
 	// Thread records are read and dropped: legacy never restores stackPtr, so
 	// every slot ends up free (src/ScriptThread.cpp:45-57, src/Game.cpp:1858-1868).
@@ -336,35 +366,14 @@ bool WorldState::restoreLevel(int mapId) {
 	game.lootFound = r.readShort();
 	game.destroyedObj = r.readShort();
 
+	if (r.overrun()) {
+		std::fprintf(stderr, "[world] truncated record (%zu bytes)\n", blob.size());
+		return Restore::Corrupt;
+	}
 	if (r.position() != blob.size())
-		std::fprintf(stderr, "[world] size mismatch map %d: read %zu of %zu\n", mapId, r.position(), blob.size());
-	std::fprintf(stderr, "[world] map %d restored; prepareMonsters deferred\n", mapId);   // src/Game.cpp:701-727, deviation MD3
-	return true;
-}
-
-void WorldState::savePlayer() {
-	player_ = *env_.player;
-	hasPlayer_ = true;
-}
-
-bool WorldState::restorePlayer() {
-	if (!hasPlayer_) return false;
-	Player& p = *env_.player;
-	const int deaths = p.totalDeaths;                        // config-file fields (ADR 0034 §5)
-	const int currentGrades = p.currentGrades;
-	const int bestGrades = p.bestGrades;
-	p = player_;
-	p.totalDeaths = deaths;
-	p.currentGrades = currentGrades;
-	p.bestGrades = bestGrades;
-	p.currentLevelDeaths = 0;                                // src/Game.cpp:2200-2202
-	p.facingEntity = nullptr;                                // entity array is rebuilt by the load
-	return true;
-}
-
-void WorldState::clear() {
-	for (std::vector<uint8_t>& l : levels_) l.clear();
-	hasPlayer_ = false;
+		std::fprintf(stderr, "[world] size mismatch: read %zu of %zu\n", r.position(), blob.size());
+	std::fprintf(stderr, "[world] state restored; prepareMonsters deferred\n");   // src/Game.cpp:701-727, deviation MD3
+	return Restore::Applied;
 }
 
 } // namespace newcore

@@ -76,9 +76,9 @@ bool isBinaryEntity(const Env& env, const Entity& e, int* array) {
 	return true;
 }
 
-// Entity::getSaveHandle(true) (src/Entity.cpp:1787-1857). Dropped-entity and
+// Entity::getSaveHandle(b) (src/Entity.cpp:1787-1857). Dropped-entity and
 // named-entity branches are gone: no drop slots, Entity::name not ported.
-int getSaveHandle(const Env& env, const Entity& e, int index) {
+int getSaveHandle(const Env& env, const Entity& e, int index, bool brief) {
 	int buf[2] = { 1, index };
 	const bool binary = isBinaryEntity(env, e, buf);
 	if (((e.info & 0xFFFF) == 0 || e.def == nullptr) && !binary) return -1;
@@ -102,6 +102,7 @@ int getSaveHandle(const Env& env, const Entity& e, int index) {
 		if ((e.monster->flags & Enums::MFLAG_NOTRACK) != 0) n |= 0x400000;
 		if ((e.monster->flags & Enums::MFLAG_LOOTED) != 0) n |= 0x8000000;
 	}
+	if (!brief) return n;
 	// Brief variant: ordinary corpses are cleaned up (hidden, no payload).
 	// Legacy dereferences monster unguarded; placed corpse props have none.
 	if (e.def->eType == Enums::ET_CORPSE && e.def->eSubType != Enums::CORPSE_SKELETON &&
@@ -113,7 +114,8 @@ int getSaveHandle(const Env& env, const Entity& e, int index) {
 	return n;
 }
 
-// Entity::saveState (src/Entity.cpp:1497-1572), brief subset.
+// Entity::saveState (src/Entity.cpp:1497-1572). Dropped-entity branches are
+// gone (no drop slots).
 void saveState(const Env& env, DataWriter& w, const Entity& e, int n) {
 	MapData& m = *env.map;
 	if ((n & kHNoData) != 0) return;
@@ -143,11 +145,17 @@ void saveState(const Env& env, DataWriter& w, const Entity& e, int n) {
 	}
 	if (e.monster != nullptr) {
 		w.writeShort(e.monster->flags);
-		if ((e.info & Entity::kInfoHidden) == 0 && (e.monster->flags & Enums::MFLAG_SCALED) != 0)
-			w.writeByte(static_cast<uint8_t>(spr(m, kFScale, sprite)));
-		// shortcut: the monsterEffects + ce + goal block (n & kHCorpse == 0) is
-		// unreachable here: a monster entity is ET_MONSTER (short record) or a
-		// corpse (kHCorpse or no data). Port it with the full save system.
+		if ((e.info & Entity::kInfoHidden) == 0) {
+			if ((e.monster->flags & Enums::MFLAG_SCALED) != 0)
+				w.writeByte(static_cast<uint8_t>(spr(m, kFScale, sprite)));
+			if ((n & kHCorpse) == 0) {
+				const EntityMonster& mon = *e.monster;
+				w.writeShort(static_cast<int16_t>(mon.monsterEffects));
+				w.writeShort(static_cast<int16_t>(mon.ce.stats[Enums::STAT_HEALTH]));   // ce.saveState(OS, false) (src/CombatEntity.cpp:127-128)
+				w.writeInt(mon.goalType | mon.goalFlags << 4 | mon.goalTurns << 8 | mon.goalX << 12 |
+				           mon.goalY << 17 | mon.goalParam << 22);                      // src/EntityMonster.cpp:25-27
+			}
+		}
 	} else {
 		w.writeShort(spr(m, kFZ, sprite));                     // stored Z both ways
 	}
@@ -194,8 +202,8 @@ void restoreBinaryState(const Env& env, Entity& e, int n) {
 	}
 }
 
-// Entity::loadState (src/Entity.cpp:1574-1786), brief subset.
-void loadState(const Env& env, DataReader& r, Entity& e, int n) {
+// Entity::loadState (src/Entity.cpp:1574-1786). False = corrupt record.
+bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 	Game& g = *env.game;
 	MapData& m = *env.map;
 	const int sprite = e.getSprite();
@@ -218,7 +226,7 @@ void loadState(const Env& env, DataReader& r, Entity& e, int n) {
 	if ((n & 0x1000000) != 0) e.info |= 0x2000000;
 	if (isBinaryEntity(env, e, nullptr)) {
 		restoreBinaryState(env, e, n);
-		if ((n & kHNoData) != 0) return;
+		if ((n & kHNoData) != 0) return true;
 	}
 	if (e.def->eType == Enums::ET_ATTACK_INTERACTIVE && e.def->eSubType == Enums::INTERACT_BARRICADE) {
 		const int16_t s = r.readShort();
@@ -226,7 +234,7 @@ void loadState(const Env& env, DataReader& r, Entity& e, int n) {
 			spr(m, kFScale, sprite) = s;
 			e.info |= Entity::kInfoDirty;
 		}
-		return;
+		return true;
 	}
 	if ((n & kHCorpse) != 0) {
 		if ((n & kHVisible) == 0) {
@@ -245,7 +253,7 @@ void loadState(const Env& env, DataReader& r, Entity& e, int n) {
 		if ((n & 0x400000) != 0) { e.monster->flags |= Enums::MFLAG_NOTRACK; e.info |= Entity::kInfoDirty; }
 		if ((n & 0x8000000) != 0) { e.monster->flags |= Enums::MFLAG_LOOTED; e.info |= Entity::kInfoDirty; }
 	}
-	if ((n & kHNoData) != 0) return;
+	if ((n & kHNoData) != 0) return true;
 	if ((e.info & Entity::kInfoLinked) != 0) g.db.unlinkEntity(&e);
 
 	if (e.def->eType == Enums::ET_MONSTER && (n & kHShort) != 0) {
@@ -261,7 +269,7 @@ void loadState(const Env& env, DataReader& r, Entity& e, int n) {
 		else g.db.linkEntity(&e, x >> 6, y >> 6);
 		e.monster->flags = r.readShort();
 		if (e.monster->flags != 0 || frame != 0) e.info |= Entity::kInfoDirty;
-		return;
+		return true;
 	}
 	e.info = (e.info & 0xFF00FFFF) | (r.readByte() << 16);
 	if ((e.info & Entity::kInfoHidden) == 0) {
@@ -274,8 +282,14 @@ void loadState(const Env& env, DataReader& r, Entity& e, int n) {
 			if (e.monster != nullptr)
 				spr(m, kFZ, sprite) = floorZ(env, sprite, spr(m, kFX, sprite), spr(m, kFY, sprite));
 		}
-		if ((msi & 0xF000000) != 0) e.linkIndex = r.readShort();
-		else e.linkIndex = static_cast<short>((spr(m, kFX, sprite) >> 6) + (spr(m, kFY, sprite) >> 6) * 32);
+		if ((msi & 0xF000000) != 0) {
+			const int link = r.readShort();
+			if (link < 0 || link >= 1024) {
+				std::fprintf(stderr, "[world] bad linkIndex %d sprite=%d\n", link, sprite);
+				return false;
+			}
+			e.linkIndex = static_cast<short>(link);
+		} else e.linkIndex = static_cast<short>((spr(m, kFX, sprite) >> 6) + (spr(m, kFY, sprite) >> 6) * 32);
 		const int orient = msi & 0xF000000;
 		if ((orient == 0xC000000 || orient == 0x3000000) &&
 		    (e.def->eType == Enums::ET_NONOBSTRUCTING_SPRITEWALL || e.def->eType == Enums::ET_SPRITEWALL)) {
@@ -289,8 +303,20 @@ void loadState(const Env& env, DataReader& r, Entity& e, int n) {
 		e.monster->flags = r.readShort();
 		if ((e.info & Entity::kInfoHidden) == 0) {
 			if ((e.monster->flags & Enums::MFLAG_SCALED) != 0) spr(m, kFScale, sprite) = r.readByte();
-			if ((n & kHCorpse) != 0) e.info |= Entity::kInfoCorpse;
-			// else: ce + goal block, see saveState's shortcut note.
+			if ((n & kHCorpse) != 0) {
+				e.info |= Entity::kInfoCorpse;
+			} else {
+				EntityMonster& mon = *e.monster;
+				mon.monsterEffects = r.readShort();
+				mon.ce.stats[Enums::STAT_HEALTH] = r.readShort();   // ce.loadState(IS, false)
+				const int g = r.readInt();                           // src/EntityMonster.cpp:29-37
+				mon.goalType = static_cast<uint8_t>(g & 0xF);
+				mon.goalFlags = static_cast<uint8_t>(g >> 4 & 0xF);
+				mon.goalTurns = static_cast<uint8_t>(g >> 8 & 0xF);
+				mon.goalX = g >> 12 & 0x1F;
+				mon.goalY = g >> 17 & 0x1F;
+				mon.goalParam = g >> 22 & 0x3FF;
+			}
 		}
 		if ((e.info & Entity::kInfoOnActiveList) != 0) {
 			e.info &= ~Entity::kInfoOnActiveList;
@@ -306,15 +332,16 @@ void loadState(const Env& env, DataReader& r, Entity& e, int n) {
 		if ((msi & 0xF000000) != 0) linkAtIndex(g, e);
 		else g.db.linkEntity(&e, spr(m, kFX, sprite) >> 6, spr(m, kFY, sprite) >> 6);
 	}
+	return true;
 }
 
 } // namespace
 
-void save(const Env& env, DataWriter& w) {
+void save(const Env& env, DataWriter& w, bool brief) {
 	std::vector<int> handles;
 	std::vector<Entity>& entities = env.game->db.entities();
 	for (int i = 0; i < static_cast<int>(entities.size()); ++i) {
-		const int h = getSaveHandle(env, entities[i], i);
+		const int h = getSaveHandle(env, entities[i], i, brief);
 		if (h != -1) handles.push_back(h);
 	}
 	w.writeShort(static_cast<int16_t>(handles.size()));
@@ -336,7 +363,7 @@ bool load(const Env& env, DataReader& r) {
 			std::fprintf(stderr, "[world] bad entity record %d (handle 0x%X)\n", i, h);
 			return false;
 		}
-		loadState(env, r, entities[idx], h);
+		if (!loadState(env, r, entities[idx], h)) return false;
 	}
 	return true;
 }

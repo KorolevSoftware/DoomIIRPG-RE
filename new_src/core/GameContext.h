@@ -12,11 +12,13 @@
 #include "core/TravelMapSession.h"
 #include "core/MenuSession.h"
 #include "core/PlayerActions.h"
+#include "domain/game/Automap.h"
 #include "domain/game/Game.h"
 #include "domain/game/Targeting.h"
 #include "minigames/common/MiniGameHost.h"
 #include "render/SceneRenderer.h"
 #include "text/Text.h"
+#include "ui/AutomapModel.h"
 #include "ui/HudModel.h"
 #include "ui/UiTypes.h"
 #include "ui/ViewWeapon.h"
@@ -76,9 +78,13 @@ public:
 
 	void init(const Init& sys);
 
-	// ACTION_RESTARTLEVEL (src/MenuSystem.cpp:3105-3111): fresh start of the
-	// current level, then ST_LOADING re-runs the load tail. Deviation D6.
+	// ACTION_RESTARTLEVEL (src/MenuSystem.cpp:3105-3111): loadGame(2); without
+	// a usable snapshot file, a fresh start of the current level.
 	void restartLevel();
+	// Death-effect reset + LoadingManager::loadState. False = no usable player file.
+	bool loadGame(int loadType);
+	// backToMain / shutdown stand-in (ADR 0037 §6); GameLoop stops on it.
+	bool quitRequested() const { return quitRequested_; }
 
 	// Single mutator, mirrors Canvas::setState (src/Canvas.cpp:1020-1217):
 	// latch stateChanged, zero stateVars[9], exit hooks, swap, enter hooks.
@@ -164,6 +170,7 @@ private:
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)
 	void tickCamera();       // ST_CAMERA per-frame order (src/Canvas.cpp:949-958)
+	void tickAutomap();      // ST_AUTOMAP (src/AutomapController.cpp:18-33)
 	void tickDying();
 
 	Init sys_;
@@ -171,6 +178,7 @@ private:
 	int loadingPhase_ = 0;
 	int64_t lastTurnTime_ = 0;
 	int64_t deathTimeMs_ = 0;
+	bool quitRequested_ = false;
 	std::vector<Action> pendingActions_;
 
 	// Frame input for the UI pass (levels survive across frames, edges do not).
@@ -218,6 +226,11 @@ private:
 	Text travelLabelText_;
 	Text travelNameText_;
 	Text travelPromptText_;
+
+	// ST_AUTOMAP per-frame model, cursor blink and the soft-key labels it borrows.
+	AutomapModel automapModel_;
+	Automap::Blink automapBlink_;
+	Text automapLeftText_, automapRightText_;
 
 	// Loading / saving box (ui.md §19.5): pacifier position and its 150 ms
 	// repaint throttle on upTimeMs, plus the caption buffers the model borrows.

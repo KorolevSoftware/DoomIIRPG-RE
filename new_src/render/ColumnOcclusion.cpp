@@ -50,22 +50,24 @@ bool ColumnOcclusion::project(int ax, int ay, int bx, int by, V& a, V& b) const 
 	return true;
 }
 
-void ColumnOcclusion::occludeLine(int x0, int y0, int x1, int y1, bool sortX) {
+bool ColumnOcclusion::occludeLine(int x0, int y0, int x1, int y1, bool sortX) {
 	V a, b;
-	if (!project(x0, y0, x1, y1, a, b)) return;
+	if (!project(x0, y0, x1, y1, a, b)) return false;
 	if (sortX && a.x > b.x) std::swap(a, b);
 	// occludeClippedLine (src/TinyGL.cpp:719-743).
 	int begX = (a.x + 7) >> 3;
 	int endX = (b.x + 7) >> 3;
 	if (begX < 0) begX = 0;
 	if (endX > kColumns) endX = kColumns;
-	if (endX <= begX) return;
+	if (endX <= begX) return false;
 	const int n = (b.z - a.z) / (endX - begX);
 	int n2 = a.z + (n * ((begX << 3) - a.x) >> 3);
+	bool tightened = false;
 	for (; begX < endX; ++begX, n2 += n) {
 		const int n3 = 0x7fffff / n2;
-		if (n3 < columnScale_[begX]) columnScale_[begX] = n3;
+		if (n3 < columnScale_[begX]) { columnScale_[begX] = n3; tightened = true; }
 	}
+	return tightened;
 }
 
 bool ColumnOcclusion::cullBox(int n, int n2, int n3, int n4) const {

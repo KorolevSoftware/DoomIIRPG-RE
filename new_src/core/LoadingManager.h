@@ -5,7 +5,7 @@
 #include <functional>
 
 #include "core/GameStates.h"
-#include "domain/game/WorldState.h"
+#include "core/SaveGame.h"
 
 namespace newcore {
 
@@ -36,23 +36,30 @@ public:
 		const Localization* loc = nullptr;
 		StateHost* host = nullptr;
 		const int64_t* gameTime = nullptr;
-		std::function<void(int menuId)> openMenu;   // used from G4b
+		const int64_t* upTimeMs = nullptr;
+		std::function<void(int menuId)> openMenu;
+		std::function<void()> quit;       // backToMain / shutdown stand-in (ADR 0037 §6)
 	};
 	void init(const Env& env);
+
+	void boot(bool forceNewGame);                          // App.cpp:120 loadConfig + main-menu stand-in (ADR 0037 §6)
+	void startGame(bool newGame);                          // MenuSystem::startGame (src/MenuSystem.cpp:3580-3608)
+	// LoadingManager::loadState + Game::loadState collapsed (src/LoadingManager.cpp:38-45,
+	// src/Game.cpp:2191-2215, deviation SL-D1). False = no usable player file, nothing changed.
+	bool loadState(int loadType);
+	int recentLoadType() const { return save_.recentBriefSave ? 2 : 1; }   // src/LoadingManager.cpp:753-760
+	void requestSave(int saveType);                        // canvas->saveState(type, 3, 196) from the menu
+	SaveGame& save() { return save_; }
 
 	void loadMap(int mapId, bool skipSave, bool newGame);  // src/LoadingManager.cpp:55-79
 	void changeMap(int b, int s);                          // src/ScriptThread.cpp:484-517
 	void debugChangeMap(int mapId);                        // DEBUG (removable)
-	void tickSaving();                                     // src/Canvas.cpp:853-903 subset
+	void tickSaving();                                     // src/Canvas.cpp:853-903
 	void finishTravelMap();                                // finishAndLoadLevel (src/TravelMapManager.cpp:514-521)
-	// loadState(2) (src/Game.cpp:2191-2215): level-entry snapshot back, reload
-	// the current map. False = no snapshot yet.
-	bool restartLevel();
-	WorldState& world() { return world_; }
 
 	// Load-tail hooks, called by GameContext::tickLoading phase 1, in this order.
 	void onEntitiesLoaded();   // src/LoadingManager.cpp:641-643, :659-670
-	void onPlayerSpawned();    // src/LoadingManager.cpp:673-677 (snapshot from G2a)
+	void onPlayerSpawned();    // src/LoadingManager.cpp:675-688
 	void onLoadFinished();     // src/LoadingManager.cpp:710-713
 	bool isLoadedGame() const { return isLoaded_; }   // skips snapshot + entrance event
 
@@ -65,17 +72,18 @@ public:
 private:
 	void saveState(int saveType, int captionId);   // src/LoadingManager.cpp:47-53
 	void enterTravelMap();                          // TravelMapManager::init var-15 part
+	PlayerState::Header headerAtPlayer(int mapId) const;
+	PlayerState::Header headerAtSpawn(int mapId, bool zeroIfNone) const;
 
 	Env env_;
-	WorldState world_;
+	SaveGame save_;
 	int lastMapID_ = 0;         // canvas->lastMapID; 0 at boot
 	int nextMap_ = 0;            // menuSystem->LEVEL_STATS_nextMap
 	int saveType_ = 0;
 	int caption_ = -1;           // packed (type<<10)|index, -1 = none
 	bool tmNewGame_ = false;     // travelMapManager.TM_NewGame
 	bool isLoaded_ = false;      // game->isLoaded
-	int activeLoadType_ = 0;     // game->activeLoadType (2 = restart, from G2a)
-	short numLevelLoads_[10] = {};   // game->numLevelLoads (config file, src/Game.cpp:1946)
+	int activeLoadType_ = 0;     // game->activeLoadType: 1 full, 2 brief
 	int tmLoad_ = 1, tmLast_ = 0;
 };
 

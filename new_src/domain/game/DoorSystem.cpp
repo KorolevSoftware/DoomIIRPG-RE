@@ -145,8 +145,7 @@ bool DoorSystem::performDoorEvent(int n, Entity* door, int n2, ScriptThread* own
 
 	// Snap modes (src/Game.cpp:1153-1155): n2 == 0 finishes the animation
 	// immediately (quiet-bit EV_DOOROP / entity-state callers); the
-	// ST_AUTOMAP force-snap has no counterpart (no automap state in the
-	// subset). Finishing through updateDoors keeps every completion side
+	// ST_AUTOMAP force-snap is snapAll, run every automap tick. Finishing through updateDoors keeps every completion side
 	// effect (open-end unlink, close-end texture restore, owner resume)
 	// identical to a lerp that ran its full 750 ms, and openDoors_
 	// registration above is untouched, so auto-close still works.
@@ -287,6 +286,13 @@ void DoorSystem::update(int dtMs) {
 	for (auto& a : doorAnims_) {
 		if (!a.active) continue;
 		a.t += dtMs;
+	}
+	updateDoors();
+}
+
+void DoorSystem::snapAll() {
+	for (auto& a : doorAnims_) {
+		if (a.active) a.t = a.dur;
 	}
 	updateDoors();
 }

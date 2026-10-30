@@ -67,6 +67,9 @@ public:
 	Texture tmLevels1, tmLevels2, tmLevels3, tmLevels4;
 	Texture tmToMoon, tmToEarth, tmToHell;
 	Texture tmBackground, tmGridHorz, tmGridVert;
+	// Automap (src/AutomapController.cpp:71, :322).
+	Texture automapBackground;   // gameHelpBG.bmp 480x320 (src/Canvas.cpp:171)
+	Texture automapCursor;       // Automap_Cursor.bmp (src/App.cpp:416), 4 px wide frames
 };
 
 // The one BMP -> indexed texture loader (ADR 0033 point 6); each failure logs.

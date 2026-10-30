@@ -425,13 +425,7 @@ void MenuSession::initMenu(int menuId) {
 	} else if (menuId == kMenuLoad) {                  // (:1714-1719)
 		type_ = kMenuTypeVCenter;
 		scrollIndex_ = 0;
-		// The original passes SetYESNO(136, 1, ACTION_LOAD = 3, 0), and its
-		// ACTION_LOAD calls canvas->loadState (:3035-3038). The rewrite has no
-		// save system, so YES is retargeted to a GOTO of the shipped
-		// MENU_INGAME_LOADNOSAVE (50), the "No Saved Game" + Back screen that
-		// ships in menus.bin — the designed refusal, not an invented one
-		// (spec §11.2 row 3). Nothing else about the screen changes.
-		setYesNo(kStrLoadGameQuestion, 1, kActionGoto, kMenuLoadNoSave);
+		setYesNo(kStrLoadGameQuestion, 1, kActionLoad, 0);
 	} else if (menuId == kMenuRestartLvl) {            // (:1728-1733)
 		type_ = kMenuTypeVCenter;
 		scrollIndex_ = 0;
@@ -508,19 +502,8 @@ void MenuSession::initMenu(int menuId) {
 				disableRow(i, "screen is built in code, not ported yet (G6)");
 			}
 			break;
-		case kActionSave:
-		case kActionSaveQuit:
-		case kActionSaveExit:
-			disableRow(i, "no save system");
-			break;
-		// ACTION_LOAD is deliberately NOT disabled: the LOAD confirm screen's
-		// YES row retargets to the shipped "No Saved Game" screen (id 50)
-		// instead, which is G7's business (spec §11.2 row 3).
 		case kActionChangeState:
-			disableRow(i, "no ST_AUTOMAP / ST_CREDITS state");
-			break;
-		case kActionBackToMain:
-			disableRow(i, "no main menu");
+			if (items_[i].def.param != 6) disableRow(i, "no ST_CREDITS state");   // 6 = ST_AUTOMAP (src/Canvas.h:73)
 			break;
 		case kActionShowDetails:
 			// showDetailsMenu() -> MENU_SHOWDETAILS (71), built in code from the
@@ -1623,12 +1606,28 @@ void MenuSession::select(int i) {
 		}
 		break;
 	case kActionRestartLevel:
-		// (:3105-3111) loadState(2) = the level-start brief save; deviation D6:
-		// no save system, so the level starts fresh (spec 2026-09-22 §10). The
+		// (:3105-3111) loadState(2) = the level-entry BRIEFPLAYER + SB_<map>. The
 		// "level restarted" message legacy adds outside MENU_INGAME_DEAD is not
 		// ported: loadMedia zeroes msgCount before it can show
 		// (src/LoadingManager.cpp:659).
 		if (env_.restartLevel) env_.restartLevel();
+		break;
+	case kActionLoad:                                             // (:3035-3037)
+		// A missing or damaged save opens the shipped "No Saved Game" screen
+		// (deviation SL-D2; legacy Error()s).
+		if (!env_.loadGame || !env_.loadGame()) gotoMenu(kMenuLoadNoSave);
+		break;
+	case kActionSave:                                             // (:3039-3049)
+		if (env_.saveGame) env_.saveGame(3 | (items_[i].def.param == 1 ? 0x100 : 0x80));
+		break;
+	case kActionSaveQuit:                                         // (:3113-3115)
+		if (env_.saveGame) env_.saveGame(67);
+		break;
+	case kActionSaveExit:                                         // (:3199-3201)
+		if (env_.saveGame) env_.saveGame(7);
+		break;
+	case kActionBackToMain:                                       // (:3051-3053)
+		if (env_.backToMain) env_.backToMain();
 		break;
 	case kActionConfirmUse:                                       // (:3188-3197)
 		// saveIndexes(2|4) is replaced by the nav stack (same note as kActionUseItemWeapon).
@@ -1689,6 +1688,9 @@ void MenuSession::select(int i) {
 		back();
 		break;
 	}
+	case kActionChangeState:                 // ACTION_CHANGESTATE (src/MenuSystem.cpp:3086-3092)
+		if (items_[i].def.param == 6 && env_.host != nullptr) env_.host->requestState(StateId::Automap);
+		break;
 	default:
 		std::fprintf(stderr, "[menu] action %d (param %d) has no rewrite path\n",
 			items_[i].def.action, items_[i].def.param);
@@ -1801,9 +1803,8 @@ void MenuSession::composeLabel(int i) {
 	row.action = d.action != 0;
 	row.centered = (d.flags & kItemAlignCenter) != 0;
 	// ONLY the data flag reaches the view. A row the REWRITE cannot honour (no
-	// save system, no automap state, no map reload, no main menu) still looks
-	// like a normal row — that is what the reference build shows for
-	// `Save Game` — and refuses in select() instead, so `disabledByRewrite` is
+	// credits state, no arrow controls, no details screen) still looks like a
+	// normal row and refuses in select() instead, so `disabledByRewrite` is
 	// deliberately NOT ORed in here.
 	row.disabled = (d.flags & kItemDisabled) != 0;
 

@@ -24,8 +24,10 @@ Topic files (created on demand):
 | `player-damage.md` | Player taking damage: armor/defense math, `pain`/`painEvent`, shake, rock-back, vignette, direction arrow, weapon red tint, `died()` → `ST_DYING` fall/fade → dead menu |
 | `fades.md` | Render scene fade: flags, `fadeScene` math/end behaviour, frame order, `EV_FADEOP` decode (bit15 = FADEIN), readers, map00 FADEOP list |
 | `map-change.md` | Level transition: `EV_CHANGE_MAP` decode, entry points, `loadMap`→`ST_SAVING`→`ST_TRAVELMAP`→`ST_LOADING`, saveType bits, spawn priority, per-map BRIEFWORLD (`SB_n`) persistence on revisit, what carries over |
+| `save-load.md` | Save/load to disk: file names (FWORLD, CONFIGFILENAME, BRIEFPLAYER, FULLPLAYER, SB_1..10), path/endianness, config + player byte layouts, full vs brief world, save triggers, `hasSavedState`, load flow, menus/strings |
 | `travel-map.md` | `ST_TRAVELMAP` inter-level screen: init from lastMapID/loadMapID, planets Moon/Earth/Hell, assets, phase timings (path reveal, spaceship, locator crosshair, prompt), input/skip, exit to `ST_LOADING`, `scriptStateVars[15]` travel direction, dead star-field page, mapID 10 = debug Test Map |
 | `ui.md` | HUD, menus, dialogs, fonts |
+| `automap.md` | `ST_AUTOMAP` (6): toggle keys/menu, shared playing input, seen bits (tile 0x80, line 0x8, sprite 0x200000) + persistence, exact `drawAutomap` layout/colors (cell 8, origin 112,32), cursor blink, givemap/god cheats |
 | `vending-machine.md` | Vending machine minigame: EV_MINIGAME type 4 entry, terminal/help/hack screens, 4-digit hack puzzle, per-machine save bits, prices table, exit, hand-off to menus 83-88, test locations |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
 | `audio.md` | sound/music |

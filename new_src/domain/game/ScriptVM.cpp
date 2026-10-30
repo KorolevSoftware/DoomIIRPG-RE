@@ -4,6 +4,7 @@
 #include <string>
 
 #include "core/GameContext.h"
+#include "domain/game/Automap.h"
 #include "domain/game/DialogSystem.h"
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
@@ -285,7 +286,8 @@ int32_t ScriptVM::readInt(ScriptThread* t) {
 int ScriptVM::evWait(ScriptThread* t, int ms) {
 	t->unpauseTime = (int)(*env_.gameTime + ms);
 	if ((t->flags & 0x1) != 0) {
-		env_.ctx->blockInputTime = t->unpauseTime; // ST_CAMERA/AUTOMAP branches n/a in the subset (src/ScriptThread.cpp:120-137)
+		env_.ctx->blockInputTime = t->unpauseTime; // ST_CAMERA/MENU branches n/a in the subset (src/ScriptThread.cpp:120-137)
+		if (env_.ctx->state() == StateId::Automap) env_.ctx->setState(StateId::Playing);   // (:129-131)
 	}
 	return 2;
 }
@@ -563,9 +565,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int args = readUShort(t);
 			int op = args >> 10;
 			// Legacy n43 (src/ScriptThread.cpp:751): quiet-bit clear AND not
-			// in the automap -> interactive; the automap half has no
-			// counterpart here (no automap state in the subset).
-			bool interactive = (op & 4) == 0;
+			// in the automap -> interactive.
+			bool interactive = (op & 4) == 0 && env_.ctx->state() != StateId::Automap;
 			int act = op & 3;
 			// n2 forwarded to performDoorEvent (src/ScriptThread.cpp:760):
 			// 1 animates, 0 snaps the animation instantly.
@@ -973,7 +974,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int packed = readUByte(t);
 			int style = packed & 0xF;                          // n32 (:550)
 			int flags = packed >> 4;                           // n31 (:549)
-			// ST_AUTOMAP force-exit (:551-554): no automap state in the subset.
+			if (env_.ctx->state() == StateId::Automap) env_.ctx->setState(StateId::Playing);   // (:551-554)
 			if (env_.game->skipDialog) {                       // (:555-557)
 				std::fprintf(stderr, "[script] DIALOG str=%d style=%d skipped (skipDialog)\n", strId, style);
 				break;
@@ -1198,6 +1199,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				}
 				combat.totalDamage = 1;
 				combat.playerPain(dmg, nullptr, true);
+				// Tail of Player::pain (src/Player.cpp:703-705), skipped by its god return (:654-656).
+				if (!player.god && env_.ctx->state() == StateId::Automap) env_.ctx->setState(StateId::Playing);
 			} else if (dmg < 0) {
 				player.addHealth(-dmg);
 			}
@@ -1216,8 +1219,29 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				if (mark) env_.game->ai.setMonsterClip(x, y);
 				else env_.game->ai.unsetMonsterClip(x, y);
 			}
-			std::fprintf(stderr, "[script] %s tile=%d,%d flags=0x%X%s\n", mark ? "MARKTILE" : "UNMARKTILE",
-				x, y, flags, (flags & 0x20) != 0 ? " (automap entrance skipped)" : "");
+			MapData& m = *env_.map;
+			const int tile = y * 32 + x;
+			if (mark) {                        // src/ScriptThread.cpp:1161-1179 (iOS mapFlags variant)
+				if ((flags & 0x20) != 0) m.mapEntranceAutomap = (int16_t)tile;
+				if ((flags & 0x10) != 0) m.mapExitAutomap = (int16_t)tile;
+				if ((flags & 0x2) != 0) {
+					for (int16_t& l : m.mapLadders) {
+						if (l == -1) { l = (int16_t)tile; break; }
+					}
+				}
+				m.mapFlags[tile] |= (uint8_t)((flags & 0xC) << 2);
+			} else {                           // src/ScriptThread.cpp:1761-1778
+				if ((flags & 0x20) != 0 && m.mapEntranceAutomap == tile) m.mapEntranceAutomap = -1;
+				if ((flags & 0x10) != 0 && m.mapExitAutomap == tile) m.mapExitAutomap = -1;
+				if ((flags & 0x2) != 0) {
+					for (int16_t& l : m.mapLadders) {
+						if (l == tile) l = -1;
+					}
+				}
+				m.mapFlags[tile] &= (uint8_t)~((flags & 0xC) << 2);
+			}
+			std::fprintf(stderr, "[script] %s tile=%d,%d flags=0x%X\n", mark ? "MARKTILE" : "UNMARKTILE",
+				x, y, flags);
 			break;
 		}
 
@@ -1362,7 +1386,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		}
 
 		case Enums::EV_GIVE_AUTOMAP:
-			std::fprintf(stderr, "[script] GIVE_AUTOMAP skipped (no automap)\n");
+			Automap::giveMap(*env_.map, 0, 0, 32, 32);   // src/ScriptThread.cpp:1815-1818
+			std::fprintf(stderr, "[script] GIVE_AUTOMAP\n");
 			break;
 
 		case Enums::EV_MINIGAME: {
@@ -1632,6 +1657,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			env_.hud->setDamageTime(env_.ctx->upTimeMs + 1000);
 			combat.totalDamage = 1;
 			combat.playerPain(amount, nullptr, true);
+			// Tail of Player::pain (src/Player.cpp:703-705), skipped by its god return (:654-656).
+			if (!player.god && env_.ctx->state() == StateId::Automap) env_.ctx->setState(StateId::Playing);
 			player.addArmor(-player.ce.getStat(Enums::STAT_ARMOR));
 			break;
 		}

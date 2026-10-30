@@ -4,13 +4,14 @@
 namespace newcore {
 
 // Legacy Canvas state ids (src/Canvas.h:68-93 numbering kept). Menu/Intro/
-// Combat/Automap/TravelMap/... are documented out-of-scope stubs (spec
+// Combat/... are documented out-of-scope stubs (spec
 // 2026-08-23-phase5-skeleton §3): not enumerated, unreachable; script
 // requests for them are logged by the VM.
 enum class StateId : int {
 	Menu        = 1,  // legacy ST_MENU (src/Canvas.h:68; spec 2026-08-28-menu §2.1)
 	Playing     = 3,  // legacy ST_PLAYING
 	InterCamera = 4,  // legacy ST_INTER_CAMERA (script lerp show; world renders from player view)
+	Automap     = 6,  // legacy ST_AUTOMAP (src/Canvas.h:73)
 	Dialog      = 8,  // legacy ST_DIALOG (real dialogs, spec GROUP 1)
 	Loading     = 7,  // legacy ST_LOADING
 	MiniGame    = 12, // legacy ST_MINI_GAME (src/Canvas.h:79; spec 2026-10-29-minigames-layout §4)

@@ -19,6 +19,8 @@ public:
 	size_t position() const { return pos_; }
 	size_t remaining() const { return size_ - pos_; }
 	bool eof() const { return pos_ >= size_; }
+	// True once any read/skip asked for more bytes than remaining().
+	bool overrun() const { return overrun_; }
 
 	void seek(size_t pos);
 	void skip(size_t count);
@@ -43,6 +45,7 @@ private:
 	const uint8_t* data_;
 	size_t size_;
 	size_t pos_;
+	bool overrun_ = false;
 };
 
 } // namespace newcore

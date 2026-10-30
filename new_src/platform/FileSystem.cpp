@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace newcore {
 
@@ -37,17 +38,27 @@ std::string FileSystem::findDataArchive(const std::string& archiveName) const {
 	return std::string();
 }
 
-bool FileSystem::ensureSaveDirectory() {
+bool FileSystem::ensureSaveDirectory() { return ensureDirectory(savePath_); }
+
+bool FileSystem::ensureDirectory(const std::string& path) {
 	struct stat st;
-	if (stat(savePath_.c_str(), &st) == 0) return true;
-	return mkdir(savePath_.c_str(), 0777) == 0;
+	if (stat(path.c_str(), &st) == 0) return true;
+	return mkdir(path.c_str(), 0777) == 0;
 }
 
-bool FileSystem::readFile(const std::string& path, std::vector<uint8_t>& out) {
+bool FileSystem::moveFile(const std::string& from, const std::string& to) {
+	return std::rename(from.c_str(), to.c_str()) == 0;
+}
+
+bool FileSystem::readFile(const std::string& path, std::vector<uint8_t>& out, size_t maxSize) {
 	FILE* fp = std::fopen(path.c_str(), "rb");
 	if (!fp) return false;
 	std::fseek(fp, 0, SEEK_END);
 	long size = std::ftell(fp);
+	if (size < 0 || static_cast<unsigned long>(size) > maxSize) {
+		std::fclose(fp);
+		return false;
+	}
 	std::fseek(fp, 0, SEEK_SET);
 	out.resize(static_cast<size_t>(size));
 	if (size > 0) {
@@ -60,18 +71,27 @@ bool FileSystem::readFile(const std::string& path, std::vector<uint8_t>& out) {
 	return true;
 }
 
+bool FileSystem::fileExists(const std::string& path) {
+	struct stat st;
+	return stat(path.c_str(), &st) == 0;
+}
+
+bool FileSystem::removeFile(const std::string& path) {
+	return std::remove(path.c_str()) == 0 || !fileExists(path);
+}
+
 bool FileSystem::writeFile(const std::string& path, const void* data, size_t size) {
 	std::string tmp = path + ".tmp";
 	FILE* fp = std::fopen(tmp.c_str(), "wb");
 	if (!fp) return false;
-	if (size > 0) {
-		if (std::fwrite(data, 1, size, fp) != size) {
-			std::fclose(fp);
-			std::remove(tmp.c_str());
-			return false;
-		}
+	// The temp file must be complete on disk before it may replace the old one.
+	bool ok = size == 0 || std::fwrite(data, 1, size, fp) == size;
+	ok = ok && std::fflush(fp) == 0 && fsync(fileno(fp)) == 0;
+	ok = std::fclose(fp) == 0 && ok;
+	if (!ok) {
+		std::remove(tmp.c_str());
+		return false;
 	}
-	std::fclose(fp);
 	if (std::rename(tmp.c_str(), path.c_str()) != 0) {
 		std::remove(tmp.c_str());
 		return false;

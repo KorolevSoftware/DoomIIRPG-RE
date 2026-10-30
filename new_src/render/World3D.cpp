@@ -1267,14 +1267,17 @@ bool World3D::walkNode(const MapData& map, int n, int viewX, int viewY, int view
 }
 
 // drawNodeLines (src/Render.cpp:717-744): solid lines (types 0/4) occlude,
-// endpoints in stored order. The automap |= 8 write is not ported.
+// endpoints in stored order. Lines the legacy walk would mark |= 8 go to
+// vis_.seenLines; GameContext applies them (ADR 0036).
 void World3D::occludeLeafLines(const MapData& map, int leaf) {
 	const int n2 = map.nodeChildOffset2[leaf];
 	for (int n3 = (n2 & 0x3FF) + (n2 >> 10 & 0x3F), i = n2 & 0x3FF; i < n3; ++i) {
 		const int t = map.lineFlags[i >> 1] >> ((i & 1) << 2) & 7;
+		if (t == 6) { vis_.seenLines.push_back(i); continue; } // LINE_TYPE_MAP, src/Render.cpp:740-742
 		if (t != 0 && t != 4) continue;
-		occl_.occludeLine((map.lineXs[(i << 1) + 0] & 0xFF) << 7, (map.lineYs[(i << 1) + 0] & 0xFF) << 7,
-		                  (map.lineXs[(i << 1) + 1] & 0xFF) << 7, (map.lineYs[(i << 1) + 1] & 0xFF) << 7, false);
+		if (occl_.occludeLine((map.lineXs[(i << 1) + 0] & 0xFF) << 7, (map.lineYs[(i << 1) + 0] & 0xFF) << 7,
+		                      (map.lineXs[(i << 1) + 1] & 0xFF) << 7, (map.lineYs[(i << 1) + 1] & 0xFF) << 7, false))
+			vis_.seenLines.push_back(i);
 	}
 }
 
@@ -1332,6 +1335,7 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 	vis_.valid = false;
 	vis_.cinematic = false;
 	vis_.drawnSprites.clear();
+	vis_.seenLines.clear();
 	std::memset(vis_.tiles, 0, sizeof(vis_.tiles));
 	if (!initialized_ || map.numNodes == 0) return;
 

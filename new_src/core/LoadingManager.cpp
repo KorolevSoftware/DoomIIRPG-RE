@@ -22,11 +22,95 @@ int stringId(int type, int index) { return (type << Localization::kStringIdShift
 void LoadingManager::init(const Env& env) {
 	env_ = env;
 	caption_ = stringId(kTextMain, 41);   // new game reaches ST_LOADING via finishAndLoadLevel (src/TravelMapManager.cpp:519)
-	world_.init({ env.game, env.player, env.vm, env.map, env.defs, env.gameTime });
+	save_.init({ env.game, env.player, env.vm, env.map, env.defs, env.gameTime, env.upTimeMs });
+}
+
+void LoadingManager::boot(bool forceNewGame) {
+	save_.loadConfig();
+	startGame(forceNewGame || !save_.hasSavedState());
+}
+
+void LoadingManager::startGame(bool newGame) {
+	if (!newGame) {
+		if (loadState(recentLoadType())) return;
+		std::fprintf(stderr, "[save] Continue failed -> new game\n");
+	}
+	save_.removeState();                                                  // src/MenuSystem.cpp:3587
+	activeLoadType_ = 0;                                                  // :3589-3602
+	isLoaded_ = false;
+	env_.game->loadMapID = 0;
+	lastMapID_ = 0;
+	Player& p = *env_.player;
+	const int bestGrades = p.bestGrades;                                  // legacy reset() leaves it
+	p.reset();
+	p.bestGrades = bestGrades;
+	p.totalDeaths = 0;
+	p.currentLevelDeaths = 0;
+	p.currentGrades = 0;
+	loadMap(1, false, true);   // character select + intro skipped: startupMap 1 (src/IntroSequenceManager.cpp:135)
+}
+
+bool LoadingManager::loadState(int loadType) {
+	Game& game = *env_.game;
+	Player& player = *env_.player;
+	save_.saveConfig();                                                   // src/LoadingManager.cpp:42
+	PlayerState::Header h;
+	if (!save_.loadPlayer(loadType, h)) return false;                    // legacy: Error() + exit
+	if (loadType == 2) player.currentLevelDeaths = 0;                     // src/Game.cpp:2200-2202
+	const int w = player.ce.weapon;                                       // selectWeapon(ce->weapon) (src/LoadingManager.cpp:691)
+	player.selectWeapon(w, w >= 0 ? env_.defs->find(Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON, w) : nullptr);
+	game.spawnParam = -1;                                                 // loadPlayerState (src/Game.cpp:2189)
+	if (h.viewX != 0 && h.viewY != 0) {                                  // src/Game.cpp:2205-2208
+		game.spawnParam = ((h.viewX >> 6) & 0x1F) | (((h.viewY >> 6) & 0x1F) << 5) |
+		                  (((h.viewAngle & 0x3FF) >> 7) << 10);
+		if (game.spawnParam == 0) game.spawnParam = -1;                   // 0 = header spawn (src/Game.cpp:946)
+	}
+	activeLoadType_ = loadType;
+	isLoaded_ = true;
+	loadMap(h.mapId, false, false);   // no save (activeLoadType != 0) -> TravelMap
+	return true;
+}
+
+void LoadingManager::requestSave(int saveType) { saveState(saveType, stringId(kTextIngame2, 196)); }
+
+PlayerState::Header LoadingManager::headerAtPlayer(int mapId) const {
+	// src/Canvas.cpp:871, src/LoadingManager.cpp:686-688, src/Game.cpp:2124-2137.
+	// prevX/saveX are familiar-only canvas fields: written from the view, ignored on read.
+	const Player& p = *env_.player;
+	PlayerState::Header h;
+	h.mapId = mapId;
+	h.viewX = p.destX;
+	h.viewY = p.destY;
+	h.viewAngle = p.destAngle;
+	h.viewPitch = p.viewPitch;
+	h.prevX = p.destX;
+	h.prevY = p.destY;
+	h.saveX = p.viewX;
+	h.saveY = p.viewY;
+	h.saveZ = p.viewZ;
+	h.saveAngle = p.viewAngle;
+	h.savePitch = p.viewPitch;
+	return h;
+}
+
+PlayerState::Header LoadingManager::headerAtSpawn(int mapId, bool zeroIfNone) const {
+	// src/Canvas.cpp:855-868; spawnParam -1 is the legacy 0 (ADR 0035).
+	PlayerState::Header h;
+	h.mapId = mapId;
+	const int sp = env_.game->spawnParam;
+	if (zeroIfNone && sp == -1) return h;
+	const int p = std::max(sp, 0);
+	const int x = 32 + (p & 0x1F) * 64;
+	const int y = 32 + ((p >> 5) & 0x1F) * 64;
+	h.viewX = h.prevX = h.saveX = x;
+	h.viewY = h.prevY = h.saveY = y;
+	h.viewAngle = ((p >> 10) & 0xFF) << 7;
+	h.saveZ = 36;
+	return h;
 }
 
 void LoadingManager::loadMap(int mapId, bool skipSave, bool newGame) {
-	if (mapId >= 1 && mapId <= 10 && numLevelLoads_[mapId - 1]++ == 0)
+	if (mapId >= 1 && mapId <= 10 && save_.numLevelLoads[mapId - 1]++ == 0)
 		env_.player->currentLevelDeaths = 0;                              // :59-66
 	lastMapID_ = env_.game->loadMapID;                                    // :67-68
 	env_.game->loadMapID = mapId;
@@ -73,32 +157,46 @@ void LoadingManager::saveState(int saveType, int captionId) {
 void LoadingManager::tickSaving() {
 	const int type = saveType_;
 	saveType_ = 0;
-	// 0x10 saves the current map, 0x08 the one just left (loadMap already advanced loadMapID; MC §3.1).
-	world_.saveLevel((type & 0x10) ? env_.game->loadMapID : lastMapID_);
-	if (type & 0x10) env_.game->levelGrade(true);      // commits before the menu is built (src/Game.cpp:2069-2071)
-	env_.hud->addMessage(env_.loc->get(kTextMain, 38), 0xAA000000, 0);   // "Game Saved" (src/Canvas.cpp:873)
-	// Deviation MD2: the leave-time BRIEFPLAYER write and clearEvents are
-	// skipped (overwritten by the entry snapshot / nothing queued).
-	if (type & 0x08) {
+	Game& game = *env_.game;
+	if (type & 0x10) game.levelGrade(true);            // before saveConfig: grades are config fields (src/Game.cpp:2069-2071)
+	// 0x08 saves the map just left (loadMap already advanced loadMapID; MC §3.1),
+	// 0x10 and manual saves the current one (src/Canvas.cpp:854-871).
+	const PlayerState::Header h = (type & 0x08) ? headerAtSpawn(game.loadMapID, true)
+	                            : (type & 0x10) ? headerAtSpawn(nextMap_, false)
+	                            :                 headerAtPlayer(game.loadMapID);
+	const int worldMap = (type & 0x08) ? lastMapID_ : game.loadMapID;
+	if (save_.saveState(type, worldMap, h))
+		env_.hud->addMessage(env_.loc->get(kTextMain, 38), 0xAA000000, 0);   // "Game Saved" (src/Canvas.cpp:873)
+	else
+		std::fprintf(stderr, "[save] save FAILED (type 0x%X)\n", type);    // legacy Error(48); deviation SL-D2
+	// clearEvents(1) (:899): nothing queued in the rewrite.
+	if (type & 0x04) {
+		env_.quit();                                   // backToMain stand-in (ADR 0037 §6)
+	} else if (type & 0x40) {
+		env_.quit();                                   // app->shutdown()
+	} else if (type & 0x08) {
 		enterTravelMap();                              // src/Canvas.cpp:885-886
 	} else if (type & 0x10) {                          // src/Canvas.cpp:888-890
 		std::fprintf(stderr, "[sound] 1069\n");        // Music_Level_End
 		env_.openMenu(kMenuLevelStats);
+	} else {
+		if (type & 0x100) std::fprintf(stderr, "[save] MENU_END_FINALQUIT not ported\n");
+		env_.host->requestState(StateId::Playing);     // 0x80 returnToGame (:894-897)
 	}
 }
 
 void LoadingManager::enterTravelMap() {
-	// src/TravelMapManager.cpp:23-43. getRecentLoadType() == 1 only after a
-	// full save (no save system yet), so the last id is always lastMapID.
+	// src/TravelMapManager.cpp:23-43.
 	tmLoad_ = std::clamp(env_.game->loadMapID, 1, 9);
-	tmLast_ = std::clamp(lastMapID_, 0, 9);
+	tmLast_ = (recentLoadType() == 1 && !tmNewGame_) ? tmLoad_ : std::clamp(lastMapID_, 0, 9);
 	if (tmLast_ == 0 && tmLoad_ > 1) tmLast_ = tmLoad_ - 1;
 	env_.vm->vars[15] = static_cast<short>(tmLoad_ > tmLast_ ? 0 : (tmLoad_ == tmLast_ ? 1 : 2));
 	env_.host->requestState(StateId::TravelMap);
 }
 
 void LoadingManager::finishTravelMap() {
-	caption_ = stringId(kTextMain, 41);   // "Loading..." (src/TravelMapManager.cpp:519)
+	// "Game Loaded" / "Loading..." (src/LoadingManager.cpp:645-650, src/TravelMapManager.cpp:519)
+	caption_ = stringId(kTextMain, isLoaded_ ? 39 : 41);
 	env_.host->requestState(StateId::Loading);
 }
 
@@ -107,31 +205,17 @@ void LoadingManager::onEntitiesLoaded() {
 		env_.player->highestMap = env_.game->loadMapID;                   // :641-643
 	env_.game->curLevelTime = *env_.gameTime;                             // playTime = curLevelTime (:663)
 	env_.player->levelInit();                                             // :667
-	if (!world_.restoreLevel(env_.game->loadMapID))                       // loadWorldState (:670)
-		env_.game->totalLevelTime = 0;                                    // src/Game.cpp:1751-1753
+	// loadWorldState (:670, src/Game.cpp:1736-1754). A corrupt record is logged
+	// by SaveGame and left partially applied (ADR 0037 §5).
+	if (!save_.loadWorld(env_.game->loadMapID, activeLoadType_ == 1))
+		env_.game->totalLevelTime = 0;
 }
 
 void LoadingManager::onPlayerSpawned() {
-	// saveLevelSnapshot (:675-677), before static func 0: the pre-script entry state.
-	if (!isLoaded_) {
-		world_.savePlayer();
-		world_.saveLevel(env_.game->loadMapID);
-	}
-}
-
-bool LoadingManager::restartLevel() {
-	if (!world_.restorePlayer()) return false;
-	const Player& p = *env_.player;
-	env_.game->spawnParam = -1;                                           // loadPlayerState (src/Game.cpp:2189)
-	if (p.viewX != 0 && p.viewY != 0) {                                  // src/Game.cpp:2205-2208
-		env_.game->spawnParam = ((p.viewX >> 6) & 0x1F) | (((p.viewY >> 6) & 0x1F) << 5) |
-		                        (((p.viewAngle & 0x3FF) >> 7) << 10);
-		if (env_.game->spawnParam == 0) env_.game->spawnParam = -1;       // 0 = header spawn (src/Game.cpp:946)
-	}
-	activeLoadType_ = 2;                                                  // :2209-2212
-	isLoaded_ = true;
-	loadMap(env_.game->loadMapID, false, false);   // no save (activeLoadType != 0) -> var 15 = 1 -> Loading
-	return true;
+	// :675-688, before static func 0: the pre-script entry state.
+	const int mapId = env_.game->loadMapID;
+	if (!isLoaded_) save_.saveLevelSnapshot(mapId, headerAtPlayer(mapId));
+	if (!isLoaded_ && !save_.hasSavedState()) save_.saveState(3, mapId, headerAtPlayer(mapId));   // first map of a new game
 }
 
 void LoadingManager::onLoadFinished() {

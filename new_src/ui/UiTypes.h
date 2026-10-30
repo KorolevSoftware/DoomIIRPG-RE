@@ -22,6 +22,7 @@ enum class UiId : int {
 	MenuInfo0, MenuInfo1, MenuInfo2, MenuInfo3, MenuInfo4, MenuInfo5,
 	MenuInfo6, MenuInfo7, MenuInfo8,
 	MenuSoftLeft, MenuSoftRight,
+	AutomapSoftLeft, AutomapSoftRight,
 	Count
 };
 

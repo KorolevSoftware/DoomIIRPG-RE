@@ -118,6 +118,7 @@ bool GameLoop::run(AppContext& context) {
 			acc = 0;
 			ctx.tick();
 			++ticks;
+			if (ctx.quitRequested()) running = false;
 			while (nextMenu < menuTicks.size() && menuTicks[nextMenu] == ticks) {
 				ctx.queueAction(Action::Menu);
 				++nextMenu;

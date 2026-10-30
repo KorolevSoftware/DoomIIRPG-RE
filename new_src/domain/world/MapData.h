@@ -86,6 +86,12 @@ public:
 	std::vector<int32_t> tileEvents;   // numTileEvents * 2
 	std::vector<uint8_t> mapByteCode;  // mapByteCodeSize
 	std::vector<uint8_t> mapFlags;     // 1024 tile flags (two tiles per byte packed)
+	// Automap markers written by EV_MARKTILE/EV_UNMARKTILE; -1 = none. Reset by every
+	// map load through the fresh MapData (src/LoadingManager.cpp:317-322).
+	static constexpr int kMaxLadders = 10;   // Render::MAX_LADDERS_PER_MAP (src/Render.h:71)
+	int16_t mapEntranceAutomap = -1;          // src/Render.h:180
+	int16_t mapExitAutomap = -1;              // src/Render.h:181
+	int16_t mapLadders[kMaxLadders] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
 
 	// ---- Maya cameras (raw) ----
 	struct MayaCamera {

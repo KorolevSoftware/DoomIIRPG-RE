@@ -4,20 +4,18 @@
 #include <cstdint>
 #include <vector>
 
-#include "domain/game/Player.h"
-
 namespace newcore {
 
 class EntityDefs;
 class Game;
 class MapData;
+class Player;
 class ScriptVM;
 
-// Per-map world state, ADR 0034: one byte blob per mapID in the legacy brief
-// saveWorldState layout, plus the level-entry player snapshot.
+// World-record codec (ADR 0034, ADR 0037 §4): the legacy saveWorldState /
+// loadWorldState layout of the loaded map. Storage is SaveGame's.
 class WorldState {
 public:
-	static constexpr int kNumMaps = 10;
 	struct Env {
 		Game* game = nullptr;
 		Player* player = nullptr;
@@ -28,23 +26,17 @@ public:
 	};
 	void init(const Env& env);
 
-	// saveWorldState(OS, true) (src/Game.cpp:1576-1734) of the LOADED map into slot mapId-1.
-	void saveLevel(int mapId);
-	// loadWorldState (src/Game.cpp:1736-1909). False = empty slot / mismatch (fresh map).
-	bool restoreLevel(int mapId);
-	// saveLevelSnapshot's player half (src/Game.cpp:2119-2141) / loadState(2)'s read.
-	// shortcut: value copy of Player, the save system replaces it with savePlayerState.
-	void savePlayer();
-	bool restorePlayer();          // false = no snapshot
-	void clear();                  // removeState(true) (src/Game.cpp:2271-2318), new game
-	// For the future save system (SB_<mapId>, src/Game.cpp:3706-3715).
-	const std::vector<uint8_t>& levelBlob(int mapId) const { return levels_[mapId - 1]; }
+	// saveWorldState(OS, brief) of the LOADED map (src/Game.cpp:1576-1734).
+	// Accumulates totalLevelTime.
+	std::vector<uint8_t> save(bool brief);
+	enum class Restore { Applied, Rejected, Corrupt };
+	// loadWorldState(IS) (src/Game.cpp:1756-1909). Rejected = empty blob or
+	// compile-date mismatch (nothing applied). Corrupt = overrun / bad index /
+	// lerp count != 0, possibly partially applied.
+	Restore restore(const std::vector<uint8_t>& blob);
 
 private:
 	Env env_;
-	std::vector<uint8_t> levels_[kNumMaps];
-	Player player_;
-	bool hasPlayer_ = false;
 };
 
 } // namespace newcore
