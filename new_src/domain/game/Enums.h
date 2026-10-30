@@ -232,6 +232,11 @@ static constexpr int TILENUM_SWITCH = 173;
 // Decor subtype that keeps its hidden bit at spawn (src/Enums.h:46,
 // src/Entity.cpp:81).
 static constexpr int DECOR_STATUE = 3;
+static constexpr int DECOR_WATER_SPOUT = 7;            // src/Enums.h:49
+static constexpr int CORPSE_SKELETON = 17;             // ET_CORPSE subtype (src/Enums.h:79)
+// Dummy target tiles: hidden ones stay linked on entity restore (src/Enums.h:757-762).
+static constexpr int TILENUM_DUMMY_START = 140;
+static constexpr int TILENUM_DUMMY_END = 143;
 
 // ET_ATTACK_INTERACTIVE subtypes (src/Enums.h:54-57). The crate one also gates
 // the destroyable count (src/Game.cpp:449 excludes 2 and 3).

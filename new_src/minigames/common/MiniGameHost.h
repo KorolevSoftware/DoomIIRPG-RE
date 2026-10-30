@@ -37,7 +37,7 @@ public:
 	struct Env {
 		ScriptVM* vm = nullptr;
 		StateHost* host = nullptr;
-		Game* game = nullptr;               // combat.loadMapID (vending machine id)
+		Game* game = nullptr;               // loadMapID (vending machine id)
 		Player* player = nullptr;
 		const Tables* tables = nullptr;     // energyDrinkData (table 10), oscCycle
 		const Localization* loc = nullptr;

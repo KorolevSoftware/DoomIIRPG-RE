@@ -17,6 +17,8 @@ Namespace for everything: `newcore`._
 | `CinematicCamera.h/.cpp` | **(planned, P1-G2)** owns `MayaCamera` + the cinematic clock: `startCinematic`, `advanceCameraKey` parking, key boundaries/Snap, skip, `renderPose()` (nullptr = no cinematic owns the view — the single source of truth for fov / cockpit overlay / view-weapon suppression). |
 | `LootSession.h/.cpp` | **(planned, P1-G3)** ST_LOOTING slice: crouch/dwell/stand pose clock, loot-pool session state, `handleAction`, loot menu overlay. |
 | `MenuSession.h/.cpp` | **(planned, ADR 0013 / spec `specs/2026-08-28-menu.md` G3+)** the whole `ST_MENU` slice: retained menu state (current menu id/type, items copy, `selectedIndex`/`scrollIndex`, the 3-value nav stack of depth 10), `initMenu` per screen (file rows via `MenuData` + the code-built confirm/help/notebook bodies), `moveDir` wrap/clamp, page steps, `select`/`back`/`returnToGame`, and the per-frame `MenuViewModel` build (row composition, cursor oscillation, scroll pixels, scrollbar thumb). **(planned, spec `specs/2026-10-28-use-item.md`)** `Env::game`, `menuParam_`, item-use confirm 77 (`setYesNo` with `%01` args), actions 20/21/24/26, refusal screens 79-82, Nano Drinks list 75, cursor fix-up in `back()`. |
+| `LoadingManager.h/.cpp` | **(planned, ADR 0035 / spec `specs/2026-10-29-map-change.md`)** port of `src/LoadingManager.cpp`'s map-change half, owned by `GameContext` (`loading()`): `loadMap(id, skipSave, newGame)` gateway, `EV_CHANGE_MAP` effects (`changeMap`), `ST_SAVING` (16) tick, var-15 travel direction, Restart Level (`loadState(2)`), load-tail hooks (`onEntitiesLoaded`/`onPlayerSpawned`/`onLoadFinished`); owns `WorldState`. Flow state: `lastMapID`, `nextMap`, `numLevelLoads[10]`, `activeLoadType`, `isLoaded`, `TM_NewGame`. |
+| `TravelMapSession.h/.cpp` | **(planned, spec `specs/2026-10-29-map-change.md` G5a)** `ST_TRAVELMAP` (21) phase machine (`TravelMapManager` port minus the dead star-field page): `begin(load,last)`, per-frame `buildModel(TravelMapModel&)`, `handleAction` (MENU skips, FIRE at the prompt). |
 | `UiInputCollector.h/.cpp` | **(planned, ADR 0012, G3)** the single SDL -> `UiInput` normalizer (cursor in canvas coords, press/release edges, `Nav`, wheel) plus the moved keyboard->`Action` switch; keys and mouse both end up in `GameContext::pendingActions_`. |
 | `PlayerActions.h/.cpp` | **(planned, P1-G7)** playing input (move/turn/use/fire commit); **(planned, ADR 0016)** the `Use` chain hoists the fire-target election above the front-tile script so the crate open (elect → crate → script → door → fire) sits where the original has it, and the elected hit + distance are computed once and reused, arrival hooks `finishMovement`/`finishRotationFired`, `flagForFacingDir`, `spawnPlayer`, the script GOTO handshake fields. |
 
@@ -39,6 +41,8 @@ Namespace for everything: `newcore`._
 | `GameSprites.h/.cpp` | **(planned, ADR 0030 / spec `specs/2026-09-22-monster-attacks.md` G7)** 48 runtime sprites in the custom slots appended to `MapData` (missiles, impact anims, claw overlays): `alloc`/`allocAnim`/`destroy`/`clear`/`update`, `activePropogators`. |
 | `ViewVisibility.h` | **(planned, ADR 0029, G5)** plain data written once per frame by `GameContext::render` from `SceneRenderer`/`World3D::drawBSP`: drawn sprite list + visible-tile bitset; read next tick by sight wake and the on-screen step test. |
 | `SpriteLerps.h/.cpp` | **(planned, P2-GD)** script sprite-lerp pool (LERP* opcodes), `vecToDir`, `spriteZBias`. **(planned, spec `specs/2026-10-28-secret-doors.md` G1)** two-phase secret push-wall lerp `startSecretWall` (SECRET_OPEN -> re-arm SECRET_HIDE in `freeLerpSprite`, unlink + HIDDEN at end), `secretActive()`; `Game::awardSecret` + `mapSecretsFound` (G2). |
+| `WorldState.h/.cpp` | **(planned, ADR 0034 / spec `specs/2026-10-29-map-change.md` G2a)** per-map world state: ten in-memory blobs in the legacy brief `saveWorldState` layout (`saveLevel`/`restoreLevel`), level-entry `Player` snapshot for Restart Level, `levelBlob()` for the future save system. |
+| `EntityState.h/.cpp` | **(planned, G2b)** entity records of the world blob: port of `saveEntityStates`/`getSaveHandle`/`Entity::saveState`/`loadState`/`restoreBinaryState`, brief variant. |
 | `CorpseLoot.h/.cpp` | **(planned, P2-GE)** loot-set defaults, corpse pooling/composition, grant pass. |
 | `ItemPickup.h/.cpp` | **(planned, ADR 0014 / spec `specs/2026-08-29-world-item-pickup.md` G2)** world-item touch slice: `touched`/`touchedItem` per item class (inventory/food/ammo/weapon rolls, caps, starter ammo), HUD messages 83-87/223, `EntityDb::removeEntity` + SCR_ITEM_PICKUP hook; driven by `Game::touchTile` from `PlayerActions::finishMovement` only. |
 | `EntityDb.h/.cpp` | **(planned, P2-GF)** entity vector + 32x32 tile lists, link/unlink/find, world & player slots. |
@@ -188,6 +192,8 @@ Deleted only after the user signs off on G5 (byte-identical) and G6 (Metal looks
 | `HudView.h/.cpp` | **(planned, G4)** `UiResult drawHud(Ui&, const HudModel&)`; bottom-bar geometry per `docs/original-code/ui.md` §1-§6. |
 | `LootView.h/.cpp` | **(planned, G5)** `drawLootList` — moved verbatim from `LootSession::draw`; 3×16 px rows, no scissor. |
 | `DialogView.h/.cpp` | **(planned, G7)** `drawDialog` — the drawing half of `DialogSystem` only. |
+| `LoadingView.h/.cpp` | **(planned, spec `specs/2026-10-29-map-change.md` G3)** `drawLoading` — the `ST_SAVING`/`ST_LOADING` box (FabricBG tile, caption, "Just a moment!", bar + fire pacifier). |
+| `TravelMapModel.h`, `TravelMapView.h/.cpp` | **(planned, G5a/G5b)** per-frame travel-map model and its view (background, BLEND50 grid, closeup, path reveal + label, ship, crosshair lines, locator box, prompt). |
 | `MenuModel.h` | **(planned, spec `specs/2026-08-28-menu.md` G3)** `MenuRow` + `MenuViewModel`: menuRect/clip/itemWidth geometry, ALL rows with their resolved heights, `scrollPx`, `selectedRow`, cursor offset, scrollbar thumb, chrome flags and the two soft-key labels. No menu id, no `StateId`. |
 | `MenuView.h/.cpp` | **(planned, G3+)** `UiResult drawMenu(Ui&, const MenuViewModel&)`: opaque background + bottom panel + health/shield readout + soft keys, then the clipped row walk (296x32 plates at 25 %/100 % alpha, `'\x8A'` cursor glyph, right-aligned value column) and the menu's own 4-sheet scrollbar. |
 
@@ -276,6 +282,8 @@ _See [adr/](adr/):_
 - [0031 — Visibility bookkeeping runs a CPU port of TinyGL's column-occlusion cull; the GPU draw list is untouched](adr/0031-cpu-column-occlusion-for-visibility.md) (2026-10-28)
 - [0032 — Item use: `Player` owns the item switch, effect planes and msg 111; the menu owns turn sequencing](adr/0032-item-use-ownership.md) (2026-10-28)
 - [0033 — Minigames live in `new_src/minigames/<name>/` behind one small `MiniGame` interface, dispatched by `MiniGameHost`](adr/0033-minigames-folder-and-interface.md) (2026-10-29)
+- [0034 — Per-map world state is an in-memory byte blob in the legacy brief world-record layout](adr/0034-per-map-world-state-in-memory-legacy-layout.md) (2026-10-29)
+- [0035 — Map transitions run through a `LoadingManager` port; the old map stays resident until Loading phase 1; `MapData` is swapped in place](adr/0035-map-transition-flow-loadingmanager.md) (2026-10-29)
 
 ## Specs
 
@@ -302,3 +310,4 @@ _See [adr/](adr/):_
 - [2026-10-28 — Secret doors (push walls), awardSecret, EV_AWARDSECRET (G1-G3)](specs/2026-10-28-secret-doors.md)
 - [2026-10-28 — Use inventory items: confirm 77, `Player::useItem`, status effects/buffs + consumers, Nano Drinks list, HUD buff box (G1a-G3)](specs/2026-10-28-use-item.md)
 - [2026-10-29 — Minigames: folder layout, `MiniGame` interface, `ST_MINI_GAME`, `EV_MINIGAME` start/resume, vending machine terminal/hack game/menus 83-87 (G1-G6)](specs/2026-10-29-minigames-layout.md)
+- [2026-10-29 — Map change: `LoadingManager` gateway, per-map world state + restart snapshot, loading box, level-stats menu, travel map (G1a-G5b)](specs/2026-10-29-map-change.md)

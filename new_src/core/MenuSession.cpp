@@ -8,6 +8,7 @@
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
+#include "domain/world/MapData.h"
 #include "io/EntityDefs.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
@@ -180,6 +181,20 @@ void buildFraction(Text& t, int i, int i2) {
 	t.append(i2);
 }
 
+// Player::formatTime (src/Player.cpp:1127-1146): H:MM:SS, hours unpadded.
+void formatTime(Text& t, int ms) {
+	const int s = ms / 1000;
+	const int m = s / 60;
+	t.setLength(0);
+	t.append(m / 60);
+	t.append(":");
+	if (m % 60 < 10) t.append("0");
+	t.append(m % 60);
+	t.append(":");
+	if (s - m * 60 < 10) t.append("0");
+	t.append(s - m * 60);
+}
+
 // buildModStat (:3853-3862). Verbatim, including the sign quirk: a negative
 // modifier prints its own minus after the literal "(-", i.e. "12(--3)".
 void buildModStat(Text& t, int i, int i2) {
@@ -296,6 +311,9 @@ ScreenGeom geometryFor(int menuId) {
 	case kMenuVendingConfirm:
 	case kMenuVendingCantBuy:
 		return { UiRect{ 70, 11, 203, 250 }, 320 - 64 };
+	// MENU_LEVEL_STATS (:4233-4239); paint re-applies y 0 / h 320 (:803-806).
+	case kMenuLevelStats:
+		return { UiRect{ 23, 0, 407, 320 }, 320 };
 	default:
 		// menu >= MENU_INGAME: setMenuDimentions(70, 0, 340, 320 - 64) (:4191-4194).
 		return { kListRect, 320 - 64 };
@@ -709,7 +727,7 @@ void MenuSession::buildVendingSnacksScreen() {
 	addVendingHeader(kMenuVendingSnacks);
 	if (env_.vending == nullptr || env_.loc == nullptr || env_.defs == nullptr ||
 	    env_.game == nullptr) return;
-	const int mapId = env_.game->combat.loadMapID;   // canvas->loadMapID (:2123)
+	const int mapId = env_.game->loadMapID;   // canvas->loadMapID (:2123)
 	int set = 1;
 	if (mapId >= 1 && mapId <= 3) set = 0;
 	else if (mapId >= 7 && mapId <= 9) set = 2;
@@ -1101,11 +1119,12 @@ void MenuSession::loadNotebook() {
 //
 // MENU_INGAME_PLAYER rows 2..11 (fillStatus' b2 block, :3931-3950) are all
 // sourceable. Rows 12..18 (the b3 block, :3968-3977) need player->totalTime,
-// totalMoves, totalDeaths and counters[1,2,6,7]; MENU_INGAME_LEVEL (:3951-3967)
-// needs the level timer, mapSecretsFound/totalSecrets, monsterStats, moves,
-// currentLevelDeaths and levelGrade. None of those exist in the rewrite, so
-// those rows keep no value at all rather than a made-up number (spec §15).
+// totalMoves, totalDeaths and counters[1,2,6,7], which do not exist in the
+// rewrite, so those rows keep no value at all rather than a made-up number
+// (spec §15). The level block (b, :3951-3967) is fillLevelValues.
 void MenuSession::fillValues() {
+	if (menu_ == kMenuLevelStats) fillLevelValues(3, 5);   // initMenu (:1244-1253)
+	else if (menu_ == kMenuLevel) fillLevelValues(1, 2);   // initMenu (:1599-1607)
 	if (menu_ != kMenuPlayer || env_.player == nullptr) return;
 	const Player& p = *env_.player;
 	if (numItems_ < 12) return;
@@ -1132,6 +1151,41 @@ void MenuSession::fillValues() {
 			"(time/turns/deaths/shots/best shot/total damage) have no source in "
 			"the rewrite and stay blank\n");
 	}
+}
+
+// fillStatus(true, false, false) (:3951-3967): %01 map name becomes the label
+// of nameRow (its textField is ARGUMENT1), %02..%07 the values of six rows.
+void MenuSession::fillLevelValues(int nameRow, int firstValueRow) {
+	if (env_.game == nullptr || env_.player == nullptr || env_.map == nullptr ||
+	    env_.loc == nullptr || env_.tables == nullptr || env_.gameTime == nullptr) return;
+	if (numItems_ < firstValueRow + 6) return;
+	Game& g = *env_.game;
+	const Player& p = *env_.player;
+	const Localization& loc = *env_.loc;
+	constexpr int kArgument1 = 241;                                // MenuStrings::ARGUMENT1 (src/MenuStrings.h:290)
+
+	// levelNames[loadMapID-1] stands in for render->mapNameID (mapNameField,
+	// src/LoadingManager.cpp:331); the two are equal on the shipped maps.
+	const std::vector<int16_t>& names = env_.tables->levelNames;
+	items_[nameRow].def.labelId = loc.makeId(kTextIngame2, kArgument1);
+	literalBuf_[nameRow].setLength(0);
+	if (g.loadMapID >= 1 && g.loadMapID <= static_cast<int>(names.size()))
+		literalBuf_[nameRow].append(loc.get(kTextIngame2, names[g.loadMapID - 1]));
+	items_[nameRow].hasLiteralLabel = true;
+
+	Text* v = &valueBuf_[firstValueRow];
+	formatTime(v[0], g.totalLevelTime + static_cast<int>(*env_.gameTime - g.curLevelTime));
+	buildFraction(v[1], g.mapSecretsFound, env_.map->totalSecrets);
+	int killed = 0, total = 0;
+	g.fillMonsterStats(killed, total);
+	buildFraction(v[2], killed, total);
+	v[3].setLength(0);
+	v[3].append(p.moves);
+	v[4].setLength(0);
+	v[4].append(p.currentLevelDeaths);
+	v[5].setLength(0);
+	v[5].append(loc.get(kTextIngame2, Player::gradeToString(g.levelGrade(false))));
+	for (int i = 0; i < 6; ++i) items_[firstValueRow + i].hasValue = true;
 }
 
 void MenuSession::disableRow(int i, const char* reason) {
@@ -1420,9 +1474,9 @@ void MenuSession::scrollPageDown() {                     // (:332-346)
 }
 
 // handleMenuEvents (:2826-2969), reduced to the actions the rewrite queues.
-// ACTION_AUTOMAP reaches only screens the in-game tree does not have
-// (LEVEL_STATS / SHOWDETAILS / MORE_GAMES), and ACTION_PASSTURN is explicitly
-// ignored (:2891), so both do nothing here.
+// ACTION_AUTOMAP selects on LEVEL_STATS (:2903-2904); its other targets
+// (SHOWDETAILS / MORE_GAMES) are not in the rewrite, so elsewhere it does
+// nothing. ACTION_PASSTURN is explicitly ignored (:2891).
 void MenuSession::handleAction(Action a) {
 	// The torn page swallows everything (:2840-2848): only ACTION_MENU,
 	// ACTION_FIRE and ACTION_MENU_ITEM_INFO close it, and every other action
@@ -1458,8 +1512,16 @@ void MenuSession::handleAction(Action a) {
 	case Action::TurnLeft:   scrollPageUp(); break;       // ACTION_LEFT
 	case Action::TurnRight:  scrollPageDown(); break;     // ACTION_RIGHT
 	case Action::Use:        select(selectedIndex_); break; // ACTION_FIRE
-	case Action::Menu:
-	case Action::BackKey:                                 // ACTION_MENU / ACTION_BACK
+	case Action::Automap:                                 // ACTION_AUTOMAP (:2903-2904)
+		if (menu_ == kMenuLevelStats) select(selectedIndex_);
+		break;
+	case Action::BackKey:                                 // ACTION_BACK (:2943-2944)
+		if (menu_ == kMenuLevelStats) {
+			select(selectedIndex_);
+			break;
+		}
+		[[fallthrough]];
+	case Action::Menu:                                    // ACTION_MENU
 		// Menu 83 returns to the vending terminal instead (:2927-2928, :2947-2948).
 		if (menu_ == kMenuVending && env_.vending != nullptr) env_.vending->returnFromBuying();
 		else back();
@@ -1531,6 +1593,10 @@ void MenuSession::select(int i) {
 		return;
 	}
 	if (menu_ == kMenuVendingConfirm) std::fprintf(stderr, "[sound] 1125\n");   // (:2983-2985)
+	if (menu_ == kMenuLevelStats) {                                  // (:2996-3000); endingGame not ported
+		if (env_.continueLevelStats) env_.continueLevelStats();
+		return;
+	}
 	if (type_ == kMenuTypeHelp || type_ == kMenuTypeNotebook) {       // (:3004-3011)
 		back();
 		return;
@@ -1843,6 +1909,15 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 		m.itemWidth = kVendingItemWidthPx;
 		m.itemPadding = kVendingPaddingBottom;
 		m.showQtyArrows = menu_ == kMenuVendingConfirm;
+	}
+
+	// MENU_LEVEL_STATS is below MENU_INGAME: only its own background, no bottom
+	// panel, no health/shield line (:734-763) and no menu soft keys
+	// (updateTouchButtonState shows none for it, :4498-4627).
+	if (menu_ == kMenuLevelStats) {
+		m.statsSkin = true;
+		m.drawBottomPanel = false;
+		return true;
 	}
 
 	// Health / shield readout (:742-758); the vending branch has none (:735-737).

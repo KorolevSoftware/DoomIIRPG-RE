@@ -7,7 +7,9 @@
 
 #include "core/CinematicCamera.h"
 #include "core/GameStates.h"
+#include "core/LoadingManager.h"
 #include "core/LootSession.h"
+#include "core/TravelMapSession.h"
 #include "core/MenuSession.h"
 #include "core/PlayerActions.h"
 #include "domain/game/Game.h"
@@ -67,9 +69,9 @@ public:
 		Ui* ui = nullptr;
 		// Parsed menus.bin (ADR 0013), built in Main.cpp next to Tables.
 		const MenuData* menus = nullptr;
-		// Re-reads the current map file into *map (Main.cpp); textures stay
-		// valid because the media set is the same. False = read/parse failed.
-		std::function<bool()> reloadMap;
+		// Reads map%02d.bin (mapId-1) into *map in place, re-uploads world
+		// textures, sky and map strings. False = read/parse failed.
+		std::function<bool(int mapId)> loadMapFile;
 	};
 
 	void init(const Init& sys);
@@ -99,6 +101,10 @@ public:
 	// diverge on turn semantics.
 	void applyUiAction(UiAction a, int index);
 
+	// DEBUG (golden capture runs, set by GameLoop when capture ticks are
+	// given): the travel map finishes on its first tick.
+	bool skipTravelMap = false;
+
 	// PHASE5 DEBUG (removable): grants both keycards without the loot system.
 	void debugGiveKeycards();
 
@@ -117,6 +123,9 @@ public:
 
 	// ST_MINI_GAME dispatcher; the VM starts minigames through it (ADR 0033).
 	MiniGameHost& minigames() { return minigames_; }
+
+	// loadMap gateway, EV_CHANGE_MAP effects, ST_SAVING tick (ADR 0035).
+	LoadingManager& loading() { return loading_; }
 
 	// Clocks in ms. upTimeMs is the monotonic app clock; gameTime pauses
 	// outside Playing this phase (spec deviation C5).
@@ -151,6 +160,7 @@ private:
 
 	bool inputBlocked() const;
 
+	void unloadMap_();       // per-map runtime teardown before the next map file is read
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)
 	void tickCamera();       // ST_CAMERA per-frame order (src/Canvas.cpp:949-958)
@@ -199,6 +209,29 @@ private:
 
 	// ST_MINI_GAME: calling thread, active game, shared endGame tail.
 	MiniGameHost minigames_;
+
+	// Map-change gateway (ADR 0035).
+	LoadingManager loading_;
+
+	// ST_TRAVELMAP logic and the producer-side strings its model borrows.
+	TravelMapSession travel_;
+	Text travelLabelText_;
+	Text travelNameText_;
+	Text travelPromptText_;
+
+	// Loading / saving box (ui.md §19.5): pacifier position and its 150 ms
+	// repaint throttle on upTimeMs, plus the caption buffers the model borrows.
+	static constexpr int kPacifierStart = 174;   // SCR_CX - 66
+	static constexpr int kPacifierEnd = 302;     // SCR_CX + 62
+	static constexpr int kPacifierMs = 150;
+	int pacifierX_ = kPacifierStart;
+	int64_t lastPacifierMs_ = 0;
+	Text loadingCaption_;
+	Text loadingSubCaption_;
+	// Presented-frame counter: Saving work and Loading phase 1 wait until a
+	// frame was rendered after frameAtStateEntry_ (src/LoadingManager.cpp:610-616).
+	uint32_t framesRendered_ = 0;
+	uint32_t frameAtStateEntry_ = 0;
 };
 
 } // namespace newcore

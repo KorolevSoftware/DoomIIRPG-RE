@@ -54,7 +54,7 @@ bool VendingMachine::loadAssets(TextureStore& store, const UiAssets::ResourceRea
 
 void VendingMachine::begin(int b1, int /*b2*/, int /*b3*/) {
 	const MiniGameHost::Env& e = host_->env();
-	const int loadMapID = e.game->combat.loadMapID;
+	const int loadMapID = e.game->loadMapID;
 	screen_ = kScreenTerminal;
 	result_ = 0;
 	chevronClock_ = *e.upTimeMs;

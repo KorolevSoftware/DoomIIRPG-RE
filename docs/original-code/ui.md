@@ -1173,3 +1173,210 @@ count, not a clip. FIRE while revealing jumps `dialogTypeLineIdx` to
 | dialog text | `DialogSystem` with the real 25 ms/char reveal and the page machinery | ok |
 | loot list | `LootSession` with the 500 ms crouch gate (`new_src/core/LootSession.cpp:105,141`) | ok |
 | draw order | `drawMessages` paints important/centre **then** cin title **then** subtitle in one function (`new_src/ui/Hud.cpp:469-493`) | the original interleaves them across `repaintFlags` bits (top bar first, cinematic last) — same relative order, one pass |
+
+# 19. Level stats and loading screens
+
+Screens shown around a map change. The `loadMap` sequence itself (save
+files, `ST_TRAVELMAP`, two-phase `loadMedia`) lives in
+[`map-change.md`](map-change.md) and [`game-flow.md`](game-flow.md) §3;
+this section covers only what is **shown** and how the player leaves it.
+Raw log: [`../research/2026-10-29-level-stats-loading.md`](../research/2026-10-29-level-stats-loading.md).
+
+## 19.1 How the stats screen is reached
+
+The stats screen is **not a Canvas state**. It is the menu
+`Menus::MENU_LEVEL_STATS = 1` (`src/Menus.h:46`), shown in `ST_MENU`.
+
+1. `EV_CHANGE_MAP` stores `LEVEL_STATS_nextMap = arg & 0xF`; stats are shown
+   only when `nextMap >= loadMapID` (going "back" to an earlier map skips
+   them) (`src/ScriptThread.cpp:491-494`).
+2. With the fade bit (`arg & 0x80`) it starts a 1000 ms
+   `FADEOUT|SHOWSTATS` fade (`src/ScriptThread.cpp:496-507`); without it, it
+   calls `canvas->saveState(51, 3, 194)` directly (`:509-510`).
+3. When the fade completes, `Render::fadeScene` calls
+   `canvas->saveState(51, 3, 196)` (`src/Render.cpp:2563-2564`).
+   `LoadingManager::saveState` stores `saveType`, sets the loading-bar caption
+   and enters `ST_SAVING` (`src/LoadingManager.cpp:47-53`).
+   Caption ids (strings file 3): 196 = "Saving Game…", 194 = "Loading Game…"
+   (the no-fade path uses 194, apparently a data quirk).
+4. Next `Canvas::run` tick, `ST_SAVING` with `saveType = 51 = 0x33`
+   (1 player file | 2 world file | 0x10 stats | 0x20 brief save):
+   `Game::saveState(loadMapID, LEVEL_STATS_nextMap, spawn from spawnParam…)`
+   (`src/Canvas.cpp:865-868`); inside it, bit 0x10 calls
+   `player->levelGrade(true)` which **commits** the grade
+   (`src/Game.cpp:2069-2071`). Then HUD message `(0,38)` "Game Saved" is queued
+   (`src/Canvas.cpp:873`), `playSound(1069, flags 1, 3, …)` — 1069 is
+   `Music_Level_End.wav` (`src/Sounds.h:77`, index 69 from line 8 = 0) — and
+   `menuSystem->setMenu(MENU_LEVEL_STATS)` (`src/Canvas.cpp:888-890`);
+   `saveType = 0; clearEvents(1)` (`:901-902`).
+5. The epilogue reuses the same menu: `disposeEpilogue` does `soundStop`,
+   `setMenu(MENU_LEVEL_STATS)`, `playSound(1069, 1, 3, false)`
+   (`src/IntroSequenceManager.cpp:138-146`).
+
+## 19.2 Content (`menus.bin` row 1 + `initMenu`)
+
+`menus.bin` row for menu 1: type **5 (`MENUTYPE_HELP`)**, 15 items (decoded
+from the shipped file with the §11 format). `initMenu` overrides some text
+fields with `%NN` argument strings (`MenuStrings::ARGUMENT1..7 = 241..247`,
+`src/MenuStrings.h:290-296`; strings are literally "%01".."%07") and fills
+the args with `fillStatus(true, false, false)` (`src/MenuSystem.cpp:1244-1255`).
+
+| # | flags | text (file 3) | value (`textField2`) | help |
+|---|---|---|---|---|
+| 0-2 | 0x9 | empty | — | — |
+| 3 | 0x49 NOSELECT\|CENTER\|DIVIDER | `%01` = map name | — | — |
+| 4 | 0x9 | empty | — | — |
+| 5 | 0 | "Time:" (28) | `%02` | 29 "Time spent on this level" |
+| 6 | 0 | "Secrets:" (30) | `%03` | 31 "Secrets found / total" |
+| 7 | 0 | "Enemies:" (32) | `%04` | 33 "Enemies killed / total" |
+| 8 | 0 | "Turns:" (34) | `%05` | 35 "Turns on this level" |
+| 9 | 0 | "Deaths:" (56) | `%06` | 57 "Total number of deaths" |
+| 10 | 0 | "Grade:" (36) | `%07` | 37 "Level Grade" |
+| 11 | 0 | empty | — | — |
+| 12 | 0x9 | empty | — | — |
+| 13 | 0x9 | "Tap Screen to" (140) | — | — |
+| 14 | 0x9 | "Continue  " (70) | — | — |
+
+(Soft hyphens in the raw strings are stripped by `dehyphenate()`.)
+`MENU_INGAME_LEVEL` (32) is the same six rows without the header/footer and is
+filled by the same `fillStatus(true,false,false)` (see §11.2).
+
+Argument order in `fillStatus` (`src/MenuSystem.cpp:3951-3967`):
+
+| arg | source | format |
+|---|---|---|
+| %01 | strings file 3, id `render->mapNameField & 0x3FF` | text |
+| %02 | `game->totalLevelTime + (gameTime - game->curLevelTime)` ms | `Player::formatTime`: `H:MM:SS` (hours unpadded) (`src/Player.cpp:1127-1146`) |
+| %03 | `game->mapSecretsFound / game->totalSecrets` | `buildFraction` "a/b" (`src/MenuSystem.cpp:3840-3851`) |
+| %04 | `player->monsterStats[0] / [1]` after `fillMonsterStats()` | "killed/total" |
+| %05 | `player->moves` | integer |
+| %06 | `player->currentLevelDeaths` | integer |
+| %07 | `gradeToString(levelGrade(false))` | file-3 string |
+
+### Counters during play
+
+- **Time**: `curLevelTime = gameTime` at map load (`src/LoadingManager.cpp:663`);
+  `totalLevelTime` is persisted in the world save: `saveWorldState` folds
+  `gameTime - curLevelTime` into it and resets `curLevelTime`
+  (`src/Game.cpp:1585-1587`), `loadWorldState` restores it or zeroes it when
+  the map compile date differs / no file (`src/Game.cpp:1753,1762`).
+- **Secrets**: `mapSecretsFound++` in `Game::awardSecret`
+  (`src/Game.cpp:3477`), zeroed in `Render::unloadMap` (`src/Render.cpp:306`),
+  restored from the world save (`src/Game.cpp:1763`); `totalSecrets` is a map
+  header byte (`src/LoadingManager.cpp:373`).
+- **Enemies**: not a counter — `Player::fillMonsterStats` scans all entities:
+  total = entities with `monster != nullptr` and `!(monster->flags & 0x80)`
+  (`MFLAG_NOTRACK`, `src/Enums.h:351`); killed = those with
+  `info & 0x1010000` (removed or corpse bits) (`src/Player.cpp:107-126`).
+- **Turns**: `moves++` in `Player::advanceTurn` (`src/Player.cpp:54`),
+  `moves = 0` in `levelInit` (`src/Player.cpp:96`).
+- **Deaths**: `currentLevelDeaths++` in `Player::died` (skipped if already
+  `ST_DYING`) (`src/Player.cpp:717`). Reset to 0 only on the **first** load of
+  a map (`numLevelLoads[map-1] == 0`, `src/LoadingManager.cpp:59-66`), on a
+  brief-save load (`src/Game.cpp:2201`) and on new game
+  (`src/MenuSystem.cpp:3595`). Persisted in the player file
+  (`src/Game.cpp:1928,1995`).
+- **Grade** (`Player::levelGrade`, `src/Player.cpp:2022-2041`): returns the
+  already-stored current grade if nonzero; else 0 when `total monsters == 0`
+  or `totalSecrets == 0`; else
+  `max(((6*((killed<<8)/total)>>8) + (6*((secrets<<8)/totalSecrets)>>8)) >> 1
+  - currentLevelDeaths, 1)`. With `b = true` it stores it into the 3-bit
+  packed `currentGrades` and raises `bestGrades` (`src/Player.cpp:2034-2039,
+  2059-2069`). `gradeToString`: 6→38 "A+", 5→39 "A", 4→40 "B", 3→41 "C",
+  2→42 "D", 1→43 "F", else 44 "--" (`src/Player.cpp:1991-2020`).
+  Because the save (step 4 above) commits the grade **before** the menu is
+  built, the displayed grade is the committed one.
+
+## 19.3 Layout (480x320)
+
+- Background: `imgEndOfLevelStatsBG` (`endOfLevelStatsBG.bmp`, 480x320,
+  loaded at startup `src/Canvas.cpp:170`) drawn at (0,0) instead of the usual
+  menu backgrounds (`src/MenuSystem.cpp:762-763`).
+- Menu rect: `setMenuSettings` → x=23, y=0, w=407, h=320
+  (`src/MenuSystem.cpp:4233-4239`, applied at `:4427`); `paint` re-applies
+  y=0, h=320 and skips the clip set-up (`src/MenuSystem.cpp:803-806`).
+- Font type 0: row height = `FONT_HEIGHT[0] = 16` with
+  `menuItem_fontPaddingBottom = 0` (`src/App.h:39`,
+  `src/MenuSystem.cpp:4974-4983`, `:4177`) → item *i* top at `y = 16*i`;
+  15 rows = 240 px < 320, so no scrollbar (`src/MenuSystem.cpp:2755`).
+- Items whose text is the empty string id 3072 and are not dividers are not
+  drawn (still take height) (`src/MenuSystem.cpp:931`).
+- Row 3 divider: `buildDivider(text, 407/CHAR_SPACING[0]=37)` pads the map
+  name with `' '` and `0x80` glyphs on both sides to ~37 chars
+  (`src/MenuSystem.cpp:267-282`, `:909`, `:960-963`); centred at
+  `x = 23 + 407/2 - width/2`, anchor 0 (`:966-974`, `:1076`).
+- Rows 5-10: label at x=23 anchor 0 (TOP|LEFT); value right-aligned at
+  `x = 23+407 = 430`, anchor 24 = RIGHT|TOP (`src/MenuSystem.cpp:991-1045`).
+- Rows 13-14: centred like row 3.
+- No selection cursor: type 5 is excluded (`src/MenuSystem.cpp:1064`).
+- Soft keys (`GameStateRunner::menuState`): right soft key = `(0,43)`
+  "Continue" for `MENU_LEVEL_STATS`/`MENU_END_RANKING`
+  (`src/GameStateRunner.cpp:213-214`, `:243-246`).
+- `Render` drops the dizzy FOV wobble while this menu is up
+  (`src/Render.cpp:2235-2236`).
+
+## 19.4 Input and exit
+
+- FIRE → `select(selectedIndex)` (`src/MenuSystem.cpp:2891-2892`);
+  AUTOMAP key → `select` (`:2903-2904`); BACK → `select` (`:2943-2944`);
+  touch release outside any button → `canvas->handleEvent(13)`
+  (`src/MenuSystem.cpp:4729-4771`). MENU → `back()`, which with an empty
+  stack does nothing for this menu (`src/MenuSystem.cpp:2922-2932`, `:591-611`).
+  There is no timer / auto-continue.
+- `select` for `MENU_LEVEL_STATS` ignores the item: if `!canvas->endingGame`
+  → `canvas->loadMap(LEVEL_STATS_nextMap, true, false)` and return; else
+  `gotoMenu(MENU_END_RANKING)` (`src/MenuSystem.cpp:2996-3002`).
+  `loadMap(…, b=true)` stops sounds (ends the level-end music) and, because
+  `b` is true, does not save again: it sets caption `(3, levelNames[id-1])`
+  and enters `ST_TRAVELMAP` (`src/LoadingManager.cpp:69-77`).
+- The non-stats path (`nextMap < loadMapID`) goes `FADEOUT|CHANGEMAP` →
+  `loadMap(next, false)` → `saveState(43, 3, 196)` (43 = 1|2|8|0x20) →
+  `ST_SAVING` → after the save `setState(ST_TRAVELMAP)`
+  (`src/Render.cpp:2556-2558`, `src/LoadingManager.cpp:72-74`,
+  `src/Canvas.cpp:885-886`).
+
+## 19.5 The loading / saving box (`ST_LOADING` 7, `ST_SAVING` 16)
+
+Both states draw the same box via `LoadingScreenController`; there is no
+background art, no progress percentage, no tips.
+
+- Entry: `setState` clears `REPAINT_HUD`, sets `pacifierX = SCR_CX - 66`,
+  calls `updateLoadingBar(false)` (`src/Canvas.cpp:1183-1187`). While in
+  either state `REPAINT_VIEW3D` is cleared each tick (`src/Canvas.cpp:973-975`).
+- Caption: `setLoadingBarText(file, id)` stores ids and sets
+  `loadingFlags |= 3` (`src/LoadingScreenController.cpp:9-15`). Sources:
+  travel map → `(0,41)` "Loading…" (`src/TravelMapManager.cpp:519`);
+  inside `loadMedia` after map data loads: "Game Saved"(0,38) if `isSaved`,
+  "Game Loaded"(0,39) if `isLoaded`, else the map name `(3, mapNameField&0x3FF)`
+  (`src/LoadingManager.cpp:645-653`); save paths `(3,196)` / `(3,194)`.
+  A missing caption (`-1`) falls back to `(0,57)` "Processing…"
+  (`src/LoadingScreenController.cpp:30-32`).
+- `updateLoadingBar(force)`: unless forced, throttled to once per 150 ms
+  (`0x96`) of `upTimeMs`; sets `REPAINT_LOADING_BAR`
+  (`src/LoadingScreenController.cpp:17-36`). Painted in `backPaint` after the
+  menu (`src/Canvas.cpp:494-497`).
+- `drawLoadingBar` (`src/LoadingScreenController.cpp:38-100`), SCR_CX=240,
+  SCR_CY=160 (`src/Canvas.cpp:122-123`):
+  - when `loadingFlags & 1` (full redraw, then cleared): `eraseRgn(displayRect)`
+    (whole screen cleared); `FabricBG.bmp` (32x32) **tiled** into
+    (165,131,150,58) (`Graphics::fillRegion`, `src/Graphics.cpp:429-454`);
+    white 1-px `drawRect` (165,131,150,58); caption at (240,138) anchor 0x11
+    HCENTER|TOP; `(0,58)` "Just a moment!" at (240,154) same anchor.
+  - always: bar = black `fillRect(173,171,134,12)` + white `drawRect` same.
+  - "fire" pacifier: `pacifierX += 10`; if it reaches `>= SCR_CX+62 = 302`
+    or is `< SCR_CX-66 = 174` it resets to 174 → positions 174,184,…,294.
+    Draws `loadingFire.bmp` (26x9) region `(0,0,w,9)` at (pacifierX, 173),
+    `w = min(26, 307 - pacifierX)`; rotateMode = 6 (180° + mirror = vertical
+    flip, `src/Image.cpp:139-142`) when `(pacifierX/10) % 6 < 3`, else 0.
+    (The `((x/10)/6)*8` assignment is dead — always overwritten.)
+- Timing: `ST_LOADING` with `loadType == 0` runs `loadMedia`: first tick
+  draws the box and `flushGraphics()` then returns; the next tick loads the
+  whole map synchronously (`src/Canvas.cpp:904-910`,
+  `src/LoadingManager.cpp:610-616`). The many `updateLoadingBar` calls during
+  the load only set a flag; nothing presents mid-load, so in this port the box
+  is effectively one static frame. No minimum display time.
+- Not skippable: neither state has an input handler (no `ST_LOADING` /
+  `ST_SAVING` branch in `src/InputEventController.cpp`), and the work is
+  synchronous. Exit: `loadMedia` ends in `ST_PLAYING`
+  (`src/LoadingManager.cpp:739-741`); `ST_SAVING` exits per `saveType` bits
+  (`src/Canvas.cpp:879-899`).

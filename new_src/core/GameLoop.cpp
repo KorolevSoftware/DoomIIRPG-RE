@@ -57,6 +57,8 @@ bool GameLoop::run(AppContext& context) {
 	const std::vector<int> menuTicks = parseTickList(std::getenv("DOOM2RPG_MENU_TICKS"));
 	size_t nextCapture = 0;
 	size_t nextMenu = 0;
+	// The goldens predate the boot travel map; keep their tick timeline.
+	ctx.skipTravelMap = !captureTicks.empty();
 	int ticks = 0;
 
 	context.input().setEventCallback([&](const SDL_Event& ev) {

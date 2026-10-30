@@ -21,7 +21,9 @@
 #include "ui/DialogView.h"
 #include "ui/Hud.h"
 #include "ui/HudView.h"
+#include "ui/LoadingView.h"
 #include "ui/LootView.h"
+#include "ui/TravelMapView.h"
 #include "ui/MenuView.h"
 #include "ui/Ui.h"
 
@@ -57,7 +59,10 @@ void GameContext::init(const Init& sys) {
 	menuEnv.game = sys_.game;
 	menuEnv.host = this;
 	menuEnv.upTimeMs = &upTimeMs;
+	menuEnv.map = sys_.map;
+	menuEnv.gameTime = &gameTime;
 	menuEnv.restartLevel = [this] { restartLevel(); };
+	menuEnv.continueLevelStats = [this] { loading_.loadMap(loading_.nextMap(), true, false); };
 	menuEnv.vending = &minigames_.vending();
 	menu_.init(menuEnv);
 	Targeting::Env tgtEnv;
@@ -104,6 +109,24 @@ void GameContext::init(const Init& sys) {
 	mgEnv.upTimeMs = &upTimeMs;
 	mgEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
 	minigames_.init(mgEnv);
+	LoadingManager::Env loadEnv;
+	loadEnv.game = sys_.game;
+	loadEnv.player = sys_.player;
+	loadEnv.vm = sys_.vm;
+	loadEnv.map = sys_.map;
+	loadEnv.defs = sys_.defs;
+	loadEnv.tables = sys_.tables;
+	loadEnv.hud = sys_.hud;
+	loadEnv.loc = sys_.loc;
+	loadEnv.host = this;
+	loadEnv.gameTime = &gameTime;
+	loadEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
+	loading_.init(loadEnv);
+	TravelMapSession::Env travelEnv;
+	travelEnv.upTimeMs = &upTimeMs;
+	travelEnv.art = sys_.ui != nullptr ? &sys_.ui->art() : nullptr;
+	travelEnv.tables = sys_.tables;
+	travel_.init(travelEnv);
 	if (sys_.tables) {
 		sys_.game->lerps.setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (SpriteLerps.h)
 	}
@@ -195,8 +218,18 @@ void GameContext::enterState_(StateId s) {
 		// Dialog/Menu events analog, so world keys never leak into the game.
 		pendingActions_.clear();
 		break;
+	case StateId::TravelMap:
+		// setState zeroes stateVars, then travelMapManager.init (src/Canvas.cpp:1062-1063).
+		pendingActions_.clear();
+		travel_.begin(loading_.travelLoadId(), loading_.travelLastId());
+		break;
 	case StateId::Loading:
-		loadingPhase_ = 0;     // arm the loading-phase counter
+	case StateId::Saving:
+		// Save type/caption were latched by LoadingManager; the box restarts
+		// its pacifier (src/Canvas.cpp:1183-1187).
+		if (s == StateId::Loading) loadingPhase_ = 0;     // arm the loading-phase counter
+		pacifierX_ = kPacifierStart;
+		frameAtStateEntry_ = framesRendered_;
 		break;
 	}
 }
@@ -262,11 +295,23 @@ void GameContext::tick() {
 		// ST_MINI_GAME dispatch also precedes the block test
 		// (src/InputEventController.cpp:334-349 vs :449).
 		if (state_ == StateId::MiniGame) { minigames_.handleAction(a); continue; }
+		// ST_TRAVELMAP has its own handler, also ahead of the block test
+		// (src/InputEventController.cpp:429-431).
+		if (state_ == StateId::TravelMap) {
+			if (travel_.handleAction(a)) loading_.finishTravelMap();
+			continue;
+		}
 		if (blocked || state_ != StateId::Playing) break;
 		if (a == Action::DebugVending) {
 			// DEBUG (removable, minigames): no calling thread, so finish()
 			// only returns to Playing.
 			minigames_.start(MiniGameHost::kVending, 1, -1, -1, nullptr);
+			continue;
+		}
+		if (a == Action::DebugNextMap || a == Action::DebugPrevMap) {
+			// DEBUG (removable, map change): N = next mapID, Shift+N = previous; header spawn.
+			const int id = sys_.game->loadMapID;
+			loading_.debugChangeMap(a == Action::DebugNextMap ? id % 10 + 1 : (id + 8) % 10 + 1);
 			continue;
 		}
 		actions_.handleAction(a);
@@ -317,6 +362,11 @@ void GameContext::tick() {
 		sys_.game->update(kTickMs);
 	}
 
+	// DEBUG (golden capture runs): skip the travel map before the state
+	// switch, so Loading runs in this same tick and the tick timeline matches
+	// a run without the screen.
+	if (state_ == StateId::TravelMap && skipTravelMap) loading_.finishTravelMap();
+
 	switch (state_) {
 	case StateId::Loading: tickLoading(); break;
 	case StateId::Playing: tickPlaying(); break;
@@ -332,6 +382,9 @@ void GameContext::tick() {
 		// branch, src/Canvas.cpp:920-926); view/input updates do not.
 		break;
 	case StateId::Dying:   tickDying(); break;
+	case StateId::Saving:                              // nothing else ticks (src/Canvas.cpp:853-903)
+		if (framesRendered_ != frameAtStateEntry_) loading_.tickSaving();   // box presented first
+		break;
 	case StateId::Menu:
 		// Nothing ticks while the menu is up: GameStateRunner::menuState only
 		// updates soft keys (src/GameStateRunner.cpp:203-253). No lerps, no
@@ -341,6 +394,10 @@ void GameContext::tick() {
 	case StateId::MiniGame:
 		// Nothing ticks (src/Canvas.cpp:827-828 excludes ST_MINI_GAME), no
 		// scripts, gameTime frozen; animations run on upTimeMs inside draw.
+		break;
+	case StateId::TravelMap:
+		// Excluded from the update chain (src/Canvas.cpp:827); all timing is
+		// computed while drawing.
 		break;
 	}
 
@@ -364,26 +421,33 @@ bool GameContext::inputBlocked() const {
 
 void GameContext::tickLoading() {
 	if (loadingPhase_ == 0) {
-		// [unload-slot: game.unloadMapData()/render.unloadMap() — no-op on first boot]
 		sys_.vm->clearStateVars(15);                       // zero scriptStateVars except vars[15] (src/LoadingManager.cpp:631-635)
 		loadingPhase_ = 1;
+		frameAtStateEntry_ = framesRendered_;
 		return;                                            // bar frame in legacy (src/LoadingManager.cpp:610-616)
 	}
+	if (framesRendered_ == frameAtStateEntry_) return;     // the box must be presented before the load
 
 	// phase 1 (src/LoadingManager.cpp:617-744)
+	unloadMap_();
+	if (!sys_.loadMapFile || !sys_.loadMapFile(sys_.game->loadMapID))
+		std::fprintf(stderr, "[load] map %d FAILED to load\n", sys_.game->loadMapID);
 	sys_.vm->resetPool();                                  // 20 threads freed (src/Game.cpp:332-360)
 	// Difficulty stamped BEFORE loadEntities, which reads it for the spawn-time
 	// +25% hp bump; at the legacy default 1 (src/Game.cpp:43) that bump does
 	// not apply (user decision 2026-09-23, spec 2026-09-22-monster-attacks §2.1a).
 	sys_.vm->vars[12] = 1;                                 // difficulty default (:692)
 	sys_.game->loadEntities(*sys_.map, *sys_.defs);        // (:658); loadWorldState slot: fresh entry no-op (:670)
+	loading_.onEntitiesLoaded();
 	actions_.spawnPlayer();                                // (:673)
-	lastTurnTime_ = upTimeMs;                              // stamp kept at the call site (spec §P1-G7)
+	loading_.onPlayerSpawned();
+	lastTurnTime_ = upTimeMs;                             // stamp kept at the call site (spec §P1-G7)
 	std::fprintf(stderr, "[load] staticFunc(0)\n");
 	sys_.vm->executeStaticFunc(Enums::SCR_INIT_MAP);       // SCR_INIT_MAP (:691-693)
 	// staticFunc(1): completed-game only — no caller in the subset.
 	// prevX/Y = view snap: save-only fields, not ported.
-	sys_.vm->executeTile(sys_.player->viewX >> 6, sys_.player->viewY >> 6, 4081, true); // entrance event, ENTER|all-dirs (:700-706)
+	if (!loading_.isLoadedGame())                          // entrance event, ENTER|all-dirs (:700-706)
+		sys_.vm->executeTile(sys_.player->viewX >> 6, sys_.player->viewY >> 6, 4081, true);
 	sys_.player->finishRotation();                         // finishRotation(false) analog (:707)
 	sys_.game->monsters.endMonstersTurn();                 // monstersTurn = 0 (:708)
 	// uncoverAutomap stub (:709).
@@ -396,24 +460,13 @@ void GameContext::tickLoading() {
 	blockInputTime = gameTime + 200;
 	std::fprintf(stderr, "[load] -> %s (blockInput 200ms)\n",
 		state_ == StateId::Camera ? "ST_CAMERA (kept)" : "ST_PLAYING");
+	loading_.onLoadFinished();
 }
 
-// ---- Restart Level (spec 2026-09-22-monster-attacks §10) ----
-
-// Deviation D6: legacy reloads the level-start brief save (loadState(2),
-// src/MenuSystem.cpp:3106, src/LoadingManager.cpp:38-45); without a save
-// system the level starts fresh, which on map00 is the same state. Resets what
-// a fresh boot initialises outside the Loading tail; the tail itself (VM pool
-// and state vars, loadEntities re-initialising every Game peer, spawn,
-// SCR_INIT_MAP) runs again from ST_LOADING.
-void GameContext::restartLevel() {
-	Player& p = *sys_.player;
-	p.reset();                                           // map00 level start = new-game stats and inventory
-	p.currentLevelDeaths = 0;                            // loadState(2) (src/Game.cpp:2200-2202); totalDeaths kept
-	p.viewPitch = 0;                                     // death tilt (tickDying)
-	p.viewRoll = 0;
-	p.viewZ = p.destZ;                                   // death drop; spawnPlayer re-derives both
-	actions_.gotoThread = nullptr;                       // VM pool is freed by tickLoading
+// Game::unloadMapData + Render::unloadMap analog (src/LoadingManager.cpp:619-625,
+// src/Game.cpp:642-685). The fade is kept: legacy carries it across a map change.
+void GameContext::unloadMap_() {
+	actions_.gotoThread = nullptr;                       // VM pool is freed right after
 	actions_.gotoTriggered = false;
 	cinematic_.reset();                                  // activeCameraView = false (src/Game.cpp:649)
 	Combat& c = sys_.game->combat;
@@ -426,12 +479,32 @@ void GameContext::restartLevel() {
 	for (GameSprites::Sprite*& m : c.activeMissiles) m = nullptr;
 	c.totalDamage = 0;
 	sys_.game->sprites.clear(GameSprites::kFlagInUse);   // (src/Game.cpp:655-659), before the map is replaced
-	sys_.game->visibility = ViewVisibility{};            // last frame was drawn from the death pose
-	if (sys_.reloadMap && !sys_.reloadMap()) std::fprintf(stderr, "[restart] map reload FAILED\n");
+	sys_.game->visibility = ViewVisibility{};            // last frame was drawn on the old map
 	sys_.hud->clearMessages();                           // msgCount = 0 (src/LoadingManager.cpp:659)
-	sys_.hud->clearScreenEffects();                      // endFade (src/Canvas.cpp:1380)
+	sys_.hud->feedMonsterHealth(-1, 0, 0);               // hud->lastTarget = nullptr (src/Game.cpp:654)
 	sys_.dialogs->clearHelpQueue();
-	std::fprintf(stderr, "[restart] level restart -> ST_LOADING\n");
+	sys_.player->facingEntity = nullptr;                // entity array is rebuilt
+	sys_.player->viewPitch = 0;                          // death tilt (tickDying)
+	sys_.player->viewRoll = 0;
+}
+
+// ---- Restart Level (spec 2026-09-22-monster-attacks §10) ----
+
+// loadState(2) (src/MenuSystem.cpp:3106, src/Game.cpp:2191-2215) through
+// LoadingManager: the level-entry world slot and player snapshot come back and
+// the map reloads via the gateway. Only deviation: the player snapshot is a
+// value copy, not savePlayerState (ADR 0034).
+void GameContext::restartLevel() {
+	Player& p = *sys_.player;
+	p.viewPitch = 0;                                     // death tilt (tickDying)
+	p.viewRoll = 0;
+	sys_.hud->clearScreenEffects();                      // endFade (src/Canvas.cpp:1380)
+	std::fprintf(stderr, "[restart] level restart -> loadState(2)\n");
+	if (loading_.restartLevel()) return;
+	// No snapshot (cannot happen after the first load): fresh start.
+	p.reset();
+	p.currentLevelDeaths = 0;                            // src/Game.cpp:2200-2202; totalDeaths kept
+	p.viewZ = p.destZ;                                   // death drop; spawnPlayer re-derives both
 	setState(StateId::Loading);
 }
 
@@ -1036,6 +1109,29 @@ void GameContext::render(AppContext& app) {
 		}
 	}
 
+	// Loading / saving box (src/LoadingScreenController.cpp:17-100): it erases
+	// the whole screen first, so the world drawn above never shows.
+	if ((state_ == StateId::Loading || state_ == StateId::Saving) && ui != nullptr) {
+		if (upTimeMs - lastPacifierMs_ >= kPacifierMs) {          // updateLoadingBar throttle (:22-27)
+			lastPacifierMs_ = upTimeMs;
+			pacifierX_ += 10;
+			if (pacifierX_ >= kPacifierEnd || pacifierX_ < kPacifierStart) pacifierX_ = kPacifierStart;
+		}
+		int id = loading_.captionId();
+		if (id == -1) id = sys_.loc->makeId(kTextMain, 57);      // "Processing..." (:30-32)
+		loadingCaption_.setLength(0);
+		loadingCaption_.append(sys_.loc->get(sys_.loc->typeOf(id), sys_.loc->indexOf(id)));
+		loadingCaption_.dehyphenate();
+		loadingSubCaption_.setLength(0);
+		loadingSubCaption_.append(sys_.loc->get(kTextMain, 58));  // "Just a moment!"
+		loadingSubCaption_.dehyphenate();
+		LoadingModel lm;
+		lm.caption = &loadingCaption_;
+		lm.subCaption = &loadingSubCaption_;
+		lm.pacifierX = pacifierX_;
+		drawLoading(*ui, lm);
+	}
+
 	// In-game menu (spec 2026-08-28-menu §7.1): drawn last because it OWNS the
 	// frame — its 480x320 background is opaque, so the world pass above (which
 	// keeps running, NEW FACT 1) and the empty message overlay are completely
@@ -1053,6 +1149,36 @@ void GameContext::render(AppContext& app) {
 		}
 	}
 
+	// Travel map (drawTravelMap, src/TravelMapManager.cpp:146-256): opaque
+	// 480x320, drawn last. Its strings are resolved here, ui/ has no Localization.
+	if (state_ == StateId::TravelMap && ui != nullptr) {
+		TravelMapModel tm;
+		travel_.buildModel(tm);
+		const Localization& loc = *sys_.loc;
+		if (tm.pathLabelId >= 0) {
+			travelLabelText_.setLength(0);
+			travelLabelText_.append(loc.get(kTextIngame2, tm.pathLabelId));
+			travelLabelText_.dehyphenate();
+			tm.pathLabelText = &travelLabelText_;
+		}
+		if (tm.nameId >= 0) {
+			travelNameText_.setLength(0);
+			travelNameText_.append("^3");                       // currentCharColor = 3 (:427)
+			travelNameText_.append(loc.get(kTextIngame2, tm.nameId));
+			travelNameText_.dehyphenate();
+			tm.nameText = &travelNameText_;
+		}
+		if (tm.prompt) {
+			travelPromptText_.setLength(0);
+			travelPromptText_.append(loc.get(kTextMain, 96));   // "Tap Screen to Continue" (:218-221)
+			travelPromptText_.wrapText(24);
+			travelPromptText_.dehyphenate();
+			tm.promptText = &travelPromptText_;
+		}
+		const UiResult r = drawTravelMap(*ui, tm);
+		applyUiAction(r.action, r.index);
+	}
+
 	// Minigame screens open with an opaque 480x320 blit (spec §4.3), so the
 	// world pass above is covered; `gameplayView` excludes HUD and weapon.
 	if (state_ == StateId::MiniGame && ui != nullptr) {
@@ -1063,6 +1189,7 @@ void GameContext::render(AppContext& app) {
 	if (ui != nullptr) ui->endFrame();
 
 	renderer.endFrame(app.window());
+	++framesRendered_;
 }
 
 } // namespace newcore

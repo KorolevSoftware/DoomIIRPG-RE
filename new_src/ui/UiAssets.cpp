@@ -106,6 +106,22 @@ bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	ok &= loadUiTexture(store, read, "vending_scroll_button_top.bmp", vendingScrollTop);
 	ok &= loadUiTexture(store, read, "vending_scroll_button_middle.bmp", vendingScrollMid);
 	ok &= loadUiTexture(store, read, "vending_scroll_button_bottom.bmp", vendingScrollBottom);
+	ok &= loadUiTexture(store, read, "FabricBG.bmp", fabricBG);
+	ok &= loadUiTexture(store, read, "loadingFire.bmp", loadingFire);
+	ok &= loadUiTexture(store, read, "endOfLevelStatsBG.bmp", endOfLevelStatsBG);
+	ok &= loadUiTexture(store, read, "highlight.bmp", tmHighlight);
+	ok &= loadUiTexture(store, read, "magnifyingGlass.bmp", tmMagGlass);
+	ok &= loadUiTexture(store, read, "spaceShip.bmp", tmSpaceShip);
+	ok &= loadUiTexture(store, read, "TM_Levels1.bmp", tmLevels1);
+	ok &= loadUiTexture(store, read, "TM_Levels2.bmp", tmLevels2);
+	ok &= loadUiTexture(store, read, "TM_Levels3.bmp", tmLevels3);
+	ok &= loadUiTexture(store, read, "TM_Levels4.bmp", tmLevels4);
+	ok &= loadUiTexture(store, read, "toMoon.bmp", tmToMoon);
+	ok &= loadUiTexture(store, read, "toEarth.bmp", tmToEarth);
+	ok &= loadUiTexture(store, read, "toHell.bmp", tmToHell);
+	ok &= loadUiTexture(store, read, "TravelMap.bmp", tmBackground);
+	ok &= loadUiTexture(store, read, "travelMapHorzGrid.bmp", tmGridHorz);
+	ok &= loadUiTexture(store, read, "travelMapVertGrid.bmp", tmGridVert);
 	return ok;
 }
 

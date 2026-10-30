@@ -57,6 +57,16 @@ public:
 	Texture vendingButtonLarge, vendingButtonHelp;
 	Texture vendingArrowUpGlow, vendingArrowDownGlow;
 	Texture vendingScrollBar, vendingScrollTop, vendingScrollMid, vendingScrollBottom;
+	// Loading / saving box (src/Canvas.cpp:168, :174).
+	Texture fabricBG;      // FabricBG.bmp 32x32, tiled
+	Texture loadingFire;   // loadingFire.bmp 26x9, bar pacifier
+	Texture endOfLevelStatsBG;   // endOfLevelStatsBG.bmp 480x320, menu 1 (src/Canvas.cpp:170)
+	// Travel map (src/TravelMapManager.cpp:45-78). Resident instead of loaded
+	// per visit; the session reads their sizes, the view draws them.
+	Texture tmHighlight, tmMagGlass, tmSpaceShip;
+	Texture tmLevels1, tmLevels2, tmLevels3, tmLevels4;
+	Texture tmToMoon, tmToEarth, tmToHell;
+	Texture tmBackground, tmGridHorz, tmGridVert;
 };
 
 // The one BMP -> indexed texture loader (ADR 0033 point 6); each failure logs.

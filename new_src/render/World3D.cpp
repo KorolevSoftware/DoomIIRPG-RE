@@ -1,5 +1,6 @@
 #include "render/World3D.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -118,6 +119,114 @@ bool hasGunFlareFamily(int n) {
 	       n == kTileNumMonsterSentryBot || n == kTileNumMonsterRedSentryBot ||
 	       n == kTileNumBossCyberdemon || n == kTileNumBossMastermind;
 }
+
+// TILENUM_SKY_BOX (src/Enums.h:843): its media (882, the fade ramp) is never
+// drawn; the polygon is a screen-space window onto the sky backdrop
+// (src/LoadingManager.cpp:358, src/Render.cpp:2072-2079, src/GLES.cpp:325-343).
+constexpr int kTileNumSkyBox = 301;
+
+// Polygon size bound: MapParser drops polys with more than 9 verts.
+constexpr int kMaxPolyVerts = 9;
+static_assert(kMaxPolyVerts + 1 <= Scene3D::kMaxSkyPolygonVerts,
+	"one near-plane clip adds at most one vertex");
+
+// TinyGL back-face test with faceCull = CULL_CCW, which drawNodeGeometry sets
+// for 301 (src/Render.cpp:951, src/TinyGL.cpp:230-243). Same units: verts are
+// byte << 7 (MapParser.cpp:302-304 vs src/Render.cpp:990-992) and the camera
+// gets the Render viewX/Y/Z TinyGL::setView gets (SceneRenderer.cpp:96-119 vs
+// src/Render.cpp:2299). 64-bit math avoids the int32 wrap UB of the original.
+bool isBackFacing(const MapData::Polygon& p, int viewX, int viewY, int viewZ) {
+	const auto& v0 = p.verts[0];
+	const auto& v1 = p.verts[1];
+	const auto& v2 = p.verts[2];
+	const int64_t n2 = v1.x - v0.x, n3 = v1.y - v0.y, n4 = v1.z - v0.z;
+	const int64_t n5 = v2.x - v0.x, n6 = v2.y - v0.y, n7 = v2.z - v0.z;
+	const int64_t n8 = (viewX - v0.x) * ((n3 * n7 - n4 * n6) >> 14) +
+	                   (viewY - v0.y) * ((n4 * n5 - n2 * n7) >> 14) +
+	                   (viewZ - v0.z) * ((n2 * n6 - n3 * n5) >> 14);
+	return n8 < 0;
+}
+
+// What TinyGL does to a sky wall before gles::RasterizeConvexPolygon
+// (src/TinyGL.cpp:230-258): world MVP (same 1/16384 vertex scale as the world
+// shader), Sutherland-Hodgman against the GPU near plane z >= -w, divide by w.
+// Camera3D's projection has z = w - c (c > 0), so z >= -w implies w >= c/2 > 0.
+// Near plane differs from TinyGL's: this clips at w >= 64, TinyGL at w >= 256.
+// Writes NDC (x,y) pairs to ndc, returns their count.
+int projectSkyPolygon(const MapData::Polygon& p, const float* mvp,
+	float ndc[Scene3D::kMaxSkyPolygonVerts * 2]) {
+	struct Clip { float x, y, z, w; };
+	const int n = (int)p.verts.size();
+	assert(n <= kMaxPolyVerts);
+	if (n > kMaxPolyVerts) return 0;
+	Clip in[kMaxPolyVerts];
+	for (int i = 0; i < n; ++i) {
+		const auto& v = p.verts[i];
+		const float x = (float)v.x * (1.f / 16384.f);
+		const float y = (float)v.y * (1.f / 16384.f);
+		const float z = (float)v.z * (1.f / 16384.f);
+		in[i] = { mvp[0] * x + mvp[4] * y + mvp[8] * z + mvp[12],
+		          mvp[1] * x + mvp[5] * y + mvp[9] * z + mvp[13],
+		          mvp[2] * x + mvp[6] * y + mvp[10] * z + mvp[14],
+		          mvp[3] * x + mvp[7] * y + mvp[11] * z + mvp[15] };
+	}
+	int out = 0;
+	for (int i = 0; i < n; ++i) {
+		const Clip& a = in[i];
+		const Clip& b = in[(i + 1) % n];
+		const float da = a.z + a.w;
+		const float db = b.z + b.w;
+		if (da >= 0.f) {
+			assert(a.w > 0.f);
+			ndc[out * 2 + 0] = a.x / a.w;
+			ndc[out * 2 + 1] = a.y / a.w;
+			++out;
+		}
+		if ((da >= 0.f) != (db >= 0.f)) {
+			const float t = da / (da - db);
+			const float w = a.w + (b.w - a.w) * t;
+			assert(w > 0.f);
+			ndc[out * 2 + 0] = (a.x + (b.x - a.x) * t) / w;
+			ndc[out * 2 + 1] = (a.y + (b.y - a.y) * t) / w;
+			++out;
+		}
+	}
+	return out;
+}
+
+// TILENUM_FADE (src/Enums.h:789): on GL its media art is never uploaded; a
+// procedural black alpha ramp replaces it (src/GLES.cpp:825-828).
+constexpr int kTileNumFade = 302;
+constexpr int kFadeWidth = 16;
+constexpr int kFadeHeight = 64;
+
+// gles::CreateFadeTexture (src/GLES.cpp:234-298) as indices + LUT: index =
+// alpha decrements applied before the texel, LUT[k] = (0,0,0,max(0,255-10k)).
+void buildFadeTexture(std::vector<uint8_t>& indices, uint8_t lut[256 * 4]) {
+	indices.assign(kFadeWidth * kFadeHeight, 0);
+	int steps = 0;
+	for (int i = 0; i < kFadeWidth * kFadeHeight; ++i) {
+		indices[i] = (uint8_t)steps;
+		if (i % 15 == 0 && i > 512) ++steps;
+	}
+	for (int k = 0; k < 256; ++k) {
+		lut[k * 4 + 0] = lut[k * 4 + 1] = lut[k * 4 + 2] = 0;
+		lut[k * 4 + 3] = (uint8_t)std::max(0, 255 - 10 * k);
+	}
+#ifndef NDEBUG
+	// Self-check against the legacy loop (src/GLES.cpp:279-287).
+	int alpha = 255;
+	for (int i = 0; i < kFadeWidth * kFadeHeight; ++i) {
+		const int got = lut[indices[i] * 4 + 3];
+		assert(got == alpha);
+		assert(i > 525 || got == 255);
+		assert(i < 901 || got == 0);
+		if (i == 15 * (i / 15) && i > 512) alpha -= 10;
+		if (alpha < 0) alpha = 0;
+	}
+	assert(lut[indices[526] * 4 + 3] == 245 && lut[indices[900] * 4 + 3] == 5);
+#endif
+}
 }
 
 World3D::World3D() = default;
@@ -168,7 +277,18 @@ void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	
 	}
 
 	for (int tile = 0; tile < (int)used.size(); ++tile) {
-		if (!used[tile]) continue;
+		if (!used[tile] || tile == kTileNumSkyBox) continue; // 301 draws with sky_ (drawPoly)
+		if (tile == kTileNumFade) {
+			// Drawn in NORMAL like the original (src/Render.cpp:956-961, see drawPoly).
+			std::vector<uint8_t> idx;
+			uint8_t lut[256 * 4];
+			buildFadeTexture(idx, lut);
+			Texture t;
+			if (t.uploadIndexedLut(*store_, idx, kFadeWidth, kFadeHeight, lut, true)) {
+				textureByTile_[tile] = std::move(t);
+			}
+			continue;
+		}
 		const auto& m = media.mappings();
 		if (tile >= (int)m.mappings.size()) continue;
 		int mediaId = m.mappings[tile];
@@ -281,9 +401,23 @@ void World3D::drawPoly(const MapData& map, int polyIdx) {
 	const auto& p = map.polygons[polyIdx];
 	if (p.verts.size() < 3) return;
 
-	// Geometry always composites with standard alpha + global fog; a previous
-	// sprite batch may have left ADD/SUB state active (drawBSP interleaves).
-	scene_->setRenderMode(kRenderNormal);
+	if (p.textureId == kTileNumSkyBox) {
+		// Painted at its BSP position, no depth test (src/GLES.cpp:89), so
+		// later geometry (the tile-128 window frame) still covers it.
+		if (!sky_.valid() || cam_ == nullptr) return;
+		if (isBackFacing(p, cam_->viewX(), cam_->viewY(), cam_->viewZ())) return;
+		float ndc[Scene3D::kMaxSkyPolygonVerts * 2];
+		const int count = projectSkyPolygon(p, cam_->mvp(), ndc);
+		scene_->drawSkyPolygon(sky_.id(), ndc, count, (float)cam_->viewYaw() / 256.f);
+		return;
+	}
+
+	// Per-tile modes of drawNodeGeometry on GL (src/Render.cpp:950-961): HELL_HANDS
+	// 161 is BLEND50, SCORCH_MARK 212 is SUB (forced by src/GLES.cpp:609-611; fog
+	// off, :672-677), the rest (FADE 302 included) NORMAL. Set per poly because a
+	// sprite batch may have left another mode active (drawBSP interleaves).
+	const int mode = p.textureId == 212 ? kRenderSub : p.textureId == 161 ? kRenderBlend50 : kRenderNormal;
+	scene_->setRenderMode(mode);
 
 	auto it = textureByTile_.find(p.textureId);
 	if (it != textureByTile_.end()) {
@@ -1193,7 +1327,8 @@ void World3D::addSplitSprite(const MapData& map, const std::vector<int>& leaves,
 }
 
 void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
-	const int* spriteSortBias, const uint8_t* charClass, const uint8_t* spriteHasEntity) {
+	const int* spriteSortBias, const uint8_t* charClass, const uint8_t* spriteHasEntity,
+	bool caldexHack) {
 	vis_.valid = false;
 	vis_.cinematic = false;
 	vis_.drawnSprites.clear();
@@ -1345,6 +1480,7 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 		}
 		return d;
 	};
+	int caldexDelayed = -1;                       // delayedSpriteBuffer[2]
 	for (int k = (int)nodeIdxs_.size() - 1; k >= 0; --k) {
 		int leaf = nodeIdxs_[k];
 		for (size_t i = 0; i < map.polygons.size(); ++i) {
@@ -1394,9 +1530,18 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 			leafSprites_[b] = sprite;
 			leafDepth_[b] = depth;
 		}
-		for (int i : leafSprites_)
+		for (int i : leafSprites_) {
+			// src/Render.cpp:1536-1542: the first tile-69 (NPC Bob) sprite is
+			// held back; a second one clears the slot and draws in place.
+			const int info = map.mapSpriteInfo[i];
+			if (caldexHack && (info & SpriteInfo::kTileNumMask) == 69 && !(info & 0x400000)) {
+				if (caldexDelayed == -1) { caldexDelayed = i; continue; }
+				caldexDelayed = -1;
+			}
 			drawSprite(map, media, camera, i, charClass);
+		}
 	}
+	if (caldexDelayed != -1) drawSprite(map, media, camera, caldexDelayed, charClass);   // :1769-1771
 	end();
 }
 

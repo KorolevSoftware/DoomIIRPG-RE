@@ -94,6 +94,12 @@ public:
 	// Counted on demand because the script opcode tails overwrite flags after
 	// alloc, so an incrementally kept counter could drift.
 	int animatingEffects() const;
+	// Legacy Game::numLerpSprites: occupied slots.
+	int numActive() const {
+		int n = 0;
+		for (const SpriteLerp& ls : spriteLerps_) n += ls.hSprite != 0;
+		return n;
+	}
 	// snapMonsters' pre-check (src/Game.cpp:2394-2408): every animating-effect
 	// slot's sprite is bound to an ET_MONSTER entity.
 	bool animatingEffectsAreMonsters() const;

@@ -8,6 +8,7 @@ namespace newcore {
 
 // Legacy Menus::menus ids (src/Menus.h:210-311); only the in-game subtree.
 enum MenuId : int {
+	kMenuLevelStats    = 1,
 	kMenuInGame        = 29,
 	kMenuStatus        = 30, kMenuPlayer = 31, kMenuLevel = 32, kMenuGrades = 33,
 	kMenuOptions       = 35,

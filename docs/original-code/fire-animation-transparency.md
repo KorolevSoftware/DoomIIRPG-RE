@@ -116,6 +116,13 @@ Two independent mechanisms coexist:
 
 ### 2.2 Fire/glow family: NO magenta, black hidden by additive blend
 
+> **Disputed 2026-10-30** (`docs/research/2026-10-30-fire-sprite-black.md` E6):
+> the `tools/extract_textures.py` palette resolution gives media 726-729
+> palette entry 0 = 0xF81F (magenta, i.e. transparent). That contradicts the
+> "zero magenta / entry 0 dark gray" claim below. Re-verify against
+> `src/LoadingManager.cpp:110-200` before relying on either. Either way the
+> fire is RENDER_ADD, so its background is invisible.
+
 Decoded palettes/texels (tools/extract_textures.py logic) show:
 
 * OBJ_FIRE frames (media 726–729, 256×256 RLE): **zero magenta entries**

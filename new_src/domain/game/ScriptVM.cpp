@@ -22,6 +22,9 @@
 
 namespace newcore {
 
+// loadMapStringID (src/LoadingManager.cpp:309-311): one string type per map.
+static int mapTextType(const Game& g) { return kTextMap + g.loadMapID - 1; }
+
 // ---- setup / pool ----
 
 void ScriptVM::init(const Env& env) {
@@ -171,9 +174,13 @@ int ScriptVM::executeTile(int x, int y, int mask, bool blockInput) {
 int ScriptVM::executeStaticFunc(int idx) {
 	if (idx < 0 || idx >= Enums::MAX_BUILT_IN_CMD ||
 		env_.map->staticFuncs[idx] == Enums::SCR_NOT_DEFINED) return 0;   // src/Game.cpp:3345-3347
+	return executeFunc((int)env_.map->staticFuncs[idx]);
+}
+
+int ScriptVM::executeFunc(int ip) {
 	ScriptThread* t = allocThread();
 	if (t == nullptr) return 0;
-	allocRaw(t, (int)env_.map->staticFuncs[idx]);
+	allocRaw(t, ip);
 	int result = run(t);
 	// Legacy leaves finished static-func threads pooled until the next
 	// runScriptThreads sweep; freeing immediately is equivalent (their
@@ -362,7 +369,7 @@ void ScriptVM::composeLootDialog(ScriptThread* t) {
 		const int cls = (v >> 12) & 0xF;
 		if (cls == 6) {                            // flavour line, raw map string (:2141-2146)
 			large.append('\x88');
-			large.append(loc.get(kTextMap, v & 0xFFF));
+			large.append(loc.get(mapTextType(*env_.game), v & 0xFFF));
 			large.append("|");
 			continue;
 		}
@@ -483,7 +490,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		case Enums::EV_MESSAGE: {
 			int v = readUShort(t);
 			int strIdx = v & 0x7FFF;
-			std::string text = env_.loc->get(kTextMap, strIdx); // loadMapStringID = kTextMap + (mapID-1); map00 -> kTextMap
+			std::string text = env_.loc->get(mapTextType(*env_.game), strIdx);
 			if ((v & 0x8000) != 0) {
 				std::fprintf(stderr, "[script] MESSAGE str=%d important \"%s\"\n", strIdx, text.c_str());
 				env_.hud->showImportantMessage(text);
@@ -945,7 +952,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			int v = readUShort(t);
 			int timeMs = readUShort(t);
 			int strIdx = v & 0x3FFF;
-			std::string text = env_.loc->get(kTextMap, strIdx);
+			std::string text = env_.loc->get(mapTextType(*env_.game), strIdx);
 			if ((v & 0x8000) != 0) {
 				env_.hud->setCinTitle(text, timeMs);
 				std::fprintf(stderr, "[script] CAMERA_STR TITLE str=%d \"%s\" time=%dms\n",
@@ -976,11 +983,11 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				// Style 2 opens NO box — it enqueues a help popup bound to this
 				// thread's pool index (:561-573). player->prevWeapon save is
 				// not ported (no weapon-swap restore path).
-				if (!env_.dialogs->enqueueHelpDialog(kTextMap, strId, indexOf(t))) {
+				if (!env_.dialogs->enqueueHelpDialog(mapTextType(*env_.game), strId, indexOf(t))) {
 					break;                         // queue full -> no park
 				}
 			} else {
-				env_.dialogs->startDialog(t, kTextMap, strId, style, flags, true);  // (:574-579)
+				env_.dialogs->startDialog(t, mapTextType(*env_.game), strId, style, flags, true);  // (:574-579)
 			}
 			env_.game->skipAdvanceTurn = true;                 // (:580-581)
 			env_.game->queueAdvanceTurn = false;
@@ -1032,16 +1039,12 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		}
 
 		case Enums::EV_CHANGE_MAP: {
-			// Parse-validate-only: multi-map change is out of scope; mutate nothing.
 			int b = readUByte(t);
 			int s = readUShort(t);
-			int nextMap = b & 0xF;
-			int dir = (b >> 4) & 7;
-			int tile = s & 0x3FF;
-			int fade = (b & 0x80) != 0 ? 1 : 0;
-			std::fprintf(stderr, "[EV_CHANGE_MAP] map=%d dir=%d tile=%d fade=%d (parse-only)\n",
-				nextMap, dir, tile, fade);
-			break;
+			std::fprintf(stderr, "[script] CHANGE_MAP map=%d dir=%d tile=%d fade=%d\n",
+				b & 0xF, (b >> 4) & 7, s & 0x3FF, (b & 0x80) != 0);
+			env_.ctx->loading().changeMap(b, s);
+			break;   // the thread keeps running on the still-resident old map (ADR 0035 §2)
 		}
 
 		case Enums::EV_NAMEENTITY: {
@@ -1051,17 +1054,30 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
-		case Enums::EV_SETDEATHFUNC: {
+		case Enums::EV_SETDEATHFUNC: {             // src/ScriptThread.cpp:1059-1075
 			int sprite = readUByte(t);
-			readShort(t);                 // death-func ip (-1 unbinds)
-			std::fprintf(stderr, "[script] SETDEATHFUNC sprite=%d skipped (no monsters)\n", sprite);
+			int ip = readShort(t);                 // -1 unbinds
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
+			if (ent != nullptr) {
+				if (ip != -1) env_.game->addEntityDeathFunc(ent, ip);
+				else env_.game->removeEntityFunc(ent);
+			}
 			break;
 		}
 
-		case Enums::EV_MONSTERFLAGOP: {
+		case Enums::EV_MONSTERFLAGOP: {            // src/ScriptThread.cpp:782-806
 			int sprite = readUByte(t);
-			readUByte(t);                 // op/mask
-			std::fprintf(stderr, "[script] MONSTERFLAGOP sprite=%d skipped (flag ops deferred)\n", sprite);
+			int b = readUByte(t);
+			int op = (b >> 6) & 3;
+			int mask = 1 << (b & 0x3F);
+			Entity* ent = env_.game->db.findEntityBySprite(sprite);
+			if (ent != nullptr && ent->monster != nullptr) {
+				short& flags = ent->monster->flags;
+				if (op == 0) flags |= (short)mask;
+				else if (op == 1) flags &= (short)~mask;
+				else flags = (short)mask;
+				ent->info |= Entity::kInfoDirty;
+			}
 			break;
 		}
 
@@ -1094,13 +1110,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				ent->info |= Entity::kInfoActive;   // force-active (:712)
 				env_.game->monsters.painMonster(ent, dmg, -1);
 				if (ent->monster->ce.getStat(Enums::STAT_HEALTH) <= 0) {
-					env_.game->monsters.diedMonster(ent, false);    // :714-716 no XP
+					env_.game->entityDied(ent, false);              // :714-716 no XP; runs the death func
 				}
 			} else {
-				// Non-monster entity: legacy dies it outright; our died path is
-				// monster-only (spec §7 op 19), so log and continue.
-				std::fprintf(stderr, "[script] DAMAGEMONSTER sprite=%d non-monster died skipped\n",
-					sprite);
+				env_.game->entityDied(ent, false);                  // :718-720
 			}
 			break;
 		}
@@ -1514,6 +1527,216 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 
 		case Enums::EV_AWARDSECRET:                // op 50, no operands (src/ScriptThread.cpp:1256-1259)
 			env_.game->awardSecret(false);         // chime 1020
+			break;
+
+		case Enums::EV_STATUS_EFFECT: {            // src/ScriptThread.cpp:1576-1603
+			int id = readUByte(t);
+			if ((id & 0x80) != 0) {
+				env_.player->removeStatusEffect(id & 0x7F);
+				break;
+			}
+			int mag = readUByte(t);
+			int turns = 30;
+			if (id == 2) turns = 20;
+			else if (id == 9 || id == 1) turns = 10;
+			else if (id == 11) turns = 6;
+			else if (id == 17) turns = 5;
+			env_.player->addStatusEffect(id, mag, turns);
+			env_.player->translateStatusEffects();
+			break;
+		}
+
+		case Enums::EV_INVENTORY_OP: {             // src/ScriptThread.cpp:1627-1643
+			int op = readUByte(t);
+			Player& player = *env_.player;
+			if (op == 2) {
+				const bool vios = (player.weapons & 0x1) != 0;
+				player.restoreInventory();
+				if (vios) env_.game->angryVIOS = false;    // src/Player.cpp:2741
+			} else if (op == 1) {
+				player.stripInventoryForTargetPractice();
+			} else if (op == 0) {
+				player.stripInventoryForViosBattle();
+			}
+			break;
+		}
+
+		case Enums::EV_SET_MM_RENDER_HACK:         // src/ScriptThread.cpp:1728-1732
+			env_.game->useMastermindHack = readByte(t) != 0;
+			break;
+
+		case Enums::EV_FORCE_BOT_RETURN:           // :1744-1751, gated on isFamiliar: always 0 here
+			break;
+
+		case Enums::EV_ANGER_VIOS:                 // :1821-1825
+			env_.game->angryVIOS = readByte(t) != 0;
+			break;
+
+		case Enums::EV_UNHIDE_AUTOMAP:             // :1827-1839
+		case Enums::EV_HIDE_AUTOMAP: {             // :1841-1853
+			const bool hide = bc[t->IP] == Enums::EV_HIDE_AUTOMAP;
+			int x0 = readUByte(t);
+			int y0 = readUByte(t);
+			int x1 = readUByte(t);
+			int y1 = readUByte(t);
+			for (int y = y0; y <= y1 && y < 32; ++y) {
+				for (int x = x0; x <= x1 && x < 32; ++x) {
+					uint8_t& f = env_.map->mapFlags[y * 32 + x];
+					f = hide ? (f | 0x8) : (f & ~0x8);
+				}
+			}
+			break;
+		}
+
+		case Enums::EV_PORTAL_EVENT: {             // :1855-1868
+			int v = readUByte(t);
+			if ((v & 0xF) == 4) {
+				env_.game->portalScripted = false;
+				break;
+			}
+			env_.game->portalScripted = true;
+			env_.game->portalState = v & 0xF;
+			env_.game->previousPortalState = (v >> 4) & 0xF;
+			break;
+		}
+
+		case Enums::EV_PITCH_CONTROL: {            // :1870-1899
+			int v = readUShort(t);
+			int dir = v & 0x7;
+			int x = (v >> 8) & 0x1F;
+			int y = (v >> 3) & 0x1F;
+			int16_t (&tiles)[20] = env_.game->mapKeepPitchLevelTiles;
+			if (((v >> 13) & 1) == 0) {
+				for (int16_t& s : tiles) {          // full table drops the add silently
+					if (s != -1) continue;
+					s = (int16_t)(x | (y << 5) | (dir << 10));
+					break;
+				}
+			} else {
+				for (int16_t& s : tiles)
+					if (s != -1 && (s & 0x3FF) == (y << 5) + x && ((s & 0xFFFFFC00) >> 10) == dir) s = -1;
+			}
+			break;
+		}
+
+		case Enums::EV_USED_CHAINSAW:              // :1901-1905
+			env_.player->usedChainsaw();
+			break;
+
+		case Enums::EV_DESTROY_PLAYER: {           // :1925-1947 (noclip and isFamiliar are always 0 here)
+			readUByte(t);                          // only read by the familiar branch
+			Combat& combat = env_.game->combat;
+			Player& player = *env_.player;
+			const int amount = player.ce.getStat(Enums::STAT_HEALTH);
+			combat.playerPainEvent(nullptr, false);
+			env_.hud->setDamageTime(env_.ctx->upTimeMs + 1000);
+			combat.totalDamage = 1;
+			combat.playerPain(amount, nullptr, true);
+			player.addArmor(-player.ce.getStat(Enums::STAT_ARMOR));
+			break;
+		}
+
+		case Enums::EV_DROPMONSTERITEM: {          // :1023-1056
+			int sprite = readUShort(t);
+			int d = readUByte(t);
+			const bool relocate = (sprite & 0x8000) != 0;
+			if (relocate) {
+				d = (d << 8) | readUByte(t);
+				sprite &= 0x7FFF;
+			}
+			int qty = readUByte(t);
+			if (relocate) {
+				std::fprintf(stderr, "[script] DROPMONSTERITEM relocate sprite=%d to sprite=%d skipped (no drop items)\n",
+					d, sprite);
+				break;
+			}
+			const EntityDef* def = env_.defs->lookup(d);   // BY tileIndex (src/EntityDef.cpp:76-83)
+			if (def == nullptr) {
+				std::fprintf(stderr, "[script] DROPMONSTERITEM def=%d NOT FOUND (Err109)\n", d);
+				break;
+			}
+			// shortcut: picked up on the spot instead of thrown at sprite's
+			// position (spawnDropItem, src/Game.cpp:2647-2679); upgrade with the drop-entity pool.
+			const bool ok = env_.game->items.touchedDrop(def, qty);
+			std::fprintf(stderr, "[script] DROPMONSTERITEM sprite=%d def=%d qty=%d given directly -> %s\n",
+				sprite, d, qty, ok ? "ok" : "FAIL");
+			break;
+		}
+
+		case Enums::EV_RESPAWN_MONSTER: {          // :1212-1226
+			int sprite = readUShort(t);
+			int tx = readUByte(t);
+			int ty = readUByte(t);
+			std::fprintf(stderr, "[script] RESPAWN_MONSTER sprite=%d at %d,%d skipped (no resurrect)\n", sprite, tx, ty);
+			n2 = -1;                               // the legacy "could not respawn" result
+			break;
+		}
+
+		case Enums::EV_SHOW_PLAYERATTACK:          // :894-909, cinematic weapon anim not ported
+			std::fprintf(stderr, "[script] SHOW_PLAYERATTACK weapon=%d skipped\n", readUByte(t));
+			break;
+
+		case Enums::EV_MONSTER_PARTICLES:          // :911-919, no particle system
+			std::fprintf(stderr, "[script] MONSTER_PARTICLES sprite=%d skipped\n", readUByte(t));
+			break;
+
+		case Enums::EV_END_GAME:                   // :1645-1651, epilogue state not ported
+			env_.player->gameCompleted = true;
+			std::fprintf(stderr, "[script] END_GAME: epilogue skipped\n");
+			break;
+
+		case Enums::EV_START_ARMORREPAIR:          // :1734-1742; never parks
+			// The inventory[12] >= 5 repair dialog (src/ArmorRepairSystem.cpp:23-31)
+			// is not ported; showHelp(15) (:20-22) neither.
+			if (env_.player->inventory[12] >= 5) {
+				std::fprintf(stderr, "[script] START_ARMORREPAIR skipped (no armor repair)\n");
+				break;
+			}
+			std::fprintf(stderr, "[sound] 1073\n");   // characterChoice 1 (:33-35)
+			{
+				std::string text = env_.loc->get(kTextMain, 210);
+				env_.hud->addMessage(text, 0xAA000000, 3);   // :40
+			}
+			break;
+
+		case Enums::EV_START_TREADMILL:            // :1949-1953, no script callback
+			std::fprintf(stderr, "[script] START_TREADMILL skipped (no treadmill)\n");
+			break;
+
+		// Handled by the original, unused by the shipped maps.
+		case Enums::EV_STOCKSTATION:               // :1123-1126
+		case Enums::EV_BRIBE_ENTITY:               // :1195-1198
+		case Enums::EV_PLAYER_ADD_RECIPE:          // :1207-1210
+		case Enums::EV_ENDMINIGAME:                // :1351-1354
+		case Enums::EV_ENDROUND:                   // :1356-1359
+		case Enums::EV_GIVEAWARD:                  // :1500-1503
+		case Enums::EV_STARTMIXING:                // :1505-1508
+			std::fprintf(stderr, "[script] opcode %d is a no-op\n", bc[t->IP]);
+			break;
+
+		case Enums::EV_LERPFLAT: {                 // :1128-1133
+			readUByte(t);
+			readUShort(t);
+			std::fprintf(stderr, "[script] LERPFLAT is a no-op\n");
+			break;
+		}
+
+		case Enums::EV_PLAYER_ADD_STAT: {          // :1200-1205
+			int v = readUByte(t);
+			env_.player->modifyStat((v >> 5) & 0x7, (v & 0x10) != 0 ? (v & 0x1F) - 32 : (v & 0x1F));   // sext5
+			break;
+		}
+
+		case Enums::EV_GOTO_MENU:                  // :1533-1537
+			std::fprintf(stderr, "[script] GOTO_MENU menu=%d skipped\n", readUByte(t));
+			break;
+
+		case Enums::EV_START_INTERCINEMATIC:       // :1539-1545
+			std::fprintf(stderr, "[script] START_INTERCINEMATIC camera=%d skipped\n", readUByte(t) & 0x7F);
+			break;
+
+		case Enums::EV_SET_CALDEX_RENDER_HACK:     // src/ScriptThread.cpp:2021-2025
+			env_.game->useCaldexHack = readByte(t) != 0;
 			break;
 
 		case Enums::EV_END: {                    // byte value 255

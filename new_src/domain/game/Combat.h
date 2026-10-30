@@ -89,7 +89,6 @@ public:
 	int numActiveMissiles = 0;         // src/Combat.h:81
 	int tileDistances[kMaxTileDistances] = {};
 	std::vector<CombatEntity> monsterTemplates;   // 51 entries (src/Combat.cpp:37-39)
-	int loadMapID = 1;                 // miss-guard gate (b||mapID<8||tileDist>1); map00 => <8
 	// View-weapon lower/raise lerp (src/Combat.h:46-47 constants, :846-855).
 	static constexpr int kLoweredWeaponY = 38;    // LOWEREDWEAPON_Y, GL path value
 	static constexpr int kLowerWeaponTime = 200;  // LOWERWEAPON_TIME (ms, gameTime)

@@ -54,6 +54,17 @@ Squad/NPC tiles: 66 = Riley O'Connor, 68 = Major, 69 = npc_bob, 71 = civilian,
   step it through (23,29)→(21,29)→(21,30)→(22,30)→(22,29)→(23,29)→(24,30)
   (IPs 7184-7633), each step gated by `EV_TILE_EMPTY` (op 9,
   `src/Enums.h:411`) so it only advances when the tile is clear.
+* **Correction (2026-10-29):** this "companion" is the player's MIRROR
+  REFLECTION in the map00 toilet room. Each mirror-room tile script puts the
+  chosen sprite at `(x, 57 - y)` of the player's tile and then GOTO-walks the
+  player there (player (22,28) -> double (22,29), (22,27) -> (22,30); IPs
+  7184/7282/7350/7418/7486). The mirror plane lies between rows 28 and 29
+  (EVT 153 22,28 EXIT S = `ABORT_MOVE`). The ambush zombie works the same way:
+  real sprite 86 sits at (22,27) and inert reflection sprite 85 at (22,30)
+  (flags NOACTIVATE|NOTRACK|NORESPAWN, `src/Enums.h:347-351`). 85 is removed
+  by 86's death function (`HIDE 85`, see `tile-events-vm.md` §4.6;
+  `docs/research/2026-10-29-mirror-reflection.md`). The engine itself has no
+  mirror code. All of it is script.
 * Familiar-mode body double: `Game::spawnPlayerEntityCopy`
   (`src/Game.cpp:2725-2759`) spawns an entity with the chosen class's art
   (1→68, 3→66, 2→72) at saveX/saveY (`src/Player.cpp:2105`, removed

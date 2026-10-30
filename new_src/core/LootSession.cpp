@@ -34,7 +34,7 @@ void LootSession::begin() {
 	{
 		int tx = (lootDestX_ + lootStepX_ * 64) >> 6;
 		int ty = (lootDestY_ + lootStepY_ * 64) >> 6;
-		env_.game->loot.poolLootCorpse(tx, ty, *env_.loc, lootPool_);
+		env_.game->loot.poolLootCorpse(tx, ty, *env_.loc, kTextMap + env_.game->loadMapID - 1, lootPool_);
 	}
 }
 

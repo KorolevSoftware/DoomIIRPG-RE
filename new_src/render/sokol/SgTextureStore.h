@@ -26,6 +26,8 @@ public:
 
 	TextureId createIndexed(const uint8_t* indices, int w, int h,
 		const uint16_t* palette, int paletteCount, TextureFlags flags) override;
+	TextureId createIndexedLut(const uint8_t* indices, int w, int h,
+		const uint8_t* lut8888, TextureFlags flags) override;
 	TextureId createRgba(const uint8_t* rgba, int w, int h,
 		TextureFlags flags) override;
 

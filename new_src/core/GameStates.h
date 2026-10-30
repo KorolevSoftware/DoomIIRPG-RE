@@ -15,7 +15,9 @@ enum class StateId : int {
 	Loading     = 7,  // legacy ST_LOADING
 	MiniGame    = 12, // legacy ST_MINI_GAME (src/Canvas.h:79; spec 2026-10-29-minigames-layout §4)
 	Dying       = 13, // legacy ST_DYING (stub)
+	Saving      = 16, // legacy ST_SAVING (src/Canvas.h:68-93)
 	Camera      = 18, // legacy ST_CAMERA (scripted cinematic, cutscenes-camera.md §1)
+	TravelMap   = 21, // legacy ST_TRAVELMAP (src/Canvas.h:88)
 	Looting     = 23, // legacy ST_LOOTING (src/Canvas.h:90; loot-crouch camera,
 	                  // docs/research/2026-08-25-camera-pitch-loot.md)
 };
@@ -45,6 +47,8 @@ enum class Action : int {
 	MiniGameTouch,
 	// DEBUG (removable, minigames): V starts the vending machine, slot 1.
 	DebugVending,
+	// DEBUG (removable, map change): N / Shift+N
+	DebugNextMap, DebugPrevMap,
 };
 
 // The only thing a module may know about the state machine (spec

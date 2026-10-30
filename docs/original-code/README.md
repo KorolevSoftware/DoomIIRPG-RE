@@ -23,6 +23,8 @@ Topic files (created on demand):
 | `secret-doors.md` | Secret push walls (mapFlags 0x4 + ET_SPRITEWALL): `performDoorEvent(...,true)` two-phase 750+750 ms lerp, unlink+hide; `awardSecret` msg 119/sounds/XP/achievement; `EV_AWARDSECRET`; map00 secret walls |
 | `player-damage.md` | Player taking damage: armor/defense math, `pain`/`painEvent`, shake, rock-back, vignette, direction arrow, weapon red tint, `died()` → `ST_DYING` fall/fade → dead menu |
 | `fades.md` | Render scene fade: flags, `fadeScene` math/end behaviour, frame order, `EV_FADEOP` decode (bit15 = FADEIN), readers, map00 FADEOP list |
+| `map-change.md` | Level transition: `EV_CHANGE_MAP` decode, entry points, `loadMap`→`ST_SAVING`→`ST_TRAVELMAP`→`ST_LOADING`, saveType bits, spawn priority, per-map BRIEFWORLD (`SB_n`) persistence on revisit, what carries over |
+| `travel-map.md` | `ST_TRAVELMAP` inter-level screen: init from lastMapID/loadMapID, planets Moon/Earth/Hell, assets, phase timings (path reveal, spaceship, locator crosshair, prompt), input/skip, exit to `ST_LOADING`, `scriptStateVars[15]` travel direction, dead star-field page, mapID 10 = debug Test Map |
 | `ui.md` | HUD, menus, dialogs, fonts |
 | `vending-machine.md` | Vending machine minigame: EV_MINIGAME type 4 entry, terminal/help/hack screens, 4-digit hack puzzle, per-machine save bits, prices table, exit, hand-off to menus 83-88, test locations |
 | `scripts.md` | tileEvents bytecode, staticFuncs |

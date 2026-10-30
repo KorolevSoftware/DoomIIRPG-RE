@@ -57,6 +57,22 @@ bool Texture::uploadIndexed(TextureStore& store, const std::vector<uint8_t>& ind
 	return true;
 }
 
+bool Texture::uploadIndexedLut(TextureStore& store, const std::vector<uint8_t>& indices,
+	int w, int h, const uint8_t* lut8888, bool tiled) {
+	if (w <= 0 || h <= 0 || indices.size() < (size_t)w * h) return false;
+
+	const TextureId id = store.createIndexedLut(indices.data(), w, h, lut8888,
+		tiled ? TextureFlags::Tiled : TextureFlags::None);
+	if (!id.valid()) return false;
+
+	destroy();
+	store_ = &store;
+	id_ = id;
+	width_ = w;
+	height_ = h;
+	return true;
+}
+
 bool Texture::uploadRgba(TextureStore& store, const std::vector<uint8_t>& rgba,
 	int w, int h) {
 	if (w <= 0 || h <= 0 || rgba.size() < (size_t)w * h * 4) return false;

@@ -326,20 +326,27 @@ int main(int argc, char* argv[]) {
 	game.items.init({          // Env: db, defs, map, player, hud, loc, tables, vm, game (§G2.3)
 		&game.db, &g_entityDefs, &g_map, &player, &hud, &loc, &tables, &vm, &game });
 	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges
-	// Restart Level: reparse into a fresh MapData (parse appends to some
-	// vectors) and move it over g_map, so every borrowed &g_map stays valid.
-	// Same file, same media: World3D's textures and the GameSprites slot
-	// layout (numMapSprites + 48 hidden slots) are unchanged.
-	const auto reloadMap = [&app, &g_map] {
-		std::vector<uint8_t> mapData;
+	// Map file + per-map resources for mapId 1..10 (ADR 0035): parse into a fresh
+	// MapData and move it over g_map so every borrowed &g_map stays valid.
+	const auto loadMapFile = [&app, &g_map, &g_media, &world, &tables, &loc](int mapId) {
+		char name[16];
+		std::snprintf(name, sizeof name, "map%02d.bin", mapId - 1);   // RES_MAP_FILE_ARRAY[id-1] (src/Resource.h:19)
+		std::vector<uint8_t> bytes;
 		MapData fresh;
-		if (!app.readResource("map00.bin", mapData) || !MapParser::parse(mapData, fresh)) return false;
+		if (!app.readResource(name, bytes) || !MapParser::parse(bytes, fresh)) return false;
 		g_map = std::move(fresh);
+		world.uploadMapTextures(g_map, g_media);
+		// skyIndex = ((mapNameID-1)/5%2)*2 -> tables 16/17 (A) or 18/19 (B) (GF §3.3)
+		const bool skyA = ((mapId - 1) / 5) % 2 == 0;
+		world.uploadSky(skyA ? tables.skyTexelA : tables.skyTexelB,
+		                skyA ? tables.skyPaletteA : tables.skyPaletteB);
+		const int strType = kTextMap + mapId - 1;                       // src/LoadingManager.cpp:309-311
+		if (!loc.isLoaded(strType)) loc.loadTextType(0, strType);
 		return true;
 	};
-	ctx.init({                 // Init: map, defs, tables, loc, font, g2d, media, game, player, vm, hud, world, dialogs, ui, menus, reloadMap
+	ctx.init({                 // Init: map, defs, tables, loc, font, g2d, media, game, player, vm, hud, world, dialogs, ui, menus, loadMapFile
 		&g_map, &g_entityDefs, &tables, &loc, &font, &app.g2d(), &g_media,
-		&game, &player, &vm, &hud, &world, &dialogs, &ui, &menus, reloadMap });
+		&game, &player, &vm, &hud, &world, &dialogs, &ui, &menus, loadMapFile });
 	// Minigame sheets, loaded once at startup like loadMiniGameImages
 	// (src/App.cpp:105); owned by ctx; the TextureStore outlives
 	// app.shutdown() (AppContext.cpp:74-79).
@@ -349,6 +356,7 @@ int main(int argc, char* argv[]) {
 		});
 	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
 		&ctx, &vm, &game, &loc, &hud, &font, &tables });
+	ctx.loading().loadMap(1, false, true);   // new game, startupMap 1 (src/IntroSequenceManager.cpp:135)
 
 	// Revived frame path: AppContext::run -> GameLoop::run drives the
 	// fixed-step ticks, queued-input actions and per-frame rendering.

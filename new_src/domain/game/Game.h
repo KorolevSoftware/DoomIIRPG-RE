@@ -1,7 +1,9 @@
 #ifndef NEW_DOMAIN_GAME_GAME_H
 #define NEW_DOMAIN_GAME_GAME_H
 
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <string>
 
 #include "domain/game/Combat.h"
@@ -38,7 +40,10 @@ void composeArgs(std::string& text, const std::string* args, int numArgs);
 // subset (doors + items). Monsters/combat come later.
 class Game {
 public:
-	Game() = default;
+	Game() {
+		std::fill(std::begin(entityDeathFunctions), std::end(entityDeathFunctions), int16_t(-1));   // src/Game.cpp:50-52
+		std::fill(std::begin(mapKeepPitchLevelTiles), std::end(mapKeepPitchLevelTiles), int16_t(-1));
+	}
 
 	// Builds door/item entities from the map's sprite table. Must be called
 	// once per level load, after MapData is parsed.
@@ -97,6 +102,23 @@ public:
 	// ET_ATTACK_INTERACTIVE arms (src/Entity.cpp:371-391 / :437-447). Props
 	// carry no HP: any landed hit destroys them outright.
 	bool painProp(Entity* e);
+
+	// Entity death functions (src/Game.cpp:3495-3534): 64 {sprite, ip} pairs,
+	// free = -1; a bound entity carries info bit 0x2000000.
+	void addEntityDeathFunc(Entity* e, int ip);
+	void removeEntityFunc(Entity* e);
+	void executeEntityFunc(Entity* e);
+	int16_t entityDeathFunctions[128];
+	bool useCaldexHack = false;     // render->useCaldexHack (src/ScriptThread.cpp:2021-2025)
+	bool useMastermindHack = false; // render->useMastermindHack (:1728-1732); renderer side not ported
+	bool angryVIOS = false;         // EV_ANGER_VIOS (:1821-1825)
+	// EV_PORTAL_EVENT state (:1855-1868); consumer src/Render.cpp:2713-2761 not ported.
+	int portalState = 0;            // Render::PORTAL_DNE
+	int previousPortalState = 0;
+	bool portalScripted = false;
+	// EV_PITCH_CONTROL table (:1870-1899), x | y<<5 | dir<<10, free = -1. No
+	// reader yet: MovementController::pitchIsControlled needs the slope pitch.
+	int16_t mapKeepPitchLevelTiles[20];
 	void diedProp(Entity* e);
 
 	// Toilet/sink -> water spout (src/ArmorRepairSystem.cpp:56-63, forwarded
@@ -129,6 +151,16 @@ public:
 	bool skipDialog = false;        // set by DialogSystem::closeDialog(skip) around the thread resume
 	bool abortMove = false;
 	int spawnParam = -1;            // -1 = use the map header spawn
+	int loadMapID = 0;              // canvas->loadMapID, 1..10 (src/LoadingManager.cpp:67-68); 0 until the boot loadMap
+	int totalLevelTime = 0;         // ms on this map before curLevelTime (src/Game.cpp:1585-1587)
+	int64_t curLevelTime = 0;       // gameTime at load / last fold (src/LoadingManager.cpp:663)
+	// snapAllMovers (src/Game.cpp:2500-2505): force-complete every mover before a map change.
+	void snapAllMovers();
+	// Player::fillMonsterStats (src/Player.cpp:107-126): total = entities with a
+	// monster payload and !(flags & 0x80 NOTRACK); killed = those with info & 0x1010000.
+	void fillMonsterStats(int& killed, int& total) const;
+	// Player::levelGrade (src/Player.cpp:2022-2041); commit = legacy b.
+	int levelGrade(bool commit);
 	int eventFlags_[2] = { 0, 0 };
 
 	bool facingDirty = false;       // canvas updateFacingEntity latch analog (src/Entity.cpp:527)

@@ -726,9 +726,18 @@ tile 236 (`src/Game.cpp:392`). `Entity::spawn`-side monster/decor sprites get 0
   (`src/Render.cpp:950-963`): tile 161 `HELL_HANDS` → `BLEND50`; tiles 302
   `FADE` / 212 `SCORCH_MARK` → `NORMAL` on GL but `RENDER_SUB` on TinyGL
   ("`[GEC] TinyGL Only like J2ME/BREW`"); tiles 479/480 `FLAT_LAVA*` → `NORMAL`
-  with `CULL_NONE`.
+  with `CULL_NONE`. On GL, `NORMAL` for tile 302 only works because
+  the GL back-end swaps the media art for a procedural black alpha gradient —
+  see §8.10. Drawing tile 302's real media (a white-to-black ramp) with plain
+  alpha blend renders a **white** gradient.
 * Tile-based override in the GL back-end only: tile 212 → `RENDER_SUB`
   (`src/GLES.cpp:609-611`).
+  `gles::SetupTexture` receives the tile id from `Render::setupTexture`
+  (`src/Render.cpp:2057`). So the override also covers **polygons**:
+  `drawNodeGeometry`'s `NORMAL` for 212 (`src/Render.cpp:956-961,967`) becomes
+  `SUB` on GL. Net result: tile 212 polygons are subtractive on both back-ends.
+  This is load-bearing: maps put fires in front of 212 wall+floor decals (see
+  §8.12).
 
 ### 8.5 The torchiere glow (tile 136 → tile 193 in `ADD50`)
 
@@ -928,3 +937,157 @@ full brightness is twice as bright as the original.
 * The sole "reorder for looks" hacks are the mastermind/caldex delayed-sprite
   buffers, which defer specific tiles to after the whole walk
   (`src/Render.cpp:1518-1541`, drained at `:1764-1771`).
+
+### 8.10 Tile 302 `TILENUM_FADE`: procedural black alpha gradient on GL (added 2026-10-30)
+
+Raw log: `docs/research/2026-10-30-translucent-white.md`.
+
+* `TILENUM_FADE = 302` (`src/Enums.h:789`). It is a **wall/flat polygon
+  texture** (BSP `nodePolys`), not a sprite. Map designers put it on the walls
+  and floors of pits and shafts that should fade into darkness. map00 (mapID 1):
+  the bridge pit at tiles x 18..21, y 18..21 (leaves 424/565: vertical walls
+  from z 128 to 448, which is the floor height there, plus a floor quad at z 128),
+  and 30+ other polys. map01 (mapID 2): 4-wall shafts at (12..13,17..18) and
+  (11..12,10..11), z 704..832, sharing tiles with glass panes spr178 and spr179.
+  The map data comes from the shipped `map00.bin`/`map01.bin`, parsed with the
+  `src/LoadingManager.cpp:463-553` layout.
+* `drawNodeGeometry` calls `setupTexture(302, 0, RENDER_NORMAL, 0)` on GL
+  (`src/Render.cpp:956-961`). The wall texture coordinates are
+  `t = int8 << 6` (`src/Render.cpp:994`), and they become floats at
+  `TEXT_COORDS_TO_FLOAT = x/1024` (`src/GLES.cpp:20`). A FADE wall with t 0..16
+  covers the full texture height once.
+* **Texture swap**: `gles::CreateTextureForMediaID` returns early with
+  `if (mediaID == render->mediaMappings[Enums::TILENUM_FADE] && n == Enums::TILENUM_FADE) { this->CreateFadeTexture(mediaID); return; }`
+  (`src/GLES.cpp:825-828`). So on GL the media texels of 302 are **never
+  uploaded**.
+* `gles::CreateFadeTexture` (`src/GLES.cpp:234-298`) builds a 16×64 RGBA8
+  texture (`FADE_WIDTH 16`, `FADE_HEIGHT 64`, `:237-238`). RGB is 0 for every
+  texel (`memset 0x00`, `:278`). Alpha is per texel index `i` (0..1023,
+  row-major, 16 wide), in this loop (`:279-287`):
+  ```cpp
+  int alpha = 255;
+  for (int i = 0; i < 1024; i++) {
+      pixels[i*4 + 3] = alpha;
+      if (i == 15 * (i / 15) && i > 512) alpha -= 10;
+      if (alpha < 0) alpha = 0;
+  }
+  ```
+  Result: `A = 255` for i ≤ 525 (rows 0..32, plus the first 14 texels of
+  row 32). After that A drops by 10 after every multiple of 15 (a slanted
+  staircase, because the period is 15 and the row is 16). The levels are
+  255, 245, …, 5, 0. A is first 0 at i = 901 (row 56, column 5) and stays 0
+  through row 63. Filtering is `GL_NEAREST` (`:291-292`). The wrap mode is
+  the GL default (`REPEAT`).
+* Composite: the `NORMAL` row of §8.2, `(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`,
+  `glColor 1,1,1,1`, fog **on**. That gives `dst' = fog(0)·A + dst·(1−A)`. The
+  top of the texture (t = 0) is solid black, and the bottom quarter is fully
+  transparent.
+* The shipped media for 302 is media 882, 16×64 raw, 16-entry palette. It is
+  a vertical gray ramp: row 0 = (255,255,255), row 16 ≈ 198, row 32 ≈ 140,
+  row 48 ≈ 49, row 56 ≈ 24. This is the art the **TinyGL** path uses with
+  `RENDER_SUB` (`src/Render.cpp:958-960`). There `_spanTexture[SUB]` subtracts
+  a 50 % palette (§8.3), so white means "darken most". Either back-end gives
+  black at t = 0 fading out toward t = 1. Only "media art + alpha blend" gives
+  white, and the original never does that.
+* The swap is keyed on `n == 302` *and* the base media id. A frame offset or a
+  different tile that shares the media gets the real art.
+  Note: in the shipped `newMappings.bin`, tile 301 (`TILENUM_SKY_BOX`) ALSO
+  points at media 882 (`mediaMappings[301] = mediaMappings[302] = 882`). The
+  original never draws it: it re-points 301 at media slot 1023 at load time
+  (§8.11).
+
+### 8.11 Tile 301 `TILENUM_SKY_BOX`: sky walls are screen-space windows onto the sky backdrop (added 2026-10-30)
+
+Raw log: `docs/research/2026-10-30-map01-space-window.md`.
+
+**Sky texture.** One 256×256 8-bit image per map, from `tables.bin`:
+`skyIndex = ((mapNameID - 1) / 5 % 2) * 2`, palette = table `skyIndex + 16`,
+texels = table `skyIndex + 17` (`src/LoadingManager.cpp:571-583`). So mapIDs
+1-5 use tables 16/17, mapIDs 6-10 use tables 18/19, and so on. (The
+`TBL_SKYMAP*` constants 11..14 in `src/Enums.h:934-937` are NOT the indices
+the loader uses.) No map flag or script switches the image. The only sky
+script opcode is `EV_FOG_AFFECTS_SKYMAP` (77), which sets
+`render->fogAffectsSkyMap` (`src/ScriptThread.cpp:1716-1718`).
+
+**Tile remap.** Right after it reads `newMappings.bin`, the loader does
+`render->mediaMappings[Enums::TILENUM_SKY_BOX] = (gles::MAX_MEDIA-1);`
+(`src/LoadingManager.cpp:358`, with `MAX_MEDIA = 1024`, `src/GLES.h:43`). The
+shipped mapping for 301 is media 882, the same media as the FADE gray ramp
+(§8.10). `gles::CreateTextureForMediaID` checks
+`if (v5 == mediaID)` (with `v5 = mediaMappings[TILENUM_SKY_BOX]`) and builds the
+texture from `render->skyMapTexels` / `skyMapPalette[0]`, 256×256
+(`src/GLES.cpp:824`, `:834-842`). The media art of 301 is never used.
+
+**Backdrop.** On the GL path, `Render::render` calls `this->_gles->DrawSkyMap()`
+**unconditionally** before `renderBSP()` (`src/Render.cpp:2344`). The earlier
+call at `:2326-2329` is gated on `scriptStateVars[5]` and only matters for the
+TinyGL fallback (`drawSkyMap`). `gles::DrawSkyMap` (`src/GLES.cpp:1125-1157`)
+binds tile 301, draws a ±100/w=100 quad (that is, NDC ±1) with fog off and
+`isSkyMap = true`, through `RasterizeConvexPolygon(GLVert)` (`:385-457`).
+
+**Sky walls (tile 301 in `nodePolys`).** `drawNodeGeometry` gives 301 the plain
+`RENDER_NORMAL` (`src/Render.cpp:950-966`). `Render::setupTexture(301)` sets
+`this->isSkyMap = true` (`src/Render.cpp:2072-2079`). Then:
+1. `gles::DrawModelVerts` returns false when `isSkyMap` is set
+   (`src/GLES.cpp:553`). So `TinyGL::drawModelVerts` face-culls
+   (`faceCull = CULL_CCW`, `src/Render.cpp:952`), transforms, and clips the
+   polygon in clip space (`src/TinyGL.cpp:230-258`).
+2. `TinyGL::RasterizeConvexPolygon` → `gles::RasterizeConvexPolygon(n, TGLVert*)`
+   (`src/TinyGL.cpp:534`, `src/GLES.cpp:299`). Its `isSkyMap` branch
+   (`src/GLES.cpp:325-343`) replaces the texture coordinates with
+   **screen-space** ones:
+   ```cpp
+   st[0] = (x/w) * 0.5f;            // x = clip x
+   st[1] = ((-y)/w) * -0.5f + 0.5f; // GL y = -TinyGL y
+   pos   = (x/w, -y/w, 1.0, 1.0);   // already divided -> screen-linear UVs
+   st[0] += -YAW_TO_FLOAT(viewYaw); // viewYaw & 0x3FF, /256 (GLES.cpp:22, TinyGL.cpp:186)
+   ```
+   That is the same formula `DrawSkyMap` uses for the full-screen quad. So a
+   sky wall shows exactly the backdrop texels at the same pixels: the image
+   is fixed in screen space, shifts 1/256 of the texture per yaw unit (one
+   texture width per 256 units = 90°), and ignores pitch and position. There
+   is no parallax, no scrolling over time, and no animation.
+3. No depth test exists (`glDisable(GL_DEPTH_TEST)`, `src/GLES.cpp:89`). The
+   BSP leaves are drawn far to near (`src/Render.cpp:1752`). So a sky wall
+   paints the sky over any farther geometry drawn before it, and nearer
+   polygons in later meshes (for example a window frame on the same plane)
+   paint over the sky wall.
+4. Fog: the sky branch of `RasterizeConvexPolygon(TGLVert)` does NOT call
+   `glDisable(GL_FOG)`. Only the non-sky branch does (`:345-347`). GL_FOG stays as
+   `SetupTexture(NORMAL)` left it (`fogMode = 2` → `glEnable(GL_FOG)`,
+   `src/GLES.cpp:625-634`, `:709-714`). The vertices then have eye depth 1.0
+   (identity modelview, `:309`). On map01 (`loadMapID == 2`) fog is forced off
+   whenever `fogEnd > 0.499` (`src/GLES.cpp:192-195`). The exact fogged look on
+   other maps is unverified.
+5. The texture is uploaded with `GL_REPEAT` (GL default), so `s` wraps.
+
+**Map01 case.** mapID 2, `map01.bin`. The east wall of the corridor at tile
+(8,23) is the plane x = 704 (world units), y 1472..1536. It holds a tile-301
+quad (z 192..320) and then, in later meshes, the tile-128 `barred_window`
+frame pieces. The X frame is the transparent openings of tile 128 (§8.2,
+magenta → alpha 0). More 301 quads frame the neighboring windows: x = 704,
+y 1408..1472 and 1536..1600; y = 1408 and 1600 for x 640..704. The map has 15
+tile-301 polys in total. Through the window the original shows sky table
+16/17 (mapID 2 → skyIndex 0), fixed in screen space.
+
+### 8.12 Scorch-mark polygons behind fires: map01 "fire in a black box" (added 2026-10-30)
+
+Raw log: `docs/research/2026-10-30-fire-sprite-black.md`.
+
+* Tile 212 `TILENUM_SCORCH_MARK` is used as a **BSP wall/floor texture**, not
+  only as a sprite. map01 (mapID 2) has 28 tile-212 polygons. map00 has 8,
+  map02 29, map03 4, map04 10, map05 17, map07 15, maps 06/08/09 none. The
+  polygon layout follows `src/Render.cpp:943-991`.
+* Typical use: a 64×32 wall strip plus a floor patch, centered on a fire. map01
+  examples: fire spr194 (tile 130, xy 896,968) in front of the 212 polygons in
+  leaves 437/439 (x 864..928, wall at y = 960, z 640..672, floor z 640). Fire
+  spr193 (832,520) in front of leaves 252/260 (x 800..864, y 512).
+* Media 804 (128×128 raw, no magenta, entry 0 = black) is dark at the border
+  (max channel ≤ 44) and lighter in the middle. That art only reads correctly
+  under `RENDER_SUB` (`glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_COLOR)`,
+  `src/GLES.cpp:672-677`): a dark texel leaves the frame unchanged, and a light
+  one darkens it. Drawn with `NORMAL` it becomes an opaque dark rectangle
+  around the (additive) fire.
+* Tile 161 `HELL_HANDS` polygons are `BLEND50` (`src/Render.cpp:953-955`). No
+  shipped map (00-09) contains one.
+

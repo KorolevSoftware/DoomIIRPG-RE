@@ -47,6 +47,15 @@ public:
 	// viewYaw/256. Independent of beginScene/endScene.
 	virtual void drawSky(TextureId sky, float uOffset) = 0;
 
+	// A tile-301 sky wall (legacy src/GLES.cpp:325-343): a convex polygon of
+	// count NDC (x,y) pairs, already near-clipped and divided by w, textured
+	// with the drawSky recipe so it shows exactly the backdrop. Inside a scene
+	// it keeps its painter position (the pending batch is drawn first).
+	// count <= kMaxSkyPolygonVerts. Fog stays off; the original leaves it on,
+	// which differs only on fogged maps (rendering.md §8.11 point 4).
+	static constexpr int kMaxSkyPolygonVerts = 10;
+	virtual void drawSkyPolygon(TextureId sky, const float* ndcXY, int count, float uOffset) = 0;
+
 	virtual void flush() = 0;
 };
 

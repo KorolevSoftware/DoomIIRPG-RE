@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29_
+_Last updated: 2026-10-30_
 
 ## Controls (2026-08-29, aligned with `src/Input.cpp:80-95`)
 
@@ -18,6 +18,7 @@ _Last updated: 2026-10-29_
 | O | open Nano Drinks (menu 75; legacy AVK_DRINKS, `src/Input.cpp:93`) |
 | K | debug: grant keycards + drinks 0..10 + holy-water pistol/50 water + 1000 credits (inventory[24]) (ours, removable; switches to the pistol if not owned) |
 | V | debug: start the vending minigame, machine slot 1 of the current map, while Playing; no script thread (exit just returns to Playing) (ours, removable) |
+| N / Shift+N | debug: change to the next / previous mapID (1..10, wraps) at the header spawn, while Playing; goes through the real EV_CHANGE_MAP path (ours, removable) |
 
 There is no quit key: the window close button is the only exit, as in the
 reference. Z/X/I/O/P/B are reserved-unmapped (no rewrite counterpart). Full
@@ -29,6 +30,10 @@ Known deviation (2026-10-29): in a cinematic ANY queued action skips it (`new_sr
 legacy skips only on PASSTURN/AUTOMAP/FIRE/key 18 (`src/InputEventController.cpp:417`). Fix later with an action whitelist.
 
 ## Working on
+
+- **ОПКОДЫ СКРИПТОВ (2026-10-29).** Все опкоды оригинала имеют case в ScriptVM; функции смерти и MONSTERFLAGOP портированы; мост и зеркало на map00 проверены на экране. Заглушки (без подсистем): ремонт брони, беговая дорожка, частицы, воскрешение монстров, бросок выпавшего предмета (выдаётся сразу).
+
+- **ПЕРЕХОД МЕЖДУ КАРТАМИ (2026-10-29).** Спека 2026-10-29-map-change.md, ADR-0034/0035. G1a–G5b ревью PASS, проверены на экране 2026-10-30: N / Shift+N, статистика, плашка загрузки, экран путешествия (при старте — Марс→Луна, Esc пропускает). Отложено: воскрешение трупов (MD3), FIRE-перемотка экрана путешествия (нужны сохранения), запись SB_n на диск (система сохранений).
 
 - **ТОРГОВЫЙ АВТОМАТ / МИНИ-ИГРЫ (2026-10-29).** Спека 2026-10-29-minigames-layout.md, ADR-0033; new_src/minigames/{common,vending}. G1-G6 ревью PASS, проверены на экране 2026-10-29 (вместе с use-item G2/G3) (K даёт кредиты, V открывает автомат). Взлом и турель — заглушки (спека §9). Известно: `combat.loadMapID` не выставляется (Combat.h:92, всегда 1) — исправить вместе с переходом между картами.
 

@@ -71,8 +71,9 @@ public:
 	// dialog page icons: their legacy normalRenderMode is RENDER_BLEND75 and
 	// their highlightRenderMode is RENDER_NORMAL (src/Canvas.cpp:329-346).
 	void imageAlpha(const Texture& tex, int x, int y, uint8_t alpha);
+	// rotateMode: Graphics2D::drawRegion values (8 = vertical flip).
 	void imageRegion(const Texture& tex, int srcX, int srcY, int srcW, int srcH,
-		int x, int y, int anchorFlags);
+		int x, int y, int anchorFlags, int rotateMode = 0);
 	// Three 10x20 glyphs from the Hud_Numbers sheet (src/Hud.cpp:1127-1152).
 	void number3(const Texture& sheet, int x, int y, int space, int value,
 		bool slashMode);

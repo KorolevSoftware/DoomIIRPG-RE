@@ -103,6 +103,9 @@ Action UiInputCollector::keyAction(const SDL_Event& ev) const {
 	case SDL_SCANCODE_I: a = Action::Items; break;        // :92, AVK_ITEMS_INFO
 	case SDL_SCANCODE_O: a = Action::ItemsDrinks; break;  // :93, AVK_DRINKS
 	case SDL_SCANCODE_V: a = Action::DebugVending; break; // DEBUG (removable, minigames)
+	case SDL_SCANCODE_N:                                  // DEBUG (removable, map change)
+		a = (ev.key.keysym.mod & KMOD_SHIFT) ? Action::DebugPrevMap : Action::DebugNextMap;
+		break;
 	// Reserved, deliberately unmapped: the rewrite has no counterpart for
 	// AVK_NEXTWEAPON Z (:86), AVK_PREVWEAPON X (:87), AVK_PDA P (:94).
 	// SDL_SCANCODE_K is ours too — debug keycards, handled in GameLoop.cpp.

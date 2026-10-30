@@ -7,6 +7,7 @@
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
+#include "domain/game/Game.h"
 #include "domain/game/Player.h"
 #include "domain/game/WeaponTable.h"
 
@@ -151,7 +152,7 @@ int CombatEntity::calcHit(Combat& c, CombatEntity& attackerCe, CombatEntity& def
 	if (((!vsPlayer && c.playerMissRepetition < kPlayerMissLimit) ||
 	     (vsPlayer && c.monsterMissRepetition < 2)) &&
 	    roll > c.crHitChance &&
-	    (vsPlayer || c.loadMapID < 8 || c.tileDist > 1)) {       // :263-271
+	    (vsPlayer || c.env().game->loadMapID < 8 || c.tileDist > 1)) {   // :263-271
 		if (vsPlayer) ++c.monsterMissRepetition;
 		else ++c.playerMissRepetition;
 		return c.crFlags;

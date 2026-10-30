@@ -378,7 +378,7 @@ void Combat::explodeOnPlayer() {
 		env_.player->addArmor(-totalArmorDamage);                // :981
 		if (totalDamage > 0) {
 			if (difficulty() != 1) {                             // :984-990
-				int mapId = loadMapID;
+				int mapId = env_.game->loadMapID;
 				if (difficulty() == 4) mapId *= 2;
 				// Legacy divides by numShots unguarded; every attack weapon has >= 1.
 				totalDamage += (totalDamage >> 1) +

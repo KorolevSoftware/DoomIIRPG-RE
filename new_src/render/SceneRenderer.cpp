@@ -167,7 +167,7 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 			}
 		}
 		env_.world->drawBSP(*env_.map, *env_.media, camera_, spriteSortBias_.data(),
-		                    spriteCharClass_.data(), spriteHasEntity_.data());
+		                    spriteCharClass_.data(), spriteHasEntity_.data(), env_.game->useCaldexHack);
 		vis_ = env_.world->visibility();
 		renderer.restoreCanvasViewport(window);
 	} else if (env_.g2d != nullptr) {

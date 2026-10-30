@@ -61,7 +61,8 @@ public:
 	// loot sets, per entity: prop ++param (skip when already != 0), monster
 	// flag 0x800 (unified into ++param — see Deviations #1 of spec
 	// 2026-08-25-loot-dwell-ui), info |= kInfoDirty.
-	void poolLootCorpse(int tx, int ty, const Localization& loc, Pool& out);
+	// textType = loadMapStringID, the per-map string type of class-6 lines.
+	void poolLootCorpse(int tx, int ty, const Localization& loc, int textType, Pool& out);
 
 	// Grant pass (src/LoothingSystem.cpp:281-307): give() per non-class-6
 	// entry, weapon starter ammo max(usage,10) of the weapon row's AmmoType,

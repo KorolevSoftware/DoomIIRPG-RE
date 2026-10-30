@@ -141,6 +141,21 @@ public:
 	// Messaging sinks for addHealth's msg 111 (ADR 0032). Wired in core/Main.cpp.
 	void setMessaging(Hud* hud, const Localization* loc) { hud_ = hud; loc_ = loc; }
 
+	// EV_INVENTORY_OP (src/Player.cpp:2664-2759). restoreInventory's angryVIOS
+	// clear (:2741) is done by the caller, which owns Game.
+	int weaponsCopy = 0;
+	int16_t ammoCopy[9] = { 0 };
+	int currentWeaponCopy = -1;
+	void stripInventoryForViosBattle();
+	void stripInventoryForTargetPractice();
+	void restoreInventory();
+
+	// EV_USED_CHAINSAW (src/Player.cpp:2636-2652), script form (b = false).
+	int chainsawStrengthBonusCount = 0;
+	void usedChainsaw();
+
+	bool gameCompleted = false;     // EV_END_GAME (src/ScriptThread.cpp:1647)
+
 	// src/Player.cpp:416-449 (legacy `b` = showMessage gates msg 111).
 	bool addHealth(int amount, bool showMessage = true);
 
@@ -179,6 +194,24 @@ public:
 	// Player::died counters (src/Player.cpp:717-718), zeroed at startup (:34-35).
 	int currentLevelDeaths = 0;
 	int totalDeaths = 0;
+	int completedLevels = 0;   // bit mapID-1 = map left via EV_CHANGE_MAP (src/ScriptThread.cpp:489)
+	int highestMap = 1;        // src/Player.cpp:571; raised at load (src/LoadingManager.cpp:641-643)
+	int moves = 0;             // turns on this map (src/Player.cpp:53, :96)
+	// Level grades, 3 bits per mapID (src/Player.cpp:2058-2074); config-file fields.
+	int currentGrades = 0;
+	int bestGrades = 0;
+	int getCurrentGrade(int mapId) const { return (currentGrades >> (3 * (mapId - 1))) & 0x7; }
+	void setCurrentGrade(int mapId, int g) { currentGrades |= g << (3 * (mapId - 1)); }   // OR only, as legacy
+	int getBestGrade(int mapId) const { return (bestGrades >> (3 * (mapId - 1))) & 0x7; }
+	void setBestGrade(int mapId, int g) {
+		bestGrades &= ~(7 << (3 * (mapId - 1)));
+		bestGrades |= g << (3 * (mapId - 1));
+	}
+	// src/Player.cpp:1991-2020: grade 6..1 -> strings file 3 ids 38..43, else 44.
+	static int gradeToString(int g) { return g >= 1 && g <= 6 ? 44 - g : 44; }
+	// src/Player.cpp:94-105 subset: moves = 0, turnTime = now, health 0 -> 1.
+	// numNotebookIndexes / questComplete / questFailed / inCombat are not ported.
+	void levelInit();
 
 	int getHealth() const { return ce.getStat(Enums::STAT_HEALTH); }
 	int getMaxHealth() const { return ce.getStat(Enums::STAT_MAX_HEALTH); }

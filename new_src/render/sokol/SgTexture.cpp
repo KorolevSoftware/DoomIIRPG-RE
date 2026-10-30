@@ -98,6 +98,17 @@ bool SgTexture::uploadIndexed(const uint8_t* indices, int w, int h,
 	if (w <= 0 || h <= 0 || indices == nullptr) return false;
 	if (palette == nullptr || paletteCount <= 0) return false;
 
+	// Same conversion as GlTexture::uploadPalette, so the 0xF81F key and the
+	// 5/6/5 bit replication cannot drift between the backends.
+	uint8_t lut[256 * 4];
+	expandPalette565(palette, paletteCount, transparent, lut);
+	return uploadIndexed(indices, w, h, lut, tiled, samplers);
+}
+
+bool SgTexture::uploadIndexed(const uint8_t* indices, int w, int h,
+	const uint8_t* lut8888, bool tiled, const SgSamplers& samplers) {
+	if (w <= 0 || h <= 0 || indices == nullptr || lut8888 == nullptr) return false;
+
 	destroy();
 	format_ = Format::Indexed;
 	width_ = w;
@@ -109,11 +120,7 @@ bool SgTexture::uploadIndexed(const uint8_t* indices, int w, int h,
 		return false;
 	}
 
-	// Same conversion as GlTexture::uploadPalette, so the 0xF81F key and the
-	// 5/6/5 bit replication cannot drift between the backends.
-	uint8_t lut[256 * 4];
-	expandPalette565(palette, paletteCount, transparent, lut);
-	if (!makeSampledImage(256, 1, SG_PIXELFORMAT_RGBA8, lut, sizeof(lut),
+	if (!makeSampledImage(256, 1, SG_PIXELFORMAT_RGBA8, lut8888, 256 * 4,
 			"palette", palImg_, palView_)) {
 		destroy();
 		return false;

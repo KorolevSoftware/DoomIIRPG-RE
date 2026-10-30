@@ -29,6 +29,9 @@ public:
 	bool uploadIndexed(TextureStore& store, const std::vector<uint8_t>& indices,
 		int w, int h, const std::vector<uint16_t>& palette,
 		bool transparent = false, bool tiled = false);
+	// indices + a ready RGBA8 256x1 LUT (1024 bytes).
+	bool uploadIndexedLut(TextureStore& store, const std::vector<uint8_t>& indices,
+		int w, int h, const uint8_t* lut8888, bool tiled = false);
 	bool uploadRgba(TextureStore& store, const std::vector<uint8_t>& rgba,
 		int w, int h);
 

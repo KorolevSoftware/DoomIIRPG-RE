@@ -47,6 +47,12 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	combat.attackerMonster = nullptr;
 	combat.lerpWpDown = false;                     // src/Game.cpp:677-678 (unloadMapData)
 	combat.weaponDown = false;
+	std::fill(std::begin(entityDeathFunctions), std::end(entityDeathFunctions), int16_t(-1));   // src/Game.cpp:671-673
+	std::fill(std::begin(mapKeepPitchLevelTiles), std::end(mapKeepPitchLevelTiles), int16_t(-1));   // src/LoadingManager.cpp:324-325
+	portalState = 0;                              // src/LoadingManager.cpp:328-330
+	previousPortalState = 0;
+	portalScripted = false;
+	angryVIOS = false;                            // src/Game.cpp:683 (unloadMap)
 	lootFound = 0;                                // src/Game.cpp:681 (unloadMap)
 	mapSecretsFound = 0;                          // src/Render.cpp:306 (unload)
 	lootSource = -1;
@@ -341,6 +347,54 @@ void Game::advanceTurn() {
 	if (vm_) vm_->executeStaticFunc(Enums::SCR_PER_TURN); // PER_TURN hook (:1279)
 }
 
+// src/Game.cpp:2500-2505
+void Game::snapAllMovers() {
+	// Resumed owner threads may start new lerps, hence the loop; legacy loops
+	// unbounded, the cap only guards against a script that re-arms forever.
+	for (int i = 0; i < SpriteLerps::kMaxLerpSprites && lerps.numActive() > 0; ++i)
+		lerps.snap(-1);       // snapLerpSprites(-1) (src/Game.cpp:2958-2978)
+	doors.update(1 << 20);    // door anims are lerps in legacy; any dur (<= 750 ms) completes
+	// snapGameSprites (src/Game.cpp:2502) not ported: gsprites are cleared at unload anyway.
+}
+
+void Game::fillMonsterStats(int& killed, int& total) const {
+	killed = total = 0;
+	for (const Entity& e : db.entities()) {
+		if (e.monster == nullptr || (e.monster->flags & Enums::MFLAG_NOTRACK) != 0) continue;
+		++total;
+		if ((e.info & (Entity::kInfoCorpse | Entity::kInfoHidden)) != 0) ++killed;
+	}
+}
+
+namespace {
+// The grade expression of src/Player.cpp:2033, total > 0 and totalSecrets > 0.
+constexpr int gradeFormula(int killed, int total, int secrets, int totalSecrets, int deaths) {
+	const int g = ((((6 * ((killed << 8) / total)) >> 8) +
+	                ((6 * ((secrets << 8) / totalSecrets)) >> 8)) >> 1) - deaths;
+	return g > 1 ? g : 1;
+}
+static_assert(gradeFormula(10, 10, 3, 3, 0) == 6, "perfect level");
+static_assert(gradeFormula(5, 10, 0, 3, 0) == 1, "half kills, no secrets: floor 1");
+static_assert(gradeFormula(7, 10, 2, 3, 0) == 3, "(4 + 3) >> 1");
+static_assert(gradeFormula(7, 10, 2, 3, 1) == 2, "each death costs one grade");
+static_assert(gradeFormula(10, 10, 3, 3, 9) == 1, "deaths never go below 1");
+} // namespace
+
+int Game::levelGrade(bool commit) {
+	if (player_ == nullptr || map_ == nullptr) return 0;
+	const int stored = player_->getCurrentGrade(loadMapID);
+	if (stored != 0) return stored;
+	int killed = 0, total = 0;
+	fillMonsterStats(killed, total);
+	if (total == 0 || map_->totalSecrets == 0) return 0;
+	const int g = gradeFormula(killed, total, mapSecretsFound, map_->totalSecrets, player_->currentLevelDeaths);
+	if (commit) {
+		if (g > player_->getBestGrade(loadMapID)) player_->setBestGrade(loadMapID, g);
+		player_->setCurrentGrade(loadMapID, g);
+	}
+	return g;
+}
+
 // Crate opening (src/PlayingInputHandler.cpp:387-393). The unlink is
 // immediate — the crate stops blocking the player and stops being a
 // trace/facing target while the 4-frame animation is still running.
@@ -382,12 +436,10 @@ bool Game::entityPain(Entity* e, int damage) {
 // monster death path. So the arms that have no body (default, and the ET_CORPSE
 // stub of group G4) must still do the clear, or their entity would stay
 // damageable forever (calcHitEntity's active gate, Combat.cpp:367-369).
-//
-// The monster->flags & 0x4 half of :431 is not ported (diedMonster never had
-// it — adding it would change monster deaths).
 void Game::entityDied(Entity* e, bool giveXP) {
 	if (e == nullptr || e->def == nullptr) return;
-	if ((e->info & Entity::kInfoActive) == 0) return;         // :431-433
+	if ((e->info & Entity::kInfoActive) == 0 ||
+	    (e->monster != nullptr && (e->monster->flags & Enums::MFLAG_NOKILL) != 0)) return;   // :431-433
 	switch (e->def->eType) {
 	case Enums::ET_MONSTER:                                   // :459-521
 		monsters.diedMonster(e, giveXP);                      // clears kInfoActive itself (:434)
@@ -401,6 +453,54 @@ void Game::entityDied(Entity* e, bool giveXP) {
 		break;
 	default:
 		e->info &= ~Entity::kInfoActive;                      // :434, legacy has no other arm
+		break;
+	}
+	if ((e->info & 0x2000000) != 0) {                         // :522-525
+		// The arms above already stored their final sprite info (legacy n3);
+		// legacy writes n3 after the death function (:526), so restore it.
+		const int sprite = e->getSprite();
+		const bool hasInfo = map_ != nullptr && sprite >= 0 && sprite < map_->numSprites;
+		const int info = hasInfo ? map_->mapSpriteInfo[sprite] : 0;
+		executeEntityFunc(e);
+		e->info &= ~0x2000000;
+		if (hasInfo) map_->mapSpriteInfo[sprite] = info;
+	}
+}
+
+void Game::addEntityDeathFunc(Entity* e, int ip) {          // src/Game.cpp:3495-3510
+	int i = 0;
+	while (i < 64 && entityDeathFunctions[i * 2] != -1) ++i;
+	if (i == 64) {
+		std::fprintf(stderr, "[script] Too many entity death functions set\n");   // legacy Error
+	} else {
+		entityDeathFunctions[i * 2 + 0] = static_cast<int16_t>(e->getSprite());
+		entityDeathFunctions[i * 2 + 1] = static_cast<int16_t>(ip);
+	}
+	e->info |= 0x2000000;
+}
+
+void Game::removeEntityFunc(Entity* e) {                    // src/Game.cpp:3512-3521
+	const int sprite = e->getSprite();
+	for (int n = 0; n < 64; ++n) {
+		if (entityDeathFunctions[n * 2] != sprite) continue;
+		entityDeathFunctions[n * 2 + 0] = -1;
+		entityDeathFunctions[n * 2 + 1] = -1;
+		break;
+	}
+	e->info &= ~0x2000000;
+}
+
+// throwAwayLoot (deathByExplosion, src/Entity.cpp:529-532) not ported:
+// GIVELOOT/GIVEITEM ignore it in the rewrite.
+void Game::executeEntityFunc(Entity* e) {                   // src/Game.cpp:3523-3534
+	const int sprite = e->getSprite();
+	for (int n = 0; n < 64; ++n) {
+		if (entityDeathFunctions[n * 2] != sprite) continue;
+		const int ip = entityDeathFunctions[n * 2 + 1];
+		std::fprintf(stderr, "[script] death func sprite=%d ip=%d\n", sprite, ip);
+		if (vm_ != nullptr) vm_->executeFunc(ip);
+		entityDeathFunctions[n * 2 + 0] = -1;
+		entityDeathFunctions[n * 2 + 1] = -1;
 		break;
 	}
 }
@@ -509,7 +609,7 @@ void Game::awardSecret(bool pushWall) {
 		hud_->addMessage(loc_->get(kTextMain, 119), 0xAA000000, 0);   // "Found Secret!" :3476
 	++mapSecretsFound;                                                 // :3477
 	std::fprintf(stderr, "[sound] %d\n", pushWall ? 1103 : 1020);      // :3479-3484
-	const int bit = 1 << (combat.loadMapID - 1);
+	const int bit = 1 << (loadMapID - 1);
 	if (player_ != nullptr && map_ != nullptr && mapSecretsFound == map_->totalSecrets &&
 	    (player_->foundSecretsLevels & bit) == 0) {                    // :3486
 		// showAchievementMessage(1) (src/Player.cpp:1953-1989): help dialog

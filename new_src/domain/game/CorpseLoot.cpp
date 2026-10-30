@@ -85,7 +85,7 @@ static std::string itemLongName(const EntityDefs& defs, const Localization& loc,
 // 154-278); see CorpseLoot.h. Marks every eType-9 entity on the tile looted
 // BEFORE reading its loot set, merges entries into `out`, then composes one
 // '|'-separated display buffer + the <start,len> line table.
-void CorpseLoot::poolLootCorpse(int tx, int ty, const Localization& loc, Pool& out) {
+void CorpseLoot::poolLootCorpse(int tx, int ty, const Localization& loc, int textType, Pool& out) {
 	// Reset first (:158-162): a stale buffer would corrupt the line table.
 	out.numEntries = 0;
 	out.numItems = 0;
@@ -154,7 +154,7 @@ void CorpseLoot::poolLootCorpse(int tx, int ty, const Localization& loc, Pool& o
 		int cls = entry >> 12 & 0xF;
 		if (cls == 6) {                                  // flavor: raw map string (:229-234)
 			out.text.append('\x88');
-			out.text.append(loc.get(kTextMap, entry & 0xFFF));
+			out.text.append(loc.get(textType, entry & 0xFFF));   // loadMapStringID (src/LootingSystem.cpp:232)
 			out.text.append("|");
 			continue;
 		}

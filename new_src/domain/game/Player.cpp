@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <iterator>
 #include <string>
 
 #include "domain/game/Combat.h"
@@ -131,6 +132,19 @@ void Player::reset() {
 	for (auto& v : buffs) v = 0;
 	numStatusEffects = 0;
 	for (auto& v : statusEffects) v = 0;
+	completedLevels = 0;
+	highestMap = 1;
+	moves = 0;
+	currentGrades = 0;
+	bestGrades = 0;
+	chainsawStrengthBonusCount = 0;    // src/Player.cpp:519
+	gameCompleted = false;             // :572
+}
+
+void Player::levelInit() {
+	moves = 0;
+	if (clock_) turnTime = *clock_;
+	if (getHealth() == 0) ce.setStat(Enums::STAT_HEALTH, 1);
 }
 
 int Player::modifyStat(int n, int n2) {
@@ -268,6 +282,77 @@ void Player::selectWeapon(int i, const EntityDef* def) {
 	activeWeaponDef = def;                     // (:160)
 }
 
+void Player::stripInventoryForViosBattle() {   // src/Player.cpp:2664-2692
+	weaponsCopy = 0;
+	ammoCopy[3] = ammo[3];
+	ammo[3] = 0;
+	if ((weapons & 0x4) != 0) { give(1, 2, -1); weaponsCopy |= 0x4; }
+	if ((weapons & 0x2000) != 0) { give(1, 13, -1); weaponsCopy |= 0x2000; }
+	if ((weapons & 0x8) != 0) { give(1, 3, -1); weaponsCopy |= 0x8; }
+	else if ((weapons & 0x10) != 0) { give(1, 4, -1); weaponsCopy |= 0x10; }
+	else if ((weapons & 0x20) != 0) { give(1, 5, -1); weaponsCopy |= 0x20; }
+	else if ((weapons & 0x40) != 0) { give(1, 6, -1); weaponsCopy |= 0x40; }
+}
+
+void Player::stripInventoryForTargetPractice() {   // :2694-2705
+	currentWeaponCopy = weapon;
+	std::copy(std::begin(ammo), std::end(ammo), ammoCopy);
+	weaponsCopy = weapons;
+	for (auto& v : ammo) v = 0;
+	weapons = 0;
+	give(1, 9, 1, true);
+	give(2, 1, 8, true);
+}
+
+// forceRemoveFromScopeZoom (:2735, :2755) has no counterpart: no scope zoom.
+void Player::restoreInventory() {   // :2707-2759
+	if ((weapons & 0x1) != 0) {
+		currentWeaponCopy = weapon;
+		ammo[3] = ammoCopy[3];
+		if ((weaponsCopy & 0x4) != 0) give(1, 2, 1, true);
+		if ((weaponsCopy & 0x2000) != 0) give(1, 13, 1, true);
+		const int16_t bot = ammo[7];
+		int botSlot = -1;
+		if ((weaponsCopy & 0x8) != 0) botSlot = 3;
+		else if ((weaponsCopy & 0x10) != 0) botSlot = 4;
+		else if ((weaponsCopy & 0x20) != 0) botSlot = 5;
+		else if ((weaponsCopy & 0x40) != 0) botSlot = 6;
+		if (botSlot != -1) {
+			give(1, botSlot, 1, true);
+			ammo[7] = bot;
+		}
+	} else {
+		const bool hadWeapon9 = (weaponsCopy & 0x200) != 0;   // the practice weapon
+		for (int i = 0; i < 9; ++i) {
+			ammo[i] = 0;
+			give(2, i, ammoCopy[i], true);
+		}
+		for (int j = 0; j < 15; ++j)
+			if (((1 << j) & weaponsCopy) != 0) give(1, j, 1, true);
+		if (!hadWeapon9) give(1, 9, -1);
+	}
+	// shortcut: selectNextWeapon not ported (src/Player.cpp:192-215), upgrade with it
+	if (currentWeaponCopy < 0) return;
+	selectWeapon(currentWeaponCopy, defs_ != nullptr
+		? defs_->find(Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON, currentWeaponCopy)
+		: nullptr);
+}
+
+void Player::usedChainsaw() {   // src/Player.cpp:2636-2652
+	++chainsawStrengthBonusCount;
+	if (chainsawStrengthBonusCount >= 30) {
+		chainsawStrengthBonusCount %= 30;
+		const int gained = modifyStat(Enums::STAT_STRENGTH, 2);
+		if (gained != 0 && hud_ != nullptr && loc_ != nullptr) {
+			std::string text = loc_->get(kTextMain, 241);
+			std::string args[1] = { std::to_string(gained) };
+			composeArgs(text, args, 1);
+			hud_->addMessage(text, 0xAA000000, 3);
+		}
+	}
+	if (hud_ != nullptr) hud_->startShake(clock_ != nullptr ? *clock_ : 0, 666, 2);   // startShake(666, 1, 0)
+}
+
 bool Player::requireItem(int kind, int slot, int min, int max) const {
 	if (kind != 1) {
 		return kind == 0 && slot >= 0 && slot < 26 &&
@@ -393,7 +478,8 @@ void logFogLerpOnce() {
 } // namespace
 
 void Player::advanceTurn() {
-	// src/Player.cpp:50-92 subset. Deferred: moves/totalMoves (:53-54),
+	++moves;                                                // :53
+	// src/Player.cpp:50-92 subset. Deferred: totalMoves (:54),
 	// COLD/DRUNK drain statusEffects[53] (:63-66) and FIRE -3 + msg 82/71
 	// (:68-77) — no producer (EV_STATUS_EFFECT op 70 and monster fire effects
 	// src/Combat.cpp:553,978,1135 unported) — inCombat decay (:79-81),

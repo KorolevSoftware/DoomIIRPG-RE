@@ -42,6 +42,10 @@ public:
 	bool uploadIndexed(const uint8_t* indices, int w, int h,
 		const uint16_t* palette, int paletteCount, bool transparent,
 		bool tiled, const SgSamplers& samplers);
+	// Same, but with a ready RGBA8 256x1 LUT (1024 bytes) instead of a palette,
+	// for alpha values other than 0/255.
+	bool uploadIndexed(const uint8_t* indices, int w, int h,
+		const uint8_t* lut8888, bool tiled, const SgSamplers& samplers);
 	// Uploads RGBA8 data (w*h*4 bytes).
 	bool uploadRgba(const uint8_t* rgba, int w, int h, const SgSamplers& samplers);
 

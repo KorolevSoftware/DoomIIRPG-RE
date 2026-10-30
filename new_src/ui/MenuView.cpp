@@ -120,8 +120,9 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 	if (m.drawBackground) {
 		// Opaque, full screen: the world is not visible behind the menu (:739);
 		// the vending menus draw vendingBG instead (:735-737).
-		ui.image(m.vendingSkin ? art.vendingBackground : art.menuBackground, 0, 0,
-			Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
+		const Texture& bg = m.statsSkin ? art.endOfLevelStatsBG
+		                  : m.vendingSkin ? art.vendingBackground : art.menuBackground;
+		ui.image(bg, 0, 0, Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft);
 	}
 	if (m.statusLine != nullptr) {                                   // (:742-758)
 		const int w = m.statusLine->getStringWidth();
@@ -391,6 +392,8 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 		// row's help does NOT move the cursor.
 		res.action = UiAction::Info;
 		res.index = infoHit;
+	} else if (m.statsSkin && ui.in().released) {
+		res.action = UiAction::Activate;   // same as FIRE
 	} else if (ui.in().wheel != 0) {
 		// NEW, no original: one notch behaves like one arrow key, the same
 		// convention as the loot list and the dialog box.

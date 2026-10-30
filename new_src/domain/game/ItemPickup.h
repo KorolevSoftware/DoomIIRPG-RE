@@ -7,6 +7,7 @@ namespace newcore {
 
 class Entity;
 class EntityDb;
+struct EntityDef;
 class EntityDefs;
 class Game;
 class Hud;
@@ -44,10 +45,16 @@ public:
 	// Grant by item class (src/Entity.cpp:152-278).
 	bool touchedItem(Entity* e);
 
+	// EV_DROPMONSTERITEM stand-in: picks up a dropped `def` carrying `qty`
+	// on the spot (grant, message, SCR_ITEM_PICKUP hook).
+	bool touchedDrop(const EntityDef* def, int qty);
+
 	// Applet::nextInt() analog: std::rand() & INT32_MAX (src/App.cpp:506-508).
 	static int nextInt();
 
 private:
+	// touchedItem minus removeEntity; dropQty >= 0 = dropped entity's param.
+	bool grantItem(const EntityDef* def, int sprite, int dropQty);
 	// getMessageBuffer(flags) + composeText + finishMessageBuffer in one:
 	// main-text string `stringIndex` with %NN args, posted at legacy flags.
 	void message(int stringIndex, const std::string* args, int numArgs, int flags);

@@ -1,5 +1,6 @@
 #include "render/sokol/SgScene3D.h"
 
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 
@@ -31,6 +32,13 @@ constexpr float kDepthFixY = 0.5f;
 const float kIdentity4x4[16] = {
 	1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1,
 };
+
+// The legacy sky branch (src/GLES.cpp:325-343) on an already divided NDC
+// position: the drawSky recipe per vertex, so a tile-301 wall shows exactly
+// the backdrop texels. w = 1, hence screen-linear UVs.
+WorldVertex skyVertex(float x, float y, float uOffset) {
+	return WorldVertex{ x, y, 0.f, x * 0.5f - uOffset, y * -0.5f + 0.5f };
+}
 
 } // namespace
 
@@ -189,8 +197,40 @@ void SgScene3D::drawSky(TextureId sky, float uOffset) {
 		{ q[2].x, q[2].y, q[2].z, q[2].u, q[2].v },
 		{ q[3].x, q[3].y, q[3].z, q[3].u, q[3].v },
 	};
+	recordSky(st, tri, 6);
+}
 
-	const int offset = frame_->appendVertices(tri, sizeof(tri));
+void SgScene3D::drawSkyPolygon(TextureId sky, const float* ndcXY, int count, float uOffset) {
+	const SgTexture* st = lookup(sky);
+	if (st == nullptr || !st->valid() || ndcXY == nullptr || count < 3) return;
+
+#ifndef NDEBUG
+	// Screen centre -> (-uOffset, 0.5); corners match the drawSky quad above.
+	const WorldVertex c = skyVertex(0.f, 0.f, uOffset);
+	const WorldVertex bl = skyVertex(-1.f, -1.f, uOffset);
+	const WorldVertex tr = skyVertex(1.f, 1.f, uOffset);
+	assert(c.u == -uOffset && c.v == 0.5f);
+	assert(bl.u == -0.5f - uOffset && bl.v == 1.f);
+	assert(tr.u == 0.5f - uOffset && tr.v == 0.f);
+#endif
+	assert(count <= kMaxSkyPolygonVerts);
+	if (count > kMaxSkyPolygonVerts) return;
+	WorldVertex tri[(kMaxSkyPolygonVerts - 2) * 3];
+	int n = 0;
+	const WorldVertex v0 = skyVertex(ndcXY[0], ndcXY[1], uOffset);
+	for (int i = 1; i + 1 < count; ++i) {
+		tri[n++] = v0;
+		tri[n++] = skyVertex(ndcXY[i * 2], ndcXY[i * 2 + 1], uOffset);
+		tri[n++] = skyVertex(ndcXY[i * 2 + 2], ndcXY[i * 2 + 3], uOffset);
+	}
+
+	// Painter's order: whatever the scene batched before this wall draws first.
+	flush();
+	recordSky(st, tri, n);
+}
+
+void SgScene3D::recordSky(const SgTexture* st, const WorldVertex* verts, int count) {
+	const int offset = frame_->appendVertices(verts, (size_t)count * sizeof(WorldVertex));
 	if (offset < 0) return;
 
 	SgFrame::Uniforms u;
@@ -218,7 +258,7 @@ void SgScene3D::drawSky(TextureId sky, float uOffset) {
 	cmd.smp = st->sampler();
 	cmd.palSmp = st->paletteSampler();
 	cmd.vertexOffset = offset;
-	cmd.vertexCount = 6;
+	cmd.vertexCount = count;
 	cmd.uniformIndex = frame_->addUniforms(u);
 	cmd.world = true;
 	frame_->record(cmd);

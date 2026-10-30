@@ -26,6 +26,12 @@ public:
 	virtual TextureId createIndexed(const uint8_t* indices, int w, int h,
 		const uint16_t* palette, int paletteCount, TextureFlags flags) = 0;
 
+	// Same, with a ready RGBA8 256x1 LUT (1024 bytes) instead of an RGB565
+	// palette; TransparentKey is ignored. Used where alpha is not 0/255
+	// (tile 302 fade, src/GLES.cpp:234-298).
+	virtual TextureId createIndexedLut(const uint8_t* indices, int w, int h,
+		const uint8_t* lut8888, TextureFlags flags) = 0;
+
 	// rgba: w*h*4 bytes, top-left origin, non-premultiplied.
 	virtual TextureId createRgba(const uint8_t* rgba, int w, int h,
 		TextureFlags flags) = 0;

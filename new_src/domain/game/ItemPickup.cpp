@@ -1,5 +1,6 @@
 #include "domain/game/ItemPickup.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -54,16 +55,37 @@ bool ItemPickup::touched(Entity* e) {
 	return true;
 }
 
-// Verbatim port of Entity::touchedItem (src/Entity.cpp:152-278). Every
-// isDroppedEntity() branch collapses to the world-item side (no drops yet).
+// Port of Entity::touchedItem (src/Entity.cpp:152-278).
 bool ItemPickup::touchedItem(Entity* e) {
-	const EntityDef* def = e->def;
+	if (!grantItem(e->def, e->getSprite(), -1)) return false;
+	if (env_.db != nullptr) env_.db->removeEntity(e);          // :276
+	// TODO sound 1054 (src/Entity.cpp:277) — no audio subsystem in new_src.
+	return true;                                               // :278
+}
+
+// shortcut: EV_DROPMONSTERITEM grants the drop on the spot instead of
+// throwing a drop entity (spawnDropItem, src/Game.cpp:2647-2679); this runs
+// the pickup touched() would run on it. Upgrade with the drop-entity pool.
+bool ItemPickup::touchedDrop(const EntityDef* def, int qty) {
+	if (!grantItem(def, -1, qty)) return false;
+	std::fprintf(stderr, "[sound] 1054\n");                    // :277
+	if (env_.vm != nullptr) {                                  // :125-126
+		env_.vm->vars[11] = def->tileIndex;
+		env_.vm->executeStaticFunc(Enums::SCR_ITEM_PICKUP);
+	}
+	return true;
+}
+
+// touchedItem's grant and message half. dropQty >= 0 takes the
+// isDroppedEntity() sides: entity param as the amount, no foundLoot.
+bool ItemPickup::grantItem(const EntityDef* def, int sprite, int dropQty) {
 	Player& player = *env_.player;
-	const int sprite = e->getSprite();
+	const bool dropped = dropQty >= 0;
 
 	if (def->eSubType == Enums::ITEM_CLASS_INVENTORY) {        // :154
 		int qty = 1;                                           // :155
-		if (def->parm == Enums::INV_ONE_UAC_CREDIT) qty = 2 + nextInt() % 3;   // :158-161
+		if (dropped) qty = dropQty;                            // :156-158
+		else if (def->parm == Enums::INV_ONE_UAC_CREDIT) qty = 2 + nextInt() % 3;   // :158-161
 		if (!player.give(Enums::ITEM_CLASS_INVENTORY, def->parm, qty)) {       // :162
 			std::string args[1] = { ingameTitle(def->name) };
 			message(83, args, 1, 2);                           // :163-169
@@ -80,7 +102,7 @@ bool ItemPickup::touchedItem(Entity* e) {
 			std::string args[1] = { ingameTitle(def->longName) };
 			message(85, args, 1, 1);                           // :186-190
 		}
-		if (def->parm != Enums::INV_JOURNAL && env_.game != nullptr) {
+		if (!dropped && def->parm != Enums::INV_JOURNAL && env_.game != nullptr) {
 			env_.game->foundLoot(sprite, 1);                   // :192-194
 		}
 	} else if (def->eSubType == Enums::ITEM_CLASS_FOOD) {      // :196
@@ -91,8 +113,11 @@ bool ItemPickup::touchedItem(Entity* e) {
 		}
 		// No foundLoot for food — legacy has none.
 	} else if (def->eSubType == Enums::ITEM_CLASS_AMMO) {      // :209
-		int qty = 2 + nextInt() % 4;                           // :214-215
-		if (def->parm == 2) qty &= ~1;                         // :216-218 shells: even only
+		int qty = dropQty;                                     // :211-213
+		if (!dropped) {
+			qty = 2 + nextInt() % 4;                           // :214-215
+			if (def->parm == 2) qty &= ~1;                     // :216-218 shells: even only
+		}
 		if (!player.give(Enums::ITEM_CLASS_AMMO, def->parm, qty)) {            // :220
 			// Legacy asymmetry (:220-222 vs the inventory/food branches):
 			// a failed ammo give prints str 87 and then FALLS THROUGH to the
@@ -105,16 +130,16 @@ bool ItemPickup::touchedItem(Entity* e) {
 			// longName as the inventory/weapon branches do.
 			std::string args[2] = { std::to_string(qty), ingameTitle(def->name) };
 			message(86, args, 2, 1);                           // :224-232
-			if (env_.game != nullptr) env_.game->foundLoot(sprite, 1);         // :233-235
+			if (!dropped && env_.game != nullptr) env_.game->foundLoot(sprite, 1);   // :233-235
 		}
 	} else if (def->eSubType == Enums::ITEM_CLASS_WEAPON) {    // :238
 		if ((1 << def->parm) & Enums::WP_SENTRY_BOT_MASK) {    // :239 weaponIsASentryBot
 			if (player.hasASentryBot()) return false;          // :240-242 (isFamiliar unported)
 			player.give(Enums::ITEM_CLASS_WEAPON, def->parm, 1);               // :249
 			// Direct write, as legacy (:250): give() already refilled the pool
-			// to 100 in its sentry pre-step (src/Player.cpp:981), and a dropped
-			// bot would overwrite it with its own param. Same value here.
-			player.ammo[Enums::AMMO_SENTRY_BOT] = 100;         // :244-250 (world qty = 100)
+			// to 100 in its sentry pre-step (src/Player.cpp:981); a dropped
+			// bot overwrites it with its own param.
+			player.ammo[Enums::AMMO_SENTRY_BOT] = static_cast<int16_t>(dropped ? dropQty : 100);   // :244-250
 			message(223, nullptr, 0, 3);                       // :251
 		} else {
 			player.give(Enums::ITEM_CLASS_WEAPON, def->parm, 1);               // :254
@@ -129,12 +154,9 @@ bool ItemPickup::touchedItem(Entity* e) {
 			message(85, args, 1, 1);                           // :265-269
 			// showWeaponHelp (:270) unported: no help popup for gameplay grants.
 		}
-		if (env_.game != nullptr) env_.game->foundLoot(sprite, 1);             // :272-274
+		if (!dropped && env_.game != nullptr) env_.game->foundLoot(sprite, 1);   // :272-274
 	}
-
-	if (env_.db != nullptr) env_.db->removeEntity(e);          // :276
-	// TODO sound 1054 (src/Entity.cpp:277) — no audio subsystem in new_src.
-	return true;                                               // :278
+	return true;
 }
 
 } // namespace newcore

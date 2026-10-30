@@ -16,6 +16,7 @@ namespace newcore {
 class EntityDefs;
 class Game;
 class Localization;
+class MapData;
 class Player;
 class Tables;
 class VendingMachine;
@@ -56,7 +57,10 @@ public:
 		Game* game = nullptr;                // item use: advanceTurn + the in-menu monster turn
 		StateHost* host = nullptr;
 		const int64_t* upTimeMs = nullptr;   // cursor oscillation clock
+		const MapData* map = nullptr;        // totalSecrets (level counters)
+		const int64_t* gameTime = nullptr;   // level timer (level counters)
 		std::function<void()> restartLevel;  // ACTION_RESTARTLEVEL target (GameContext::restartLevel)
+		std::function<void()> continueLevelStats;   // MENU_LEVEL_STATS select: loadMap(next, true, false)
 		VendingMachine* vending = nullptr;   // vending menus 83-85: prices, exits
 	};
 	void init(const Env& env);
@@ -142,6 +146,7 @@ private:
 	int  popMenu(int& selectedIndex, int& scrollIndex);             // (:4071-4081)
 	void clearStack() { stackCount_ = 0; }                          // (:4055-4057)
 	void fillValues();                // fillStatus subset (:3928-3979)
+	void fillLevelValues(int nameRow, int firstValueRow);   // its level block (:3951-3967)
 	void back();                      // (:591-607)
 	void returnToGame();              // (:1209-1220)
 	void select(int i);               // (:2971-3050 subset)

@@ -83,6 +83,19 @@ TextureId SgTextureStore::createIndexed(const uint8_t* indices, int w, int h,
 	return id;
 }
 
+TextureId SgTextureStore::createIndexedLut(const uint8_t* indices, int w, int h,
+	const uint8_t* lut8888, TextureFlags flags) {
+	const TextureId id = allocSlot();
+	SgTexture& tex = *slots_[id.value];
+	if (!tex.uploadIndexed(indices, w, h, lut8888,
+			hasFlag(flags, TextureFlags::Tiled), samplers_)) {
+		freeSlot(id);
+		return TextureId{};
+	}
+	bytes_ += bytesOf(tex);
+	return id;
+}
+
 TextureId SgTextureStore::createRgba(const uint8_t* rgba, int w, int h, TextureFlags) {
 	const TextureId id = allocSlot();
 	SgTexture& tex = *slots_[id.value];

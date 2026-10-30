@@ -198,7 +198,7 @@ Opcode ids `src/Enums.h:399-497`; decode = single switch in `ScriptThread::run()
 | 32 | EV_FADEOP | S | bit15 → FADEIN (flag 2) over S&0x7FFF ms, else FADEOUT (flag 1) S ms; skip-aware (938-958); see fades.md |
 | 33 | EV_GIVEITEM | B,B,b | mode B3==0 → touch sprite (B1<<8\|B2); else lookup def by **tileIndex** B1 (`EntityDefManager::lookup`, `src/EntityDef.cpp:76-83`), qty=(s8)B2 <0 = silent-fail variant, >0 spawns drop + touched() pickup; failure sets n2=1 → var7 (960-1008) |
 | 34 | EV_NAMEENTITY | B,B | `entity.name = B2 \| loadMapStringID<<10` (1010-1021) |
-| 35 | EV_DROPMONSTERITEM | S,B[,B],B | drop def at sprite's tile (bit15 → relocate whole entity instead) (1023-1057) |
+| 35 | EV_DROPMONSTERITEM | S,B[,B],B | S=source sprite (pos = its S_X/S_Y world coords), B=def **tileIndex**, qty B → `spawnDropItem(x,y,d,def,qty,true)`; S bit15 → d=(B<<8\|B) is a sprite to relocate+throw instead (1023-1057). Shipped: chainsaw (map01) and **blue key** (map02) drops |
 | 36 | EV_SETDEATHFUNC | B,s | bind death-script ip to sprite (-1 unbinds) (1059-1075; exec `src/Game.cpp:3523-3534`) |
 | 37 | EV_PLAYSOUND | B,B | `playSound(B+1000, B2>>4, B2&0xF, 0)` — vol/priority nibbles (1077-1092) |
 | 38 | EV_NPCCHAT | S | NPC chat param (S>>14)&3 on sprite S&0x3FFF (1094-1121) |
@@ -210,7 +210,7 @@ Opcode ids `src/Enums.h:399-497`; decode = single switch in `ScriptThread::run()
 | 44 | EV_BRIBE_ENTITY | – | nop (1195-1198) |
 | 45 | EV_PLAYER_ADD_STAT | B | modifyStat((B>>5)&7, sign-ext 5-bit delta) (1200-1205) |
 | 46 | EV_PLAYER_ADD_RECIPE | – | nop (1207-1210) |
-| 47 | EV_RESPAWN_MONSTER | S,B,B | resurrect dead monster at tile; impossible → n2=-1 → var7 (1212-1226) |
+| 47 | EV_RESPAWN_MONSTER | S,B,B | if `info&0x1010000` and tile free of mask 1030 → `resurrect(tx*64+32,ty*64+32,32)`; else n2=-1 → var7 (1212-1226) |
 | 48 | EV_SCREEN_SHAKE | S | dur=(v>>14&3)+1, dx=(v>>7&0x7F)+1<<4, dy=(v&0x7F)+1<<4 (1228-1245) |
 | 49 | EV_SPEECHBUBBLE | s,B | showSpeechBubble(texId, color) (1247-1254) |
 | 50 | EV_AWARDSECRET | – | awardSecret(false) (1256-1260) |
@@ -231,7 +231,7 @@ Opcode ids `src/Enums.h:399-497`; decode = single switch in `ScriptThread::run()
 | 67 | EV_GOTO_MENU | B | menuSystem->setMenu(B) (1533-1537) |
 | 68 | EV_START_INTERCINEMATIC | B | inter-level camera (B&0x7F) (1539-1545) |
 | 69 | EV_TURN_PLAYER | B | angle=(B&7)<<7 (45° units); bit3 animated (pauses) else instant (1547-1574) |
-| 70 | EV_STATUS_EFFECT | B[,B] | bit7 remove (B&0x7F) else add(id, mag, per-id duration) (1576-1603) |
+| 70 | EV_STATUS_EFFECT | B[,B] | bit7 → remove(B&0x7F), **no 2nd byte**; else mag=B2, dur 2→20, 9/1→10, 11→6, 17→5, else 30; add + translateStatusEffects (1576-1603) |
 | 71 | EV_JOURNAL_TILE | B,B,B | setQuestTile(B1, B2&0x1F, B3&0x1F) (1605-1612) |
 | 72 | EV_MAKE_CORPSE | S,B,B | corpsifyMonster(sprite, tile (B1,B2)) (1614-1625) |
 | 73 | EV_INVENTORY_OP | B | 0 strip-for-vios / 1 strip-target-practice / 2 restore (1627-1643) |
@@ -241,27 +241,57 @@ Opcode ids `src/Enums.h:399-497`; decode = single switch in `ScriptThread::run()
 | 77 | EV_FOG_AFFECTS_SKYMAP | b | render->fogAffectsSkyMap (1716-1720) |
 | 78 | EV_ENABLE_HELP | b | player->enableHelp (1722-1726) |
 | 79 | EV_SET_MM_RENDER_HACK | b | render->useMastermindHack (1728-1732) |
-| 80 | EV_START_ARMORREPAIR | – | armor UI; pauses (1734-1742) |
-| 81 | EV_FORCE_BOT_RETURN | – | familiar returns (1744-1751) |
+| 80 | EV_START_ARMORREPAIR | – | `startArmorRepair` (`src/ArmorRepairSystem.cpp:16-42`): parks (unpauseTime=-1, n=2) ONLY if shards `inventory[12]>=5` and help 15 not shown; resumed by dialog close → `endArmorRepair` → `run()` (`src/DialogSystem.cpp:570-597`, `src/ArmorRepairSystem.cpp:44-54`); else continues (1734-1742) |
+| 81 | EV_FORCE_BOT_RETURN | – | only if `isFamiliar`: familiarReturnsToPlayer(false) (1744-1751) |
 | 82 | EV_UNMARKTILE | S | inverse of 42 (1753-1780) |
 | 83 | EV_ASSIGN_LOOTSET | S,B,n×S | entSprite=S&0xFFF, B entries overwrite lootSet (rest zeroed) (1782-1804) |
 | 84 | EV_START_TARGETPRACTICE | S | enterTargetPractice((S>>8)&0x1F,(S>>3)&0x1F,S&7); pauses (1806-1813) |
 | 85 | EV_GIVE_AUTOMAP | – | givemap(0,0,32,32) (1815-1819) |
 | 86 | EV_ANGER_VIOS | b | game->angryVIOS (1821-1825) |
-| 87 | EV_UNHIDE_AUTOMAP | B,B,B,B | rect clear of automap-hidden flag (1827-1839) |
-| 88 | EV_HIDE_AUTOMAP | B,B,B,B | rect set (1841-1853) |
+| 87 | EV_UNHIDE_AUTOMAP | B,B,B,B | x0,y0,x1,y1 inclusive: `mapFlags[y*32+x] &= ~8`; automapDrawn=false (1827-1839) |
+| 88 | EV_HIDE_AUTOMAP | B,B,B,B | same rect, `mapFlags \|= 8` (1841-1853) |
 | 89 | EV_PORTAL_EVENT | B | portal state=B&0xF prev=(B>>4)&0xF; 4 → portalScripted=false (1855-1868) |
-| 90 | EV_PITCH_CONTROL | S | keep-pitch tiles add/remove (1870-1899) |
-| 91 | EV_USED_CHAINSAW | – | usedChainsaw(false) (1901-1905) |
+| 90 | EV_PITCH_CONTROL | S | dir=v&7, x=(v>>8)&0x1F, y=(v>>3)&0x1F, bit13 remove; add → first free `mapKeepPitchLevelTiles[20]` = `x\|y<<5\|dir<<10`; remove → clear all matches; read by `pitchIsControlled` (`src/MovementController.cpp:361-375`), reset at load (`src/LoadingManager.cpp:324-325`) (1870-1899) |
+| 91 | EV_USED_CHAINSAW | – | usedChainsaw(false): ++count, at 30 → %30 + modifyStat(4,2) msg 241; startShake(666,1,0) (`src/Player.cpp:2636-2652`) (1901-1905) |
 | 92 | EV_ENTITY_BREATHES | B,B | entity info bit 0x20000000 breathe fx toggle (1907-1923) |
-| 93 | EV_DESTROY_PLAYER | B | kill player (noclip/familiar rules) (1925-1947) |
-| 94 | EV_START_TREADMILL | – | canvas→ST_TREADMILL (1949-1953) |
+| 93 | EV_DESTROY_PLAYER | B | noclip → nop; else painEvent, damageTime=+1000, totalDamage=1, pain(hp,nullptr,true), addArmor(-armor) (familiar: ammo[7], B==0 → noFamiliarRemains) (1925-1947) |
+| 94 | EV_START_TREADMILL | – | canvas→ST_TREADMILL, thread continues; treadmill self-contained, no script callback (`src/MiniGameManager.cpp:52-163`) (1949-1953) |
 | 95 | EV_STOPSOUND | B | stopSound(B+1000) (1955-1960) |
 | 96 | EV_LERPSPRITEPARABOLA_SCALE | I,S,B | parabola + dstScale=B<<1 (1962-2019) |
-| 97 | EV_SET_CALDEX_RENDER_HACK | b | render->useCaldexHack (2021-2025) |
+| 97 | EV_SET_CALDEX_RENDER_HACK | b | render->useCaldexHack (2021-2025); render-only (defer tile 69 Bob sprite, see §5.4); used only by map00 event[80] |
 | 255 | EV_END | – | assert stackPtr==0; return 1 (2027-2032) |
 
 Unknown opcode → fatal `Error("Cannot handle event: %d")` (`src/ScriptThread.cpp:2034-2037`). Post-op default: `scriptStateVars[7] = n2` records give/spawn failures (`src/ScriptThread.cpp:240,2040-2042`).
+
+**Operand signedness:** in this port `getByteArg()` returns `uint8_t` (`src/ScriptThread.cpp:2099-2101`), so most `b` operands are unsigned unless they are cast explicitly. That matters only where a value is not just tested `!= 0`.
+
+**Parking invariant:** `unpauseTime=-1; n=2; break;` still runs the loop tail (`var7=n2; ++IP`, `src/ScriptThread.cpp:2040-2043`). A thread parked this way therefore resumes at the NEXT opcode, and only through an explicit external `run()`. `attemptResume` never wakes `unpauseTime==-1` (`src/ScriptThread.cpp:2063-2072`).
+
+### 3.0 Shipped-map usage of opcodes missing from the rewrite (2026-10-29)
+
+These opcodes have no `case` in `new_src/domain/game/ScriptVM.cpp` `run`. The `default:` there kills the thread. All 10 maps were disassembled, with SETDEATHFUNC targets passed via `--funcs`. Full per-IP lists, stand-ins and continuation analysis are in `docs/research/2026-10-29-missing-opcodes.md`.
+
+| # | Uses | Class | Note |
+|---|---|---|---|
+| 29 SHOW_PLAYERATTACK | 1 (map06) | b | cinematic weapon anim |
+| 30 MONSTER_PARTICLES | 14 (map02/03/05) | b | particles |
+| 35 DROPMONSTERITEM | 8 (map01/02) | b | drop pool; chainsaw + blue key, progression-critical |
+| 47 RESPAWN_MONSTER | 6 (map05) | b | stand-in n2=-1 |
+| 70 STATUS_EFFECT | 2 (map02/07) | a | Player API exists |
+| 73 INVENTORY_OP | 13 (map01/03/04/06/08) | a | needs weaponsCopy/ammoCopy |
+| 74 END_GAME | 1 (map08) | b | epilogue |
+| 79 SET_MM_RENDER_HACK | 4 (map05) | a | flag |
+| 80 START_ARMORREPAIR | 9 (map00-08) | b | only parking opcode; stand-in must not park |
+| 81 FORCE_BOT_RETURN | 5 (map04/05/07) | a | no-op without familiar |
+| 86 ANGER_VIOS | 9 (map01/03/04/06/08) | a | flag |
+| 87/88 UN/HIDE_AUTOMAP | 7+7 (map02) | a | mapFlags bit 8 |
+| 89 PORTAL_EVENT | 13 (map02/05/07/08) | a | state only |
+| 90 PITCH_CONTROL | 47 (map01/02/07) | a | table only; map01 INIT_MAP @427 |
+| 91 USED_CHAINSAW | 19 (map01/02) | a | |
+| 93 DESTROY_PLAYER | 22 (map02/06/07) | a | |
+| 94 START_TREADMILL | 5 (map01/02/03/06/09) | b | no script callback |
+
+Opcodes 39, 40, 44, 45, 46, 54, 55, 62, 65, 67 and 68 do not occur in any shipped map.
 
 ### 3.1 EV_EVAL notes
 
@@ -342,6 +372,14 @@ An event runs iff ALL hold (`src/ScriptThread.cpp:75`; same in `doesScriptExist`
 
 Consequences: an event with NO direction bits never fires from real triggers (all sites pass dir bits); attack-modded events need a compatible attack; SKIP_TURN events swap turn-advance for skip-flag.
 
+### 4.6 Entity death functions (`EV_SETDEATHFUNC`)
+
+* Table: `short entityDeathFunctions[128]` (`src/Game.h:133`) = 64 pairs `{sprite, ip}`, free = -1. Filled with -1 in the ctor (`src/Game.cpp:50-52`) and `unloadMapData` (`:671-673`).
+* `EV_SETDEATHFUNC` (B sprite, s ip), `src/ScriptThread.cpp:1059-1075`: entity = `mapSprites[S_ENT+sprite]`. If it is -1, nothing happens. ip != -1 calls `addEntityDeathFunc` (first free pair, `entity->info |= 0x2000000`, `Error` if all 64 are used; `src/Game.cpp:3495-3510`). ip == -1 calls `removeEntityFunc` (clears the pair, `info &= ~0x2000000`; `:3512-3521`).
+* Execution: at the END of `Entity::died`, outside the eType switch, for every eType (`src/Entity.cpp:522-525`). It runs if `info & 0x2000000`. The call is `executeEntityFunc(this, deathByExplosion(killer))`, then the bit is cleared. `executeEntityFunc` (`src/Game.cpp:3523-3534`) looks the sprite up linearly. It allocs a thread with `throwAwayLoot` set, runs it synchronously, and then frees the pair. died's early-out (`:431-433`: not active, or `MFLAG_NOKILL`) skips it. `deathByExplosion` = the killer is the player with weapon 11 (`:529-532`). `throwAwayLoot` changes GIVEITEM/GIVELOOT (`src/ScriptThread.cpp:965,1113,1142,2131-2211`).
+* Persistence: u8 count + count × `{s16 sprite, s16 ip}` in world state (`src/Game.cpp:1625-1636` save, `:1797-1800` load). The entity bit travels as 0x1000000 in the entity-state word (`src/Entity.cpp:1813-1814`, `:1600-1601`).
+* map00 example, the mirror room: zombie sprite 86 has `deathfunc ip 7693` = `HIDE sprite=85`. Sprite 85 is the zombie's static reflection behind the mirror. Full trace: `docs/research/2026-10-29-mirror-reflection.md`.
+
 ## 5. RED/BLUE DOOR END-TO-END ON MAP00 (verified against tmp_map00.bin)
 
 Parsed with a faithful re-implementation of the `src/LoadingManager.cpp` walk (minus the childOffset marker discrepancy, §1.1). Header: `numTileEvents=167`, `mapByteCodeSize=10015`, spawn `(4,19)` facing 0(E).
@@ -400,6 +438,20 @@ Key items: def with `tileIndex=110` = ET_ITEM parm 19 (**red keycard**, `INV_OTH
 
 - **INIT_MAP @0**: entity naming (`EV_NAMEENTITY`), fog setup (`EV_SET_FOG_COLOR`/-`LERP_FOG`), calls func@384 (bulk `EV_MONSTERFLAGOP`s + NPC chats) and func@508 (17 × `EV_SETDEATHFUNC` bindings), decorative `EV_LERPSPRITEOFFSET`/`EV_LERPSCALE`s, locks normal door sprite 37, `EVAL var17==0` gate around the tail (new-game vs reload behavior), `EV_MARKTILE`s.
 - **PER_TURN @253**: `EVAL var28==1` → `EV_ITEM_COUNT inventory[20] -> var27` → if ==1: `EV_UPDATEJOURNAL quest=37 state=1` + `NEXTSTATE var28` (one-shot "got blue key" journal poller); VIOS sub-state machine (vars 24/25, `CALL func@4564`); corpse-loot checks with `EV_TILE_EMPTY` (21,28)/(21,27) + `EV_HIDE` + `EV_LERPSPRITE`.
+
+### 5.4 Bridge + NPC "Bob" (sprite 19) crossing on map00
+
+Verified with `tools/disasm_map_scripts.py` on map00.bin (death-func IPs passed via `--funcs`); full trace in `docs/research/2026-10-29-bridge-npc-sequence.md`.
+
+- Script vars: v56 = bridge-quest stage, v66 = terminal counter, v19 = bridge raised (1) / lowered (0), v55 = NPC-on-bridge counter, v53 = re-entrancy latch, v16 = `isFamiliar` (`src/Game.cpp:3469`; nonzero takes the "no access" branch func@9586).
+- **event[86]** tile (18,21) TRIGGER dir:E (player stands at (19,21) facing W, uses (18,21)) → func@5823 switches on v56:
+  - v56==0 @5823: lock doors 98/83, enable event[121], shake/particles/fog, DIALOG 76, `++v56`, enable terminals event[108]/[116]/[118]/[135], disable [107]/[115]/[117]/[134].
+  - v56==1 @5892: denied sound + DIALOG 76.
+  - v56==2 && v19==0 @5934: GOTO (19,21) face N, func@6125 (reset bridge pieces), NPC 19 snapped to (19,20) z−48 then ASYNC rise (@5952-5964), func@6183 raises bridge pieces 170-184 (sets v19=1), enable **event[80]**, optional SPEECHBUBBLE by v55.
+  - v56==2/3 && v19==1: lower bridge (func@6268) + func@5442 reset (which also parks NPC at (1,1) and disables event[80] when v55!=2).
+- v56 reaches 2 only through the terminals: event[108]/[116]/[118] → func@8000; third use (v66==2) sets `v56 = 2` @8055, unlocks doors 98/83.
+- **event[80]** tile (19,20) TRIGGER all dirs, DISABLED in the file (player uses the NPC's tile from (19,21)) @6352: `v55=2`, DIALOG 114, `++v56`, disable event[80], ENTITY_FRAME/NPCCHAT, **`EV_SET_CALDEX_RENDER_HACK 1`** @6371, LERPSPRITE NPC → (19,17) BLOCK 1500 ms, `EV_SET_CALDEX_RENDER_HACK 0` @6378, DOOROP sprite 82 OPEN @6380 (door 82 is opened by no other script), NPC → (19,15) → (20,15), NPCCHAT. event[35]/[87] (EXIT S at (19,17) / EXIT N at (19,21)) ABORT_MOVE while v19==0.
+- `EV_SET_CALDEX_RENDER_HACK` (97, one u8 operand) sets `render->useCaldexHack` (`src/ScriptThread.cpp:2021-2025`). Effect is render-only: in `renderSpriteObject` the first sprite whose tile number is 69 (`TILENUM_NPC_BOB`, `src/Enums.h:711`) is deferred into `delayedSpriteBuffer[2]` (`src/Render.cpp:1536-1542`) and drawn after the rest of the BSP sprite pass (`src/Render.cpp:1769-1771`), so Bob is not hidden by the bridge sprites. It is saved as one byte (`src/Game.cpp:1719`, load `:1887`). This is the only use of opcode 97 in map00..map09.
 
 ## 6. EDGE CASES
 

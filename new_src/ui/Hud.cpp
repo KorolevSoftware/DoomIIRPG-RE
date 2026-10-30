@@ -125,8 +125,8 @@ void Hud::stopShake() {
 // Render::fadeScene (src/Render.cpp:2548-2587), FADEOUT and FADEIN branches.
 // Legacy passes the scene weight to Graphics::fade: a for FADEIN, 256 - a for
 // FADEOUT; the black overlay is the complement (FADEOUT: a, FADEIN: 255 - a).
-// TODO(CHANGE_MAP): the map00 IP 9671 FADEOUT is held into map02, which must
-// fade in from it (src/Render.cpp:2555-2566) — unreachable until map change.
+// The map00 IP 9671 FADEOUT is held into mapID 2 (map01.bin), which fades in from it
+// (src/Render.cpp:2555-2566); unloadMap_ leaves the fade alone for this.
 void Hud::drawFade(Graphics2D& g, int64_t nowMs) {
 	if ((fadeFlags_ & (kFadeOut | kFadeIn)) == 0) return;
 	int t = static_cast<int>(nowMs - fadeStartMs_);

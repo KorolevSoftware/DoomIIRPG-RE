@@ -96,6 +96,10 @@ struct MenuViewModel {
 	// buttons, the vending scrollbar sheets, the vending soft keys and the
 	// vendingBG help page. A look, not a menu id.
 	bool vendingSkin = false;
+	// The level-stats screen's look (src/MenuSystem.cpp:762-763): endOfLevelStatsBG
+	// instead of the menu background, and a release anywhere activates
+	// (src/MenuSystem.cpp:4729-4771, canvas->handleEvent(13)).
+	bool statsSkin = false;
 	// The confirm screen's quantity arrows (:247-261, rendered only there, :5174-5175).
 	bool showQtyArrows = false;
 

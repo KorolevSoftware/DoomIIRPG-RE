@@ -42,10 +42,13 @@ public:
 	void submitTriangles(const WorldVertex* verts, int count) override;
 	void setFog(bool enabled, float start, float end, const float rgba[4]) override;
 	void drawSky(TextureId sky, float uOffset) override;
+	void drawSkyPolygon(TextureId sky, const float* ndcXY, int count, float uOffset) override;
 	void flush() override;
 
 private:
 	const SgTexture* lookup(TextureId tex) const;
+	// Records one sky draw: identity MVP, fog off, unmodulated alpha blend.
+	void recordSky(const SgTexture* st, const WorldVertex* verts, int count);
 
 	const SgTextureStore* store_ = nullptr;
 	SgFrame* frame_ = nullptr;

@@ -164,8 +164,8 @@ void Ui::imageAlpha(const Texture& tex, int x, int y, uint8_t alpha) {
 }
 
 void Ui::imageRegion(const Texture& tex, int srcX, int srcY, int srcW, int srcH,
-	int x, int y, int anchorFlags) {
-	g().drawRegion(tex, srcX, srcY, srcW, srcH, x, y, anchorFlags);
+	int x, int y, int anchorFlags, int rotateMode) {
+	g().drawRegion(tex, srcX, srcY, srcW, srcH, x, y, anchorFlags, rotateMode);
 }
 
 // Port of Hud::drawNumbers (src/Hud.cpp:1127-1152): always three glyphs, no

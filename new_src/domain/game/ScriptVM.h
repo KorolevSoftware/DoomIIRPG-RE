@@ -72,6 +72,9 @@ public:
 
 	// Runs staticFuncs[idx] synchronously; sentinel 65535 / idx >= 12 -> 0.
 	int executeStaticFunc(int idx);
+	// Runs the bytecode at ip synchronously on a fresh thread (static funcs,
+	// entity death functions src/Game.cpp:3527-3531).
+	int executeFunc(int ip);
 
 	// Per-frame resumption pass (src/Game.cpp:3246-3268). resume=false keeps
 	// only the free sweep: legacy resumes in ST_PLAYING/ST_CAMERA only
@@ -101,6 +104,7 @@ public:
 	// FIFO's resume binding.
 	int indexOf(const ScriptThread* t) const { return (int)(t - threads_); }
 	ScriptThread* threadAt(int i) { return &threads_[i]; }
+	int numThreads() const { return numThreads_; }   // numScriptThreads (world-state record)
 
 private:
 	ScriptThread* allocThread();                       // first free slot (src/Game.cpp:3270-3284)
