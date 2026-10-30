@@ -16,11 +16,12 @@ void MiniGameHost::init(const Env& env) {
 	help_.init(env_.loc);
 	vending_.init(this);
 	hacking_.init(this);
+	sentry_.init(this);
 }
 
 bool MiniGameHost::loadAssets(TextureStore& store, const UiAssets::ResourceReader& read) {
 	return assets_.load(store, read) & vending_.loadAssets(store, read)
-		& hacking_.loadAssets(store, read);
+		& hacking_.loadAssets(store, read) & sentry_.loadAssets(store, read);
 }
 
 bool MiniGameHost::start(int type, int b1, int b2, int b3, ScriptThread* t) {
@@ -28,7 +29,8 @@ bool MiniGameHost::start(int type, int b1, int b2, int b3, ScriptThread* t) {
 	switch (type) {
 	case kVending: g = &vending_; break;
 	case kHacking: g = &hacking_; break;
-	default: return false;   // sentry bot: later
+	case kSentryBot: g = &sentry_; break;
+	default: return false;   // unknown type
 	}
 	callingThread_ = t;
 	active_ = g;

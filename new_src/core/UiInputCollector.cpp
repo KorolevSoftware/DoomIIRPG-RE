@@ -106,6 +106,9 @@ Action UiInputCollector::keyAction(const SDL_Event& ev) const {
 	case SDL_SCANCODE_X: a = Action::PrevWeapon; break;   // :87, AVK_PREVWEAPON (zoom out while scoped)
 	case SDL_SCANCODE_V: a = Action::DebugVending; break; // DEBUG (removable, minigames)
 	case SDL_SCANCODE_H: a = Action::DebugHacking; break; // DEBUG (removable, minigames)
+	case SDL_SCANCODE_J:                                  // DEBUG (removable, minigames)
+		a = (ev.key.keysym.mod & KMOD_SHIFT) ? Action::DebugSentryBotRed : Action::DebugSentryBot;
+		break;
 	case SDL_SCANCODE_N:                                  // DEBUG (removable, map change)
 		a = (ev.key.keysym.mod & KMOD_SHIFT) ? Action::DebugPrevMap : Action::DebugNextMap;
 		break;

@@ -336,6 +336,12 @@ void PlayerActions::handleAction(Action a) {
 				env_.hud->startRockView(*c.env().upTimeMs, 1000,       // :485
 					p.viewX + (p.viewStepX >> 6) * 2, p.viewY + (p.viewStepY >> 6) * 2, p.viewZ);
 			} else {
+				// Bot weapons do not attack: legacy attemptToDeploySentryBot (:493-495), whose
+				// familiar system is not ported (ADR 0040).
+				if (((1 << weapon2) & Enums::WP_SENTRY_BOT_MASK) != 0) {
+					std::fprintf(stderr, "[familiar] deploy deferred\n");
+					break;
+				}
 				// Zoom entry (mask 512 -> initZoom) consumes the input (:504-507).
 				if (!zoomed && Combat::checkWeaponMask(weapon2, 512) &&
 				    p.ammo[env_.game->combat.weaponDef(weapon2).ammoType] > 0) {

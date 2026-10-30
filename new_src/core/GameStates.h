@@ -51,6 +51,8 @@ enum class Action : int {
 	DebugVending,
 	// DEBUG (removable, minigames): H starts the map00 hacking puzzle.
 	DebugHacking,
+	// DEBUG (removable, minigames): J / Shift+J start the sentry bot game, botType 0 / 1.
+	DebugSentryBot, DebugSentryBotRed,
 	// DEBUG (removable, map change): N / Shift+N
 	DebugNextMap, DebugPrevMap,
 };

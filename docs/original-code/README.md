@@ -30,6 +30,7 @@ Topic files (created on demand):
 | `automap.md` | `ST_AUTOMAP` (6): toggle keys/menu, shared playing input, seen bits (tile 0x80, line 0x8, sprite 0x200000) + persistence, exact `drawAutomap` layout/colors (cell 8, origin 112,32), cursor blink, givemap/god cheats |
 | `vending-machine.md` | Vending machine minigame: EV_MINIGAME type 4 entry, terminal/help/hack screens, 4-digit hack puzzle, per-machine save bits, prices table, exit, hand-off to menus 83-88, test locations |
 | `hacking-minigame.md` | Hacking ("Hacker") minigame: EV_MINIGAME type 2 args (custom, columns, turns), column-sort rules, scramble generation and IQ scaling, keys/touch, exact draw layout and colors, sounds, vars[7] result; brief sentry-bot sibling summary |
+| `sentry-bot-minigame.md` | Sentry bot "Matrix Skip" minigame (EV_MINIGAME type 0): skip-code/IQ formula, board and solution, keys/touch, draw layout, vars[7], bot choice and `awardSentryBot`; scoped summary of the familiar (controllable bot) system |
 | `target-practice.md` | Target practice (map00 shooting range): EV_START_TARGETPRACTICE 84, strip to rifle+8 bullets, head/body/leg zones 30/20/10, score>120 → +1 accuracy, score bar, input/exit, target sprite frames |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
 | `audio.md` | sound/music |

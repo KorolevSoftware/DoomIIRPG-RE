@@ -157,6 +157,7 @@ public:
 	// EV_USED_CHAINSAW (src/Player.cpp:2636-2652), script form (b = false).
 	int chainsawStrengthBonusCount = 0;
 	void usedChainsaw();
+	uint8_t lastSkipCode = 0;   // src/Player.h:70; SentryBotGame skip-code memory
 
 	bool gameCompleted = false;     // EV_END_GAME (src/ScriptThread.cpp:1647)
 

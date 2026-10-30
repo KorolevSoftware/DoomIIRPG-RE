@@ -127,7 +127,7 @@ Header (34 B, `Game::savePlayerState`, `src/Game.cpp:2155-2171`) + body (271 B,
 | familiarType | short | 0 | ignored |
 | playerEntityCopyIndex | int | 0 | ignored |
 | hackedVendingMachines, vendingMachineHackTriesLeft1, …2, chainsawStrengthBonusCount | int×4 | Player | Player |
-| lastSkipCode | byte | 0 | ignored |
+| lastSkipCode | byte | Player (`sentry-bot-minigame.md` G1) | Player |
 | ammo[9], ammoCopy[9] | short×18 | Player | Player |
 | inventory[26] | short×26 | Player | Player |
 | inventoryCopy[26] | short×26 | 0 (no field, `new_src/domain/game/Player.cpp:202-203`) | ignored |

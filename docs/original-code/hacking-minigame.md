@@ -225,6 +225,7 @@ column restore failed! Tap screen to continue.", 189 "Progress will be lost. Sti
 There is no sound for pick-up or drop.
 
 ## 6. Sibling: sentry bot "matrix skip" (`src/SentryBotGame.{h,cpp}`), brief
+Full details (supersede this summary): `docs/original-code/sentry-bot-minigame.md`.
 - Entry: `EV_MINIGAME` type 0, `n112` = botType (0 or 1, otherwise 0) (`src/ScriptThread.cpp:1296-1303`,
   `src/SentryBotGame.cpp:44-52`). Used on map01-03 `(0,-1,-1)` and map04/05/06/08 `(1,-1,-1)`.
 - Same skeleton: `setupGlobalData` sets `stateVars[0]=0`, `[1]=0` (help first) and `[2]=0`

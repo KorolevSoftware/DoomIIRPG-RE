@@ -215,7 +215,7 @@ One folder per minigame plus `common/`. The layering rule applies per file role:
 | `common/MiniGameAssets`, `MiniGameHelp`, `MiniGameHelpModel.h`, `MiniGameHelpView` | Shared `gameHelpBG.bmp`, plus the `MiniGameManager` help screen port (scroll, 16-line window, scrollbar). |
 | `vending/VendingMachine`, `VendingModel.h`, `VendingView`, `VendingAssets` | Vending terminal / help / 4-digit hack game; menu API (prices, buy, `returnFromBuying`, `endGame`) used by `MenuSession` for menus 83-87. |
 | `hacking/HackingGame`, `HackingModel.h`, `HackingView`, `HackingAssets` | **(planned, ADR 0038 / spec `hacking-minigame.md`)** `EV_MINIGAME` type 2 column-sort puzzle: board scramble (IQ-scaled), help → game → confirm, raw press-sample touch resolved in the tick; `MiniGameHost` gains `evaluateResults` (IQ +2 HUD message 236/237) and `Env::hud`. |
-| `hacking/`, `sentrybot/` | Placeholders (spec §9). |
+| `sentrybot/SentryBotGame`, `SentryBotModel.h`, `SentryBotView`, `SentryBotAssets` | **(planned, ADR 0040 / spec `sentry-bot-minigame.md`)** `EV_MINIGAME` type 0 "Matrix Skip": IQ-scaled skip code (`Player::lastSkipCode`), 4x4 board, help → board → success (bot choice) / failure, draw-time cell/bot selection applied in the tick (ADR 0038), reward = `give(1, w, 1)` bot weapon; familiar system deferred. |
 
 ## Wiring (startup → frame)
 
@@ -297,6 +297,7 @@ _See [adr/](adr/):_
 - [0037 — Save files live on disk in the legacy payload layouts plus a CRC trailer; disk is the only store; no main menu yet](adr/0037-save-files-on-disk.md) (2026-10-30)
 - [0038 — Hacking column taps are resolved in the tick (release pass in `handleTouch`, drag-leave as pseudo button ids), not in draw](adr/0038-hacking-touch-resolved-in-tick.md) (2026-10-30)
 - [0039 — Sniper zoom data on `Game::zoom`, behaviour in `core/ZoomController`; target practice is an in-playing session, not a minigame](adr/0039-zoom-state-in-game-target-practice-in-playing.md) (2026-10-30)
+- [0040 — The sentry bot minigame grants a real bot weapon, but the familiar system (deploy/control) is deferred](adr/0040-sentry-bot-reward-without-familiar.md) (2026-10-30)
 
 ## Specs
 
@@ -327,3 +328,4 @@ _See [adr/](adr/):_
 - [2026-10-30 — Automap: seen data, ST_AUTOMAP, drawing, script ops (G1-G4b)](automap.md)
 - [2026-10-30 — Save / load to disk: config, player and world files, Continue/Load/Restart, menu save actions (G1-G5)](save-load.md)
 - [2026-10-30 — Sniper scope zoom + target practice: zoom core, scope HUD, zoomed fire trace, `TargetPractice`, target sprite layers, score bar, monster scope crit (G1-G7)](target-practice.md)
+- [2026-10-30 — Sentry bot minigame "Matrix Skip": lastSkipCode, stale-v7 fix, assets/model/view, session, host + debug J, bot FIRE intercept + view sprite (G1-G5)](sentry-bot-minigame.md)

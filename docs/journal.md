@@ -1928,3 +1928,8 @@ G2a: statusEffects[54]/buffs[30] и пять помощников дословн
 - Баг с экрана: у винтовки (оружие 9) рисовался только прицел — добавлена подложка tile 1 (src/Combat.cpp:835-837).
 - Найдено пользователем: прицел не качается и тир не даёт точность — причина: Player::reset ставил ACC 100 (выше потолка 99). Портирован setStatsAccordingToCharacterChoice (персонаж 1: DEF 8, STR 9, ACC 97, AGI 12, IQ 110, 30 кредитов), characterChoice пишется в сохранение. Нарушение правил кодером: 3 правки PlayerState.cpp сделаны guarded python-скриптом — diff проверен оркестратором, корректен.
 - Не перенесено: difficulty 2 → DEF 0 (Player не знает сложность).
+
+## 2026-10-30 — мини-игра турели (sentry bot)
+
+- Исследование docs/original-code/sentry-bot-minigame.md (часть B — система familiar ~800 строк, отложена); спека docs/architecture/sentry-bot-minigame.md, ADR 0040 (награда без familiar).
+- G1–G5: Player::lastSkipCode (сохраняется), ScriptVM v7=2 для неизвестных мини-игр (убрана ложная победа по старому v7), minigames/sentrybot/, клавиши J / Shift+J, перехват выстрела бот-оружием, двухслойный спрайт бота с зеркалом. Ревью PASS. Пользователь выиграл, получил оружие 3, выстрел логирует deploy deferred.

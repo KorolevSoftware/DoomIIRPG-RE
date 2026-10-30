@@ -9,6 +9,7 @@
 #include "minigames/common/MiniGameAssets.h"
 #include "minigames/common/MiniGameHelp.h"
 #include "minigames/hacking/HackingGame.h"
+#include "minigames/sentrybot/SentryBotGame.h"
 #include "minigames/vending/VendingMachine.h"
 #include "ui/UiAssets.h"
 #include "ui/UiTypes.h"
@@ -84,6 +85,7 @@ private:
 	MiniGameHelp help_;
 	VendingMachine vending_;
 	HackingGame hacking_;
+	SentryBotGame sentry_;
 };
 
 } // namespace newcore

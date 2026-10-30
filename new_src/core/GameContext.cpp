@@ -360,6 +360,11 @@ void GameContext::tick() {
 			minigames_.start(MiniGameHost::kHacking, 0, 3, 15, nullptr);
 			continue;
 		}
+		if (a == Action::DebugSentryBot || a == Action::DebugSentryBotRed) {
+			// DEBUG (removable, minigames): J = botType 0, Shift+J = botType 1.
+			minigames_.start(MiniGameHost::kSentryBot, a == Action::DebugSentryBotRed ? 1 : 0, -1, -1, nullptr);
+			continue;
+		}
 		if (a == Action::DebugNextMap || a == Action::DebugPrevMap) {
 			// DEBUG (removable, map change): N = next mapID, Shift+N = previous; header spawn.
 			const int id = sys_.game->loadMapID;
@@ -969,6 +974,12 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 	m.weaponTile = Combat::getWeaponTileNum(w);
 	m.flashTile = Combat::getWeaponTileNum(0);                 // (:826-834)
 	if (w == 9) m.underlayTile = Combat::getWeaponTileNum(0);  // (:835-837)
+	if (w >= 3 && w <= 6) {                                    // weaponIsASentryBot (:797-813)
+		m.botTile = (w == 3 || w == 4) ? 19 : 18;
+		const int t = (int)((upTimeMs + m.botTile * 1337) / 1024) & 0xF;   // app->time
+		m.botMirror = t == 0 || (t >= 4 && t <= 7) || (t >= 10 && t <= 12);  // flags ^= 0x20000
+		m.botDy = (t & 0x2) ? 1 : 2;
+	}
 	m.poseX = wpX;
 	m.poseY = wpY;
 	m.lowerY = lowerY;

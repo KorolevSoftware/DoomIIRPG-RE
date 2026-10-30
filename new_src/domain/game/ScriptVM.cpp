@@ -1382,7 +1382,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				t->unpauseTime = -1;                               // resumed by MiniGameHost::finish
 				n = 2;
 			} else {
-				std::fprintf(stderr, "[script] MINIGAME type=%d not implemented\n", type);
+				vars[MiniGameHost::kResultVar] = 2;
+				std::fprintf(stderr, "[script] MINIGAME type=%d not implemented, v7=2 (quit)\n", type);
 			}
 			break;
 		}

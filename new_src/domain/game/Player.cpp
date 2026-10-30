@@ -139,6 +139,7 @@ void Player::reset() {
 	currentGrades = 0;
 	bestGrades = 0;
 	chainsawStrengthBonusCount = 0;    // src/Player.cpp:519
+	lastSkipCode = 0;                  // :520
 	gameCompleted = false;             // :572
 }
 

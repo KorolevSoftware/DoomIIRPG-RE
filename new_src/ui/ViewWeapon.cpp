@@ -45,7 +45,7 @@ constexpr int kWeaponCanvasCx = 240, kWeaponCanvasCy = 131;
 // clip must trim the source sub-rect as well as the destination quad, which a
 // scissor cannot do on magnified art. Both are trimmed by hand below.
 static void drawWeaponQuad(Graphics2D& g, const Texture& tex, int x, int y, int v12,
-	uint8_t r, uint8_t gr, uint8_t b, float magX, float magY) {
+	uint8_t r, uint8_t gr, uint8_t b, float magX, float magY, bool mirror = false) {
 	constexpr int kSrc = 176;
 	const float fxl = kWeaponCanvasCx + (x - kWeaponVpCx) * magX;
 	const float fxr = kWeaponCanvasCx + (x + v12 - kWeaponVpCx) * magX;
@@ -67,8 +67,9 @@ static void drawWeaponQuad(Graphics2D& g, const Texture& tex, int x, int y, int 
 	const int sy0 = (int)std::lround((cy0 - yt) * sv);
 	const int sy1 = (int)std::lround((cy1 - yt) * sv);
 	if (sx1 <= sx0 || sy1 <= sy0) return;
-	g.drawImage(tex, sx0, sy0, sx1 - sx0, sy1 - sy0,
-		cx0, cy0, cx1 - cx0, cy1 - cy0, 0, r, gr, b, 255);
+	// Mirror within the 176-texel art box, as the GL quad's swapped texcoords do.
+	g.drawImage(tex, mirror ? kSrc - sx1 : sx0, sy0, sx1 - sx0, sy1 - sy0,
+		cx0, cy0, cx1 - cx0, cy1 - cy0, mirror ? 4 : 0, r, gr, b, 255);
 }
 
 void ViewWeapon::init(const Env& env) {
@@ -129,11 +130,17 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel&
 	}
 
 	// Weapon art frame 0; the chainsaw-return/weapons 8+13 frame-1 rule
-	// (:822-825) is dead on the map00 rifle route. Sentry-bot stack
-	// (:797-813) and weapon 14 (:814-820) deferred (hero-choice doc §B.3
-	// exclusions).
+	// (:822-825) is dead on the map00 rifle route. Weapon 14 (:814-820)
+	// deferred (hero-choice doc §B.3 exclusions).
 	// RENDER_NORMAL + BRIGHTREDSHIFT -> glColor4f(1, .5, .5, 1) (src/GLES.cpp:625-631).
 	const uint8_t gb = m.brightRed ? 128 : 255;
+	if (m.botTile >= 0) {   // (:797-813) replaces the gun art; no flash (mask 0x181)
+		const Texture* f2 = env_.world->spriteTexture(*env_.media, m.botTile, 2);
+		const Texture* f3 = env_.world->spriteTexture(*env_.media, m.botTile, 3);
+		if (f2 != nullptr) drawWeaponQuad(g, *f2, x, y, 176, 255, gb, gb, magX, magY);
+		if (f3 != nullptr) drawWeaponQuad(g, *f3, x, y + m.botDy, 176, 255, gb, gb, magX, magY, m.botMirror);
+		return;
+	}
 	// Weapon 9: the rifle body (weapon 0 tile) first, same placement and tint,
 	// then the scope tile on top (:835-839).
 	if (m.underlayTile >= 0) {

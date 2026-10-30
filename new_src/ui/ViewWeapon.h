@@ -28,6 +28,11 @@ struct ViewWeaponModel {
 	// Weapon 9 only: rifle body drawn under the scope tile (src/Combat.cpp:835-837),
 	// tile of weapon 0; -1 = no underlay.
 	int underlayTile = -1;
+	// Sentry-bot weapons 3..6 (src/Combat.cpp:797-813): tile 19 (w 3/4) or 18 (w 5/6),
+	// frame 2 then frame 3 at +botDy, frame 3 mirrored on X when botMirror. -1 = not a bot.
+	int botTile = -1;
+	bool botMirror = false;
+	int botDy = 0;
 	// Resolved pose: idle, held attack, or the SHOTHOLD return lerp
 	// (src/Combat.cpp:735-767).
 	int poseX = 0;

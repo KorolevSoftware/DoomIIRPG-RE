@@ -78,7 +78,7 @@ void save(const Player& p, const Header& h, DataWriter& w) {
 	w.writeInt(p.vendingMachineHackTriesLeft1);
 	w.writeInt(p.vendingMachineHackTriesLeft2);
 	w.writeInt(p.chainsawStrengthBonusCount);
-	w.writeByte(0);                                           // lastSkipCode
+	w.writeByte(p.lastSkipCode);
 	for (int i = 0; i < 9; ++i) w.writeShort(p.ammo[i]);
 	for (int i = 0; i < 9; ++i) w.writeShort(p.ammoCopy[i]);
 	for (int i = 0; i < 26; ++i) w.writeShort(p.inventory[i]);
@@ -137,7 +137,7 @@ bool load(DataReader& r, Player& p, Header& h) {
 	tp.vendingMachineHackTriesLeft1 = r.readInt();
 	tp.vendingMachineHackTriesLeft2 = r.readInt();
 	tp.chainsawStrengthBonusCount = r.readInt();
-	r.readByte();                                             // lastSkipCode
+	tp.lastSkipCode = r.readByte();
 	for (int i = 0; i < 9; ++i) tp.ammo[i] = r.readShort();
 	for (int i = 0; i < 9; ++i) tp.ammoCopy[i] = r.readShort();
 	for (int i = 0; i < 26; ++i) tp.inventory[i] = r.readShort();
@@ -198,6 +198,7 @@ void selfCheck() {
 	src.vendingMachineHackTriesLeft1 = 0x1FF;
 	src.vendingMachineHackTriesLeft2 = 0x24;
 	src.chainsawStrengthBonusCount = 2;
+	src.lastSkipCode = 4;
 	for (int i = 0; i < 9; ++i) {
 		src.ammo[i] = static_cast<int16_t>(i * 11);
 		src.ammoCopy[i] = static_cast<int16_t>(i + 1);
@@ -241,7 +242,7 @@ void selfCheck() {
 	assert(dst.completedLevels == 0x7 && dst.foundSecretsLevels == 0x2 && dst.disabledWeapons == 0x10);
 	assert(dst.highestMap == 5 && dst.hackedVendingMachines == 0x48 &&
 	       dst.vendingMachineHackTriesLeft1 == 0x1FF && dst.vendingMachineHackTriesLeft2 == 0x24 &&
-	       dst.chainsawStrengthBonusCount == 2);
+	       dst.chainsawStrengthBonusCount == 2 && dst.lastSkipCode == 4);
 	for (int i = 0; i < 9; ++i) assert(dst.ammo[i] == src.ammo[i] && dst.ammoCopy[i] == src.ammoCopy[i]);
 	for (int i = 0; i < 26; ++i) assert(dst.inventory[i] == src.inventory[i]);
 	assert(dst.numStatusEffects == 2);
