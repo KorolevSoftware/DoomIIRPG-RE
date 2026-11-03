@@ -93,7 +93,7 @@ bool MapParser::parse(const std::vector<uint8_t>& data, MapData& out) {
 
 	// ---- Sprites ----
 	out.numMapSprites = numMapSprites;
-	out.numSprites = numMapSprites + MapData::kMaxCustomSprites;
+	out.numSprites = numMapSprites + MapData::kMaxCustomSprites + MapData::kMaxDropSprites;   // src/LoadingManager.cpp:382
 	out.mapSprites.assign(out.numSprites * 10, 0);
 
 	// S_X and S_Y are stored as coords (byte * 8).
@@ -134,7 +134,7 @@ bool MapParser::parse(const std::vector<uint8_t>& data, MapData& out) {
 	}
 	skipMarker(r);
 
-	// Custom runtime slots (src/Render.cpp:2497-2508). Legacy unlinks them
+	// Custom runtime and drop slots (src/Render.cpp:2497-2523). Legacy unlinks them
 	// (S_NODE = -1, info 0); the rewrite has no unlink, so a free slot stays
 	// invisible through the hidden bit.
 	for (int i = numMapSprites; i < out.numSprites; ++i) {

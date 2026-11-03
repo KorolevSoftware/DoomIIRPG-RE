@@ -22,13 +22,14 @@ constexpr uint32_t kMarker = 0xCAFEBABE;   // Resource::writeMarker (src/Resourc
 
 // Save-handle bits above the entity index (src/Entity.cpp:1787-1857).
 constexpr int kHBinaryOn = 0x10000;        // isBinaryEntity's state bit
+constexpr int kHNamed = 0x20000;           // a name short leads the record
 constexpr int kHVisible = 0x40000;         // sprite not hidden
 constexpr int kHNoData = 0x80000;          // not dirty: no payload
 constexpr int kHCorpse = 0x100000;
 constexpr int kHShort = 0x200000;          // brief monster record / locked door / NPC param >= 1
 
 // Sprite field rows (MapData.h:72-75).
-constexpr int kFX = 0, kFY = 1, kFZ = 2, kFScale = 8;
+constexpr int kFX = 0, kFY = 1, kFZ = 2, kFEnt = 7, kFScale = 8;
 
 int16_t& spr(MapData& m, int field, int sprite) { return m.mapSprites[sprite + field * m.numSprites]; }
 
@@ -40,10 +41,19 @@ int16_t floorZ(const Env& env, int sprite, int x, int y) {
 
 void linkAtIndex(Game& g, Entity& e) { g.db.linkEntity(&e, e.linkIndex % 32, e.linkIndex / 32); }
 
-// Entity::isBinaryEntity (src/Entity.cpp:1412-1482). isDroppedEntity() is
-// always false: no drop slots (EV_DROPITEM not ported).
+bool isDropped(const Env& env, const Entity& e) { return env.game->db.isDropped(&e); }
+
+// Entity::isNamedEntity (src/Entity.cpp:1484-1495); name -1 is the def's
+// default (ADR 0042 §4), so legacy's ERR_ISNAMEDENTITY case cannot occur.
+bool isNamedEntity(const Entity& e) {
+	return e.def != nullptr && e.name != -1 && e.name != ((1 << 10) | e.def->name) &&
+	       e.def->eType != Enums::ET_CORPSE;
+}
+
+// Entity::isBinaryEntity (src/Entity.cpp:1412-1482).
 bool isBinaryEntity(const Env& env, const Entity& e, int* array) {
 	if (e.def == nullptr) return false;
+	if (isDropped(env, e)) return false;
 	bool b = false;
 	switch (e.def->eType) {
 	case Enums::ET_ITEM:
@@ -76,19 +86,24 @@ bool isBinaryEntity(const Env& env, const Entity& e, int* array) {
 	return true;
 }
 
-// Entity::getSaveHandle(b) (src/Entity.cpp:1787-1857). Dropped-entity and
-// named-entity branches are gone: no drop slots, Entity::name not ported.
+// Entity::getSaveHandle(b) (src/Entity.cpp:1787-1857).
 int getSaveHandle(const Env& env, const Entity& e, int index, bool brief) {
 	int buf[2] = { 1, index };
+	const bool dropped = isDropped(env, e);
 	const bool binary = isBinaryEntity(env, e, buf);
 	if (((e.info & 0xFFFF) == 0 || e.def == nullptr) && !binary) return -1;
+	if (dropped && (e.info & Entity::kInfoLinked) == 0) return -1;
+	if (dropped && brief && e.def->eType == Enums::ET_DECOR_NOCLIP && e.def->eSubType == Enums::DECOR_DYNAMITE)
+		return -1;
 	int n = buf[1];
 	if (binary && buf[0] != 0) n |= kHBinaryOn;
+	if (isNamedEntity(e)) n |= kHNamed;
 	if ((env.map->mapSpriteInfo[e.getSprite()] & 0x10000) == 0) n |= kHVisible;
 	if ((e.info & 0x2000000) != 0) n |= 0x1000000;
 	if ((e.info & Entity::kInfoDirty) == 0) {
 		n |= kHNoData;
-		if (e.def->eType == Enums::ET_DECOR && e.def->eSubType != Enums::DECOR_STATUE) return -1;
+		if ((n & kHNamed) == 0 && e.def->eType == Enums::ET_DECOR && e.def->eSubType != Enums::DECOR_STATUE)
+			return -1;
 	}
 	if ((e.info & (Entity::kInfoCorpse | Entity::kInfoHidden)) != 0) n |= kHCorpse;
 	if ((e.info & 0x80000) != 0) n |= 0x2000000;
@@ -105,7 +120,7 @@ int getSaveHandle(const Env& env, const Entity& e, int index, bool brief) {
 	if (!brief) return n;
 	// Brief variant: ordinary corpses are cleaned up (hidden, no payload).
 	// Legacy dereferences monster unguarded; placed corpse props have none.
-	if (e.def->eType == Enums::ET_CORPSE && e.def->eSubType != Enums::CORPSE_SKELETON &&
+	if (e.def->eType == Enums::ET_CORPSE && e.def->eSubType != Enums::CORPSE_SKELETON && !dropped &&
 	    e.monster != nullptr && (e.monster->flags & Enums::MFLAG_NOTRACK) == 0) {
 		n = (n & ~kHVisible) | kHNoData;
 	} else if (e.def->eType == Enums::ET_MONSTER) {
@@ -114,11 +129,12 @@ int getSaveHandle(const Env& env, const Entity& e, int index, bool brief) {
 	return n;
 }
 
-// Entity::saveState (src/Entity.cpp:1497-1572). Dropped-entity branches are
-// gone (no drop slots).
+// Entity::saveState (src/Entity.cpp:1497-1572).
 void saveState(const Env& env, DataWriter& w, const Entity& e, int n) {
 	MapData& m = *env.map;
+	if ((n & kHNamed) != 0) w.writeShort(e.name);
 	if ((n & kHNoData) != 0) return;
+	const bool dropped = isDropped(env, e);
 	const int sprite = e.getSprite();
 	if (e.def->eType == Enums::ET_ATTACK_INTERACTIVE && e.def->eSubType == Enums::INTERACT_BARRICADE) {
 		w.writeShort(spr(m, kFScale, sprite));
@@ -136,12 +152,12 @@ void saveState(const Env& env, DataWriter& w, const Entity& e, int n) {
 	if ((e.info & Entity::kInfoHidden) == 0) {
 		w.writeByte(static_cast<uint8_t>((info & 0xFF0000) >> 16));
 		w.writeByte(static_cast<uint8_t>((info & 0xFF00) >> 8));
-		if ((info & 0xF000000) == 0) {
+		if (dropped || (info & 0xF000000) == 0) {
 			w.writeByte(static_cast<uint8_t>(spr(m, kFX, sprite) >> 3));
 			w.writeByte(static_cast<uint8_t>(spr(m, kFY, sprite) >> 3));
-		} else {
-			w.writeShort(e.linkIndex);
 		}
+		if (dropped) w.writeInt(e.param);
+		if (!dropped && (info & 0xF000000) != 0) w.writeShort(e.linkIndex);
 	}
 	if (e.monster != nullptr) {
 		w.writeShort(e.monster->flags);
@@ -156,6 +172,14 @@ void saveState(const Env& env, DataWriter& w, const Entity& e, int n) {
 				           mon.goalY << 17 | mon.goalParam << 22);                      // src/EntityMonster.cpp:25-27
 			}
 		}
+	} else if (dropped) {                                      // :1549-1568
+		w.writeByte(static_cast<uint8_t>(e.def->eType | e.def->eSubType << 4));
+		w.writeByte(e.def->parm);
+		if ((n & kHCorpse) != 0) {
+			for (int i = 0; i < Entity::kMaxCorpseLoot; ++i) w.writeInt(e.hasLootSet ? e.lootSet[i] : 0);
+		}
+		if (e.def->eType == Enums::ET_DECOR_NOCLIP && e.def->eSubType == Enums::DECOR_DYNAMITE)
+			w.writeByte(static_cast<uint8_t>((info & 0xFF000000) >> 24));
 	} else {
 		w.writeShort(spr(m, kFZ, sprite));                     // stored Z both ways
 	}
@@ -203,9 +227,17 @@ void restoreBinaryState(const Env& env, Entity& e, int n) {
 }
 
 // Entity::loadState (src/Entity.cpp:1574-1786). False = corrupt record.
+// A drop entity arrives with def == nullptr (fresh level); its def comes from
+// the dropped tail, so every earlier def read is guarded as legacy does.
 bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 	Game& g = *env.game;
 	MapData& m = *env.map;
+	const bool dropped = isDropped(env, e);
+	if (dropped && (n & kHNoData) != 0) {   // spawners always mark drops dirty; the def would stay null
+		std::fprintf(stderr, "[world] drop record without data (handle 0x%X)\n", n);
+		return false;
+	}
+	if ((n & kHNamed) != 0) e.name = r.readShort();
 	const int sprite = e.getSprite();
 	int& msi = m.mapSpriteInfo[sprite];
 	int tile = msi & 0xFF;
@@ -219,7 +251,8 @@ bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 		if ((e.info & Entity::kInfoLinked) != 0 && e.def->eType != Enums::ET_DOOR &&
 		    (tile < Enums::TILENUM_DUMMY_START || tile > Enums::TILENUM_DUMMY_END)) {
 			g.db.unlinkEntity(&e);
-		} else if (e.def->eType == Enums::ET_ATTACK_INTERACTIVE && e.def->eSubType != Enums::INTERACT_PICKUP) {
+		} else if (e.def != nullptr && e.def->eType == Enums::ET_ATTACK_INTERACTIVE &&
+		           e.def->eSubType != Enums::INTERACT_PICKUP) {
 			++g.destroyedObj;
 		}
 	}
@@ -228,7 +261,7 @@ bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 		restoreBinaryState(env, e, n);
 		if ((n & kHNoData) != 0) return true;
 	}
-	if (e.def->eType == Enums::ET_ATTACK_INTERACTIVE && e.def->eSubType == Enums::INTERACT_BARRICADE) {
+	if (e.def != nullptr && e.def->eType == Enums::ET_ATTACK_INTERACTIVE && e.def->eSubType == Enums::INTERACT_BARRICADE) {
 		const int16_t s = r.readShort();
 		if (s != spr(m, kFScale, sprite)) {
 			spr(m, kFScale, sprite) = s;
@@ -244,9 +277,11 @@ bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 			std::fprintf(stderr, "[world] ERR_CLEANCORPSE sprite=%d\n", sprite);
 		}
 		msi = (msi & 0xFFFF00FF) | 0x7000;
-		if (const EntityDef* d = env.defs->find(Enums::ET_CORPSE, e.def->eSubType, e.def->parm)) e.def = d;
+		if (!dropped) {
+			if (const EntityDef* d = env.defs->find(Enums::ET_CORPSE, e.def->eSubType, e.def->parm)) e.def = d;
+		}
 	}
-	if (e.def->eType == Enums::ET_NPC)
+	if (e.def != nullptr && e.def->eType == Enums::ET_NPC)
 		e.param = ((n & kHShort) != 0 ? 1 : 0) + ((n & 0x4000000) != 0 ? 1 : 0);
 	if (e.monster != nullptr) {
 		if ((n & 0x800000) != 0) { e.monster->flags |= Enums::MFLAG_NORESPAWN; e.info |= Entity::kInfoDirty; }
@@ -256,7 +291,7 @@ bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 	if ((n & kHNoData) != 0) return true;
 	if ((e.info & Entity::kInfoLinked) != 0) g.db.unlinkEntity(&e);
 
-	if (e.def->eType == Enums::ET_MONSTER && (n & kHShort) != 0) {
+	if (e.def != nullptr && e.def->eType == Enums::ET_MONSTER && (n & kHShort) != 0) {
 		const int x = r.readByte() << 3;
 		const int y = r.readByte() << 3;
 		const int frame = r.readByte() << 8;
@@ -276,13 +311,14 @@ bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 		const int n8 = r.readByte();
 		const int n9 = r.readByte();
 		msi = (msi & 0xFF0000FF) | (n9 << 8) | (n8 << 16);
-		if ((msi & 0xF000000) == 0) {
+		if (dropped || (msi & 0xF000000) == 0) {
 			spr(m, kFX, sprite) = static_cast<int16_t>(r.readByte() << 3);
 			spr(m, kFY, sprite) = static_cast<int16_t>(r.readByte() << 3);
-			if (e.monster != nullptr)
+			if (e.monster != nullptr || dropped)
 				spr(m, kFZ, sprite) = floorZ(env, sprite, spr(m, kFX, sprite), spr(m, kFY, sprite));
 		}
-		if ((msi & 0xF000000) != 0) {
+		if (dropped) e.param = r.readInt();
+		if (!dropped && (msi & 0xF000000) != 0) {
 			const int link = r.readShort();
 			if (link < 0 || link >= 1024) {
 				std::fprintf(stderr, "[world] bad linkIndex %d sprite=%d\n", link, sprite);
@@ -291,7 +327,7 @@ bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 			e.linkIndex = static_cast<short>(link);
 		} else e.linkIndex = static_cast<short>((spr(m, kFX, sprite) >> 6) + (spr(m, kFY, sprite) >> 6) * 32);
 		const int orient = msi & 0xF000000;
-		if ((orient == 0xC000000 || orient == 0x3000000) &&
+		if ((orient == 0xC000000 || orient == 0x3000000) && e.def != nullptr &&
 		    (e.def->eType == Enums::ET_NONOBSTRUCTING_SPRITEWALL || e.def->eType == Enums::ET_SPRITEWALL)) {
 			spr(m, kFX, sprite) = static_cast<int16_t>(((e.linkIndex % 32) << 6) + 32);
 			spr(m, kFY, sprite) = static_cast<int16_t>(((e.linkIndex / 32) << 6) + 32);
@@ -324,6 +360,41 @@ bool loadState(const Env& env, DataReader& r, Entity& e, int n) {
 		}
 		if ((e.info & Entity::kInfoCorpse) != 0) {
 			if (const EntityDef* d = env.defs->find(Enums::ET_CORPSE, e.def->eSubType, e.def->parm)) e.def = d;
+		}
+	} else if (dropped) {                                     // :1740-1772
+		const int typeByte = r.readByte();
+		const int sub = typeByte >> 4 & 0xF;
+		const int parm = r.readByte();
+		e.def = env.defs->find(typeByte & 0xF, sub, parm);
+		if (e.def == nullptr) {
+			std::fprintf(stderr, "[world] no def for drop record (0x%X, %d) sprite=%d\n", typeByte, parm, sprite);
+			return false;
+		}
+		if (e.name == -1) e.name = static_cast<int16_t>(e.def->name | 0x400);
+		int tileIdx = e.def->tileIndex;
+		if ((n & kHCorpse) != 0) {
+			const EntityDef* body = env.defs->find(Enums::ET_MONSTER, sub, parm);
+			if (body == nullptr) {
+				std::fprintf(stderr, "[world] no monster def for drop corpse (%d, %d)\n", sub, parm);
+				return false;
+			}
+			tileIdx = body->tileIndex;
+			int loot[Entity::kMaxCorpseLoot];
+			for (int& v : loot) v = r.readInt();
+			if (e.param == 0) {
+				CorpseLoot::populateDefaultLootSet(e);
+				for (int i = 0; i < Entity::kMaxCorpseLoot; ++i) e.lootSet[i] = loot[i];
+			}
+			e.info |= Entity::kInfoCorpse;
+		}
+		msi = (msi & 0xFFFFFF00) | tileIdx;
+		spr(m, kFEnt, sprite) = static_cast<int16_t>(&e - g.db.entities().data());
+		if (e.def->eType == Enums::ET_DECOR_NOCLIP && e.def->eSubType == Enums::DECOR_DYNAMITE) {
+			msi |= static_cast<int>(static_cast<uint32_t>(r.readByte()) << 24);
+			const int x = spr(m, kFX, sprite), y = spr(m, kFY, sprite);
+			spr(m, kFZ, sprite) = static_cast<int16_t>(m.heightAt(x, y) + ((msi & 0xF000000) != 0 ? 32 : 31) -
+			                                           g.lerps.spriteZBias(sprite, x, y));
+			spr(m, kFScale, sprite) = 32;
 		}
 	} else {
 		spr(m, kFZ, sprite) = r.readShort();                  // stored Z both ways
@@ -359,7 +430,8 @@ bool load(const Env& env, DataReader& r) {
 		r.readUInt();                                          // marker, ignored
 		const int h = r.readInt();
 		const int idx = h & 0xFFFF;
-		if (idx >= static_cast<int>(entities.size()) || entities[idx].def == nullptr) {
+		if (idx >= static_cast<int>(entities.size()) ||
+		    (entities[idx].def == nullptr && !env.game->db.isDropped(&entities[idx]))) {
 			std::fprintf(stderr, "[world] bad entity record %d (handle 0x%X)\n", i, h);
 			return false;
 		}

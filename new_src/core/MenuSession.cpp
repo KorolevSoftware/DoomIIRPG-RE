@@ -449,18 +449,29 @@ void MenuSession::initMenu(int menuId) {
 		setYesNo(kStrUseItemQuestion, 1,
 			peek == kMenuItemsDrinks ? kActionUseItemSyring : kActionUseItemOther,
 			menuParam_, kActionBack, 0, &name, 1);
+	} else if (menuId == kMenuInGame && env_.player != nullptr && env_.player->isFamiliar) {
+		// Familiar root (:1551-1557): "Return to player" as row 1, Inventory
+		// and Status greyed out.
+		addParsedRows(menuId, 0, 1);
+		addItem(env_.loc->makeId(kTextIngame2, 355), kItemNormal, kActionReturnToPlayer, 0,
+			env_.loc->makeId(kTextIngame2, 356));
+		addParsedRows(menuId, 1, -1);
+		if (numItems_ > 6) {
+			items_[0].def.flags = kItemDisabled;
+			items_[6].def.flags = kItemDisabled;
+		}
 	} else {
 		// loadMenuItems(menu, 0, -1) (:2724-2727): the whole span, copied because
 		// initMenu patches flags per screen (:1549-1573).
 		addParsedRows(menuId, 0, -1);
 	}
 
-	// Per-screen patches (:1549-1573). The isFamiliar rebuild and the
-	// camera-active variant are not ported: there is no isFamiliar, and the
-	// rewrite can only open the menu from Playing (spec §4.2).
+	// Per-screen patches (:1549-1573). The camera-active variant is not
+	// ported: the rewrite can only open the menu from Playing (spec §4.2).
 	if (menuId == kMenuInGame) {
 		selectedIndex_ = 1;
-		if (env_.player != nullptr && numItems_ > 2 && env_.player->inventory[18] == 0) {
+		if (env_.player != nullptr && !env_.player->isFamiliar && numItems_ > 2 &&
+		    env_.player->inventory[18] == 0) {
 			items_[2].def.flags = env_.player->inventory[18] + kItemDisabled;
 			// This is the ONE data-driven ITEM_DISABLED the in-game root can
 			// produce, and its on-screen look is unverified (see MenuView.cpp
@@ -1688,6 +1699,10 @@ void MenuSession::select(int i) {
 		back();
 		break;
 	}
+	case kActionReturnToPlayer:                                   // (:3256-3259)
+		if (env_.returnToPlayer) env_.returnToPlayer();
+		returnToGame();
+		break;
 	case kActionChangeState:                 // ACTION_CHANGESTATE (src/MenuSystem.cpp:3086-3092)
 		if (items_[i].def.param == 6 && env_.host != nullptr) env_.host->requestState(StateId::Automap);
 		break;

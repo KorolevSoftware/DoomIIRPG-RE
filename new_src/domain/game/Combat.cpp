@@ -9,6 +9,8 @@
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
+#include "domain/game/ScriptVM.h"
+#include "domain/world/MapData.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
 #include "ui/Hud.h"
@@ -387,7 +389,9 @@ void Combat::explodeOnPlayer() {
 			// VIOS bonus (:991-999): deferred (boss).
 			accumRoundDamage += totalDamage;                     // :1000
 			playerPain(totalDamage, curAttacker, false);         // :1001
-			if (env_.player->getHealth() == 0) return;           // :1002-1004 (attacker stays unlinked: verbatim)
+			// :1002-1004 reads the player's ce health, not getHealth(): a dead bot
+			// must not leave its attacker unlinked (attacker stays unlinked: verbatim).
+			if (env_.player->ce.getStat(Enums::STAT_HEALTH) == 0) return;
 			// knockbackDist is always 0 (:1005-1016).
 			const int dx = env_.player->viewX - ax;
 			const int dy = env_.player->viewY - ay;
@@ -416,9 +420,9 @@ void Combat::explodeOnPlayer() {
 }
 
 void Combat::playerPainEvent(Entity* src, bool fromMonster) {
-	// src/Player.cpp:624-650; isFamiliar / characterChoice sounds absent.
+	// src/Player.cpp:624-650; the characterChoice voice split is absent.
 	if (src == nullptr) env_.hud->setDamageDir(3);
-	std::fprintf(stderr, "[sound] 1093\n");
+	std::fprintf(stderr, "[sound] %d\n", env_.player->isFamiliar ? 1111 : 1093);
 	env_.hud->setDamageCount(1);
 	// startShake(500, 2, 150) -> intensity 2*2; the monster case
 	// startShake(0, 0, 150) only vibrates.
@@ -464,6 +468,112 @@ int Combat::monsterSound(int sub, int parm, int soundType) const {
 	if (env_.tables == nullptr || idx >= env_.tables->monsterSounds.size()) return 0;
 	const int id = env_.tables->monsterSounds[idx];              // :3826-3830
 	return id != Enums::MSOUND_NONE ? id + 1000 : id;
+}
+
+void Combat::radiusHurtEntities(int tx, int ty, int knock, int dmg, Entity* attacker, Entity* skip) {
+	const MapData& map = *env_.map;                                   // src/Combat.cpp:1085-1108
+	const int cx = (tx << 6) + 32;
+	const int cy = (ty << 6) + 32;
+	const int cz = map.heightAt(tx << 6, ty << 6) + 32;
+	for (int i = ty - 1; i <= ty + 1; ++i) {
+		for (int j = tx - 1; j <= tx + 1; ++j) {
+			const TraceHit h = env_.game->trace.trace3D(cx, cy, cz, (j << 6) + 32, (i << 6) + 32,
+				map.heightAt(j << 6, i << 6) + 32, nullptr, 4129, 1);
+			if (!h.blocks()) hurtEntityAt(j, i, tx, ty, (j == tx && i == ty) ? 0 : knock, dmg, attacker, false, skip);
+		}
+	}
+	// doesScriptExist + queueTile + run: executeTile does both.
+	for (int k = ty - 1; k <= ty + 1; ++k) {
+		for (int l = tx - 1; l <= tx + 1; ++l) {
+			const int mask = 0x4004 | Game::eventFlagForDirection(tx - l, ty - k);
+			env_.game->vm()->executeTile(l, k, mask, true);
+		}
+	}
+}
+
+void Combat::hurtEntityAt(int x, int y, int cx, int cy, int knock, int dmg, Entity* attacker, bool b, Entity* skip) {
+	crFlags = 16;                                                     // src/Combat.cpp:1114-1196
+	shotsFired = true;
+	Game& g = *env_.game;
+	Player& p = *env_.player;
+	Entity* playerEnt = g.db.playerEntity();
+	// findMapEntity(x<<6, y<<6, 30383) (src/Game.cpp:738-750): the player
+	// entity when it stands there (mask bit 2), else the first entity of a
+	// masked eType; the walk then follows nextOnTile unfiltered.
+	constexpr int kMask = 30383;
+	Entity* e = nullptr;
+	if ((kMask & 0x2) != 0 && x == (p.destX >> 6) && y == (p.destY >> 6)) {
+		e = playerEnt;
+	} else {
+		for (Entity* t = g.db.findMapEntity(x, y); t != nullptr; t = t->nextOnTile) {
+			if (t->def != nullptr && (kMask & (1 << t->def->eType)) != 0) { e = t; break; }
+		}
+	}
+	EntityDb::TileWalk walk("Combat::hurtEntityAt");
+	Entity* next = nullptr;
+	for (; e != nullptr && walk.ok(e); e = next) {
+		next = e->nextOnTile;
+		if (e == skip || (e->info & Entity::kInfoActive) == 0 || e->def == nullptr) continue;
+		if (e == playerEnt) {
+			if (attackerWeaponProj == 5) continue;
+			dmg >>= 1;
+			const int armor = std::min(dmg * 10 / 100, p.ce.getStat(Enums::STAT_ARMOR));
+			dmg -= armor;
+			dmg -= dmg * p.ce.getStat(Enums::STAT_DEFENSE) / 100;
+			playerPainEvent(nullptr, false);
+			std::fprintf(stderr, "[combat] splash knockback %d on the player not applied\n", knock);
+			if (dmg > 0) {
+				crArmorDamage = armor;
+				playerPain(dmg, nullptr, true);
+				p.addArmor(-crArmorDamage);
+				p.addStatusEffect(13, 5, 3);
+				p.translateStatusEffects();
+			}
+		} else if (e->def->eType == Enums::ET_CORPSE) {
+			if (!b) return;                                           // verbatim early return (:1141-1143)
+			g.entityDied(e, false);
+			e->info |= Entity::kInfoHidden;
+			std::fprintf(stderr, "[combat] monster blood not ported\n");
+		} else if (e->monster != nullptr) {
+			e->info |= Entity::kInfoCombatMark;
+			if ((e->info & Entity::kInfoOnActiveList) == 0) g.monsters.activate(e, true, false, true, true);
+			int n7 = getWeaponWeakness(attackerWeaponId, e->def->eSubType, e->def->parm) * dmg >> 8;
+			const int n8 = n7 - (e->monster->ce.getStatPercent(Enums::STAT_DEFENSE) * n7 >> 8);
+			if (n8 <= 0) continue;
+			if (attackerWeaponProj == 5) {                            // :1156-1166
+				const int s = e->getSprite();
+				const int ns = env_.map->numSprites;
+				const int sx = env_.map->mapSprites[s], sy = env_.map->mapSprites[s + ns];
+				const int sz = env_.map->mapSprites[s + 2 * ns] + g.lerps.spriteZBias(s, sx, sy);   // baked
+				if (GameSprites::Sprite* fx = g.sprites.allocAnim(244, sx, sy, sz + (sz >> 1), *env_.upTimeMs)) {
+					fx->flags |= GameSprites::kFlagUnlink;
+					nextStageTime = (int)*env_.gameTime + fx->duration;
+					env_.map->mapSprites[fx->slot + 3 * ns] = 4;
+					env_.map->mapSprites[fx->slot + 8 * ns] = 32;
+				}
+			}
+			const bool pain = g.entityPain(e, n8);
+			if ((e->monster->flags & 0x1000) == 0 && !pain)
+				std::fprintf(stderr, "[combat] splash knockback %d not applied\n", knock);
+			std::string args[2] = { entityName(e), std::to_string(n8) };
+			if (e->monster->ce.getStat(Enums::STAT_HEALTH) <= 0) {
+				centerMessage(74, args, 2);
+				if (attackerWeaponProj != 5) {
+					if (b && attacker != nullptr && attacker->def != nullptr &&
+					    attacker->def->eType == Enums::ET_DECOR_NOCLIP && attacker->def->eSubType == Enums::DECOR_DYNAMITE) {
+						e->info |= Entity::kInfoHidden;
+						std::fprintf(stderr, "[combat] monster blood not ported\n");
+					}
+					g.entityDied(e, true);
+				}
+			} else {
+				centerMessage(75, args, 2);
+			}
+		} else if (e->def->eType != Enums::ET_ENV_DAMAGE) {
+			g.entityPain(e, dmg);
+			g.entityDied(e, true);
+		}
+	}
 }
 
 std::string Combat::entityName(const Entity* e) const {
@@ -519,8 +629,8 @@ bool Combat::playerSeq() {
 		if (hasAmmo && usage != 0 && ammoType > 0 && ammoType < 9) {
 			ammoPool = env_.player->ammo[ammoType] / usage;      // :209-211
 		}
-		// Sentry-bot check of :213 has no counterpart (no sentry bots).
-		if (hasAmmo && targetType != Enums::ET_MONSTER && attackerWeaponId != 14) {
+		if (hasAmmo && targetType != Enums::ET_MONSTER && attackerWeaponId != 14 &&
+		    ((1 << attackerWeaponId) & Enums::WP_SENTRY_BOT_MASK) == 0) {   // :213
 			if (ammoPool == 2) {                                 // :214-216
 				centerMessage(62);
 			} else if (ammoPool < 5 && ammoPool > 1) {           // :217-221

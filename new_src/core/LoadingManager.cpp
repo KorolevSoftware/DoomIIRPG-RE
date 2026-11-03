@@ -56,8 +56,16 @@ bool LoadingManager::loadState(int loadType) {
 	save_.saveConfig();                                                   // src/LoadingManager.cpp:42
 	PlayerState::Header h;
 	if (!save_.loadPlayer(loadType, h)) return false;                    // legacy: Error() + exit
+	player.saveX = h.saveX;                                               // src/Game.cpp:2178-2183
+	player.saveY = h.saveY;
+	player.saveZ = h.saveZ;
+	player.saveAngle = h.saveAngle;
+	player.savePitch = h.savePitch;
 	if (loadType == 2) player.currentLevelDeaths = 0;                     // src/Game.cpp:2200-2202
 	const int w = player.ce.weapon;                                       // selectWeapon(ce->weapon) (src/LoadingManager.cpp:691)
+	// Legacy has one weapon field; keep the rewrite's mirror in step even when
+	// selectWeapon is a no-op (loaded while familiar, src/Player.cpp:135-137).
+	player.weapon = w;
 	player.selectWeapon(w, w >= 0 ? env_.defs->find(Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON, w) : nullptr);
 	game.spawnParam = -1;                                                 // loadPlayerState (src/Game.cpp:2189)
 	if (h.viewX != 0 && h.viewY != 0) {                                  // src/Game.cpp:2205-2208
@@ -75,7 +83,8 @@ void LoadingManager::requestSave(int saveType) { saveState(saveType, stringId(kT
 
 PlayerState::Header LoadingManager::headerAtPlayer(int mapId) const {
 	// src/Canvas.cpp:871, src/LoadingManager.cpp:686-688, src/Game.cpp:2124-2137.
-	// prevX/saveX are familiar-only canvas fields: written from the view, ignored on read.
+	// prevX is written from the view and ignored on read; save* is the familiar
+	// body pose (canvas->save*, src/Game.cpp:2161-2165), the view when not deployed.
 	const Player& p = *env_.player;
 	PlayerState::Header h;
 	h.mapId = mapId;
@@ -85,11 +94,11 @@ PlayerState::Header LoadingManager::headerAtPlayer(int mapId) const {
 	h.viewPitch = p.viewPitch;
 	h.prevX = p.destX;
 	h.prevY = p.destY;
-	h.saveX = p.viewX;
-	h.saveY = p.viewY;
-	h.saveZ = p.viewZ;
-	h.saveAngle = p.viewAngle;
-	h.savePitch = p.viewPitch;
+	h.saveX = p.isFamiliar ? p.saveX : p.viewX;
+	h.saveY = p.isFamiliar ? p.saveY : p.viewY;
+	h.saveZ = p.isFamiliar ? p.saveZ : p.viewZ;
+	h.saveAngle = p.isFamiliar ? p.saveAngle : p.viewAngle;
+	h.savePitch = p.isFamiliar ? p.savePitch : p.viewPitch;
 	return h;
 }
 
@@ -209,6 +218,29 @@ void LoadingManager::onEntitiesLoaded() {
 	// by SaveGame and left partially applied (ADR 0037 §5).
 	if (!save_.loadWorld(env_.game->loadMapID, activeLoadType_ == 1))
 		env_.game->totalLevelTime = 0;
+	// A deployed player needs its body back as a linked drop entity (the world
+	// record restores it); otherwise come back as the player, not the bot.
+	Player& p = *env_.player;
+	EntityDb& db = env_.game->db;
+	if (p.isFamiliar) {
+		const int idx = p.playerEntityCopyIndex;
+		const bool inRing = idx >= db.firstDropIndex && idx < db.firstDropIndex + EntityDb::kMaxDropEntities &&
+		                    idx < EntityDb::kEntities;
+		if (!inRing || db.entities()[idx].def == nullptr || (db.entities()[idx].info & Entity::kInfoLinked) == 0) {
+			std::fprintf(stderr, "[save] familiar body %d missing, loading as the player\n", idx);
+			p.isFamiliar = false;
+			p.familiarType = 0;
+			p.playerEntityCopyIndex = -1;
+			p.swapStatusEffects();    // the copy side holds the player's own effects
+			p.translateStatusEffects();
+			// Spawn at the hero's pose (save*), not the bot's saved view; the
+			// spawnPlayer that follows places and relinks the player from it.
+			int& sp = env_.game->spawnParam;
+			sp = ((p.saveX >> 6) & 0x1F) | (((p.saveY >> 6) & 0x1F) << 5) | (((p.saveAngle & 0x3FF) >> 7) << 10);
+			if (sp == 0) sp = -1;                                         // 0 = header spawn (src/Game.cpp:946)
+			p.viewPitch = p.savePitch;
+		}
+	}
 }
 
 void LoadingManager::onPlayerSpawned() {

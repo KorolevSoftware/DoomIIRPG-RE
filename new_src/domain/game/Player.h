@@ -120,12 +120,13 @@ public:
 	// itself (find(6, 1, wp), src/Player.cpp:160). Wired in core/Main.cpp.
 	void setDefs(const EntityDefs* defs) { defs_ = defs; }
 
-	// give(kind, slot, amount, quiet): kind 0 = inventory, 1 = weapons,
-	// 2 = ammo, 3 = health. Mirrors legacy Player::give (src/Player.cpp:970).
-	// `quiet` is the legacy `b` flag: it gates only the help popups
-	// (showWeaponHelp/showInvHelp/showAmmoHelp, :1001,:1029,:1049), none of
-	// which is ported — it changes no state here.
-	bool give(int kind, int slot, int amount, bool quiet = false);
+	// give(kind, slot, amount, quiet, forceReal): kind 0 = inventory, 1 =
+	// weapons, 2 = ammo, 3 = health. Mirrors legacy Player::give
+	// (src/Player.cpp:970). `quiet` is the legacy `b` flag: it gates only the
+	// help popups (showWeaponHelp/showInvHelp/showAmmoHelp, :1001,:1029,:1049),
+	// none of which is ported — it changes no state here. `forceReal` is the
+	// legacy `b2`: while familiar, grants go to the bot's *Copy bag unless set.
+	bool give(int kind, int slot, int amount, bool quiet = false, bool forceReal = false);
 
 	// src/Player.cpp:2489-2493 — any of the four sentry-bot weapon bits.
 	bool hasASentryBot() const { return (weapons & Enums::WP_SENTRY_BOT_MASK) != 0; }
@@ -133,7 +134,7 @@ public:
 	// Equips weapon `i`; `def` is the caller's find(ET_ITEM, 1, i) result, which
 	// the legacy looks up itself (src/Player.cpp:160). Port of
 	// Player::selectWeapon (src/Player.cpp:132-163) minus what the rewrite has
-	// no counterpart for: isFamiliar, zoomOut, drawPlayingSoftKeys,
+	// no counterpart for: zoomOut, drawPlayingSoftKeys,
 	// readyWeapon/prevWeapon and the HUD repaint flag. The legacy
 	// selectNextWeapon() branch (:145-148) is a no-op here too: :153 assigns
 	// `i` unconditionally afterwards and only prevWeapon survives it.
@@ -153,6 +154,27 @@ public:
 	void stripInventoryForViosBattle();
 	void stripInventoryForTargetPractice();
 	void restoreInventory();
+
+	// ---- Familiar (sentry-bot control), src/Player.h:45-117; ADR 0041 ----
+	// weaponsCopy/ammoCopy above double as the bot's pickup bag (shared with
+	// VIOS/target practice exactly as legacy).
+	bool isFamiliar = false;
+	int familiarType = 0;                     // 0 none, 1 green shoot (w3), 2 green explode (w4),
+	                                          // 3 red shoot (w5), 4 red explode (w6) (src/Player.cpp:2404-2423)
+	bool attemptingToSelfDestructFamiliar = false;
+	int16_t inventoryCopy[26] = { 0 };
+	int16_t buffsCopy[30] = { 0 };
+	int numbuffsCopy = 0;
+	int statusEffectsCopy[54] = { 0 };
+	int numStatusEffectsCopy = 0;
+	int playerEntityCopyIndex = -1;           // body entity index, -1 none (src/Player.cpp:521, 2164)
+	bool botReturnedDueToMonster = false;     // write-only in legacy (src/Player.cpp:2384)
+	bool unsetFamiliarOnceOutOfCinematic = false;   // ADR 0041 §4 latch
+	bool noFamiliarRemains = false;           // EV_DESTROY_PLAYER arg 0 (src/ScriptThread.cpp:1942-1943)
+	int saveX = 0, saveY = 0, saveZ = 0, saveAngle = 0, savePitch = 0;   // canvas->save* (body pose)
+	void clearOutFamiliarsStatusEffects();    // src/Player.cpp:2176-2187
+	void swapStatusEffects();                 // :2189-2206
+	bool stealFamiliarsInventory();           // :2286-2311
 
 	// EV_USED_CHAINSAW (src/Player.cpp:2636-2652), script form (b = false).
 	int chainsawStrengthBonusCount = 0;
@@ -186,9 +208,9 @@ public:
 	// Health-fraction crossing reported by pain(); the caller shows the message.
 	enum class PainBand { None, NearDeath, LowHealth, HalfHealth };
 	// Player::pain state half (src/Player.cpp:652-709): god / n == 0 early
-	// outs, the 1/256 crossing bands, then addHealth(-n). noDeathFlag is never
-	// set in src/ and isFamiliar is absent. Death is NOT handled here (ADR 0028
-	// decision 4): the caller checks getHealth().
+	// outs, the 1/256 crossing bands, then addHealth(-n); while familiar only
+	// addHealth(-n) (:675-677). noDeathFlag is never set in src/. Death is NOT
+	// handled here (ADR 0028 decision 4): the caller checks the health stat.
 	PainBand pain(int n);
 	// src/Player.cpp:576-622: compass direction 0..7 (3 = ahead) of (x2,y2)
 	// seen from (x1,y1) facing `angle`, for the HUD damage arrow/vignette.
@@ -218,7 +240,8 @@ public:
 	// numNotebookIndexes / questComplete / questFailed / inCombat are not ported.
 	void levelInit();
 
-	int getHealth() const { return ce.getStat(Enums::STAT_HEALTH); }
+	// src/Player.cpp:219-221: the bot's health (ammo[7]) while familiar.
+	int getHealth() const { return isFamiliar ? ammo[Enums::AMMO_SENTRY_BOT] : ce.getStat(Enums::STAT_HEALTH); }
 	int getMaxHealth() const { return ce.getStat(Enums::STAT_MAX_HEALTH); }
 
 	// ---- XP / leveling (src/Player.cpp:264-362; spec deviation 14) ----

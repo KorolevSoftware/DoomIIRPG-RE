@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/CinematicCamera.h"
+#include "core/Familiar.h"
 #include "core/GameStates.h"
 #include "core/LoadingManager.h"
 #include "core/LootSession.h"
@@ -117,7 +118,7 @@ public:
 	void debugGiveKeycards();
 
 	// DEBUG (rewrite-only, removable): flips the player coordinate readout
-	// drawn by Hud::drawDebugPosition. Bound to B in GameLoop.cpp.
+	// drawn by Hud::drawDebugPosition. Bound to F3 in GameLoop.cpp.
 	void debugToggleCoords();
 
 	// ---- scripted cinematics (cutscenes-camera.md §1-§3) ----
@@ -134,6 +135,9 @@ public:
 
 	// Virtual target practice session; the VM enters it from opcode 84 (ADR 0039).
 	TargetPractice& targetPractice() { return practice_; }
+
+	// Sentry-bot control behaviour; the state lives on Player (ADR 0041).
+	Familiar& familiar() { return familiar_; }
 
 	// ST_MINI_GAME dispatcher; the VM starts minigames through it (ADR 0033).
 	MiniGameHost& minigames() { return minigames_; }
@@ -177,6 +181,7 @@ private:
 	void unloadMap_();       // per-map runtime teardown before the next map file is read
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)
+	bool checkDeath_();      // ST_DYING / familiar ST_BOT_DYING entry; true = state left
 	void tickCamera();       // ST_CAMERA per-frame order (src/Canvas.cpp:949-958)
 	void tickAutomap();      // ST_AUTOMAP (src/AutomapController.cpp:18-33)
 	void tickDying();
@@ -209,6 +214,7 @@ private:
 	// Screen the next ST_MENU entry opens; set by the caller right before
 	// setState(Menu), consumed and reset by enterState_.
 	int nextMenuId_ = kMenuInGame;
+	int debugBotWeapon_ = 6;   // DEBUG (removable): last F5 bot weapon, cycles 3..6
 
 	// View forward / facing probe / fire election (spec §P1-G4).
 	Targeting targeting_;
@@ -228,6 +234,7 @@ private:
 
 	// Target practice: enter/assessShot/exit and the canvas-side fields (ADR 0039).
 	TargetPractice practice_;
+	Familiar familiar_;
 	Text practiceScoreText_;   // "Score:N" buffer the score bar borrows
 
 	// ST_MINI_GAME: calling thread, active game, shared endGame tail.

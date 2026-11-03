@@ -114,6 +114,7 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 		rvy += (shakeX << 4) * -viewCos >> 16;
 		rvz += shakeY << 4;
 	}
+	if (env_.player->isFamiliar) rvz += (sinTable[(now >> 2) & 0x3FF] >> 11) + 128;   // bot eye bob (:2271-2273)
 	rvx -= 160 * viewCos >> 16;
 	rvy += 160 * viewSin >> 16;
 	// Pitch feeds the view matrix (positive = up; the loot crouch writes

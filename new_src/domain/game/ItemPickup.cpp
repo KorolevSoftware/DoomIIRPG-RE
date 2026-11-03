@@ -50,14 +50,17 @@ bool ItemPickup::touched(Entity* e) {
 		env_.vm->vars[11] = e->def->tileIndex;
 		env_.vm->executeStaticFunc(Enums::SCR_ITEM_PICKUP);
 	}
-	// Dropped-entity tail (sprite backlink -1, def = nullptr, :127-130) not
-	// ported: spawnDropItem has no counterpart in new_src yet (spec §5).
+	if (env_.db != nullptr && env_.map != nullptr && env_.db->isDropped(e)) {   // :127-130
+		env_.map->mapSprites[e->getSprite() + 7 * env_.map->numSprites] = -1;   // S_ENT
+		e->def = nullptr;
+	}
 	return true;
 }
 
 // Port of Entity::touchedItem (src/Entity.cpp:152-278).
 bool ItemPickup::touchedItem(Entity* e) {
-	if (!grantItem(e->def, e->getSprite(), -1)) return false;
+	const bool dropped = env_.db != nullptr && env_.db->isDropped(e);
+	if (!grantItem(e->def, e->getSprite(), dropped ? e->param : -1)) return false;
 	if (env_.db != nullptr) env_.db->removeEntity(e);          // :276
 	// TODO sound 1054 (src/Entity.cpp:277) — no audio subsystem in new_src.
 	return true;                                               // :278
@@ -134,7 +137,7 @@ bool ItemPickup::grantItem(const EntityDef* def, int sprite, int dropQty) {
 		}
 	} else if (def->eSubType == Enums::ITEM_CLASS_WEAPON) {    // :238
 		if ((1 << def->parm) & Enums::WP_SENTRY_BOT_MASK) {    // :239 weaponIsASentryBot
-			if (player.hasASentryBot()) return false;          // :240-242 (isFamiliar unported)
+			if (player.isFamiliar || player.hasASentryBot()) return false;   // :240-242
 			player.give(Enums::ITEM_CLASS_WEAPON, def->parm, 1);               // :249
 			// Direct write, as legacy (:250): give() already refilled the pool
 			// to 100 in its sentry pre-step (src/Player.cpp:981); a dropped

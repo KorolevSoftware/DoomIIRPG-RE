@@ -25,9 +25,9 @@ class ItemPickup {
 public:
 	// Non-owning views on the world, as for the other peers.
 	struct Env {
-		EntityDb* db = nullptr;            // removeEntity
+		EntityDb* db = nullptr;            // removeEntity, isDropped
 		const EntityDefs* defs = nullptr;  // reserved: dropped-item defs
-		MapData* map = nullptr;            // reserved: sprite backlinks on drops
+		MapData* map = nullptr;            // S_ENT backlink cleared on a picked-up drop
 		Player* player = nullptr;
 		Hud* hud = nullptr;
 		const Localization* loc = nullptr;
@@ -39,7 +39,8 @@ public:
 	void init(const Env& env) { env_ = env; }
 
 	// src/Entity.cpp:118-149, ET_ITEM / ET_MONSTERBLOCK_ITEM branch only.
-	// Returns true when the item was consumed (sprite hidden + unlinked).
+	// Returns true when the item was consumed (sprite hidden + unlinked; a
+	// drop entity also loses its def and S_ENT backlink, :127-130).
 	bool touched(Entity* e);
 
 	// Grant by item class (src/Entity.cpp:152-278).

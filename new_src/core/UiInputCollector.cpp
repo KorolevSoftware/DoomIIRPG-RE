@@ -104,6 +104,8 @@ Action UiInputCollector::keyAction(const SDL_Event& ev) const {
 	case SDL_SCANCODE_O: a = Action::ItemsDrinks; break;  // :93, AVK_DRINKS
 	case SDL_SCANCODE_Z: a = Action::NextWeapon; break;   // :86, AVK_NEXTWEAPON (zoom in while scoped)
 	case SDL_SCANCODE_X: a = Action::PrevWeapon; break;   // :87, AVK_PREVWEAPON (zoom out while scoped)
+	case SDL_SCANCODE_B: a = Action::BotDiscard; break;   // :95, AVK_BOTDISCARD (src/InputEventController.cpp:43)
+	case SDL_SCANCODE_F5: a = Action::DebugGiveBot; break; // DEBUG (removable, familiar)
 	case SDL_SCANCODE_V: a = Action::DebugVending; break; // DEBUG (removable, minigames)
 	case SDL_SCANCODE_H: a = Action::DebugHacking; break; // DEBUG (removable, minigames)
 	case SDL_SCANCODE_J:                                  // DEBUG (removable, minigames)
@@ -114,9 +116,8 @@ Action UiInputCollector::keyAction(const SDL_Event& ev) const {
 		break;
 	// Reserved, deliberately unmapped: the rewrite has no counterpart for
 	// AVK_PDA P (:94).
-	// SDL_SCANCODE_K is ours too — debug keycards, handled in GameLoop.cpp.
-	// SDL_SCANCODE_B (was AVK_BOTDISCARD :95, no rewrite counterpart) is
-	// borrowed by the debug coordinate overlay, also in GameLoop.cpp.
+	// SDL_SCANCODE_K is ours too — debug keycards, handled in GameLoop.cpp,
+	// as is F3, the debug coordinate overlay.
 	default: break;
 	}
 	return a;

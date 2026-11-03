@@ -7,6 +7,7 @@
 
 namespace newcore {
 
+class Familiar;
 class Game;
 class Hud;
 class Localization;
@@ -35,6 +36,7 @@ public:
 		StateHost* host = nullptr;
 		ZoomController* zoom = nullptr;      // zoomed ST_PLAYING input goes here first (ADR 0039)
 		TargetPractice* practice = nullptr;  // in-range input hooks (src/PlayingInputHandler.cpp)
+		Familiar* familiar = nullptr;        // deploy / self-destruct / return (ADR 0041)
 		std::function<void(int)> openMenu;   // enter Menu on a given MenuId (ACTION_ITEMS)
 	};
 
@@ -45,6 +47,11 @@ public:
 	void spawnPlayer();
 
 	void handleAction(Action a);
+
+	// MovementController::attemptMove (src/MovementController.cpp:312-358): the
+	// one-tile step of Forward/Back, also the familiar deploy step. Returns
+	// true when the move was committed (dest set, player relinked).
+	bool attemptMove(int tx, int ty);
 
 	// legacy MovementController::finishMovement (:160-196).
 	void finishMovement();

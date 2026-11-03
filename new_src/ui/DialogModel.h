@@ -67,6 +67,17 @@ struct DialogViewModel {
 	// `dialogFlags & 0x7`). The page-up/page-down icons need no such gate:
 	// they are only drawn on pages where it cannot bite.
 	bool activateFires = true;
+
+	// Bottom Yes/No pair of flags&4 / flags&1 on the last page
+	// (src/DialogSystem.cpp:408-451). choiceSel = scriptStateVars[4] (0 left,
+	// 1 right); the labels are producer-owned, already dehyphenated;
+	// cursorOsc = OSC_CYCLE[time / 200 % 4] (:355). The flags&2 vertical
+	// pair (:357-406) is not modelled yet.
+	bool showChoice = false;
+	int choiceSel = 0;
+	const Text* choiceLeft = nullptr;
+	const Text* choiceRight = nullptr;
+	int cursorOsc = 0;
 };
 
 } // namespace newcore

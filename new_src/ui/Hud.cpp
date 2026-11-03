@@ -1,6 +1,7 @@
 #include "ui/Hud.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 #include "render/Graphics2D.h"
@@ -32,7 +33,7 @@ const Texture& Hud::imgPageOk() const { return art().pageOk; }
 
 void Hud::draw(Graphics2D& g, const Font& font, int canvasWidth, int canvasHeight) {
 	drawHudOverdraw(g, 0, 0, canvasWidth, canvasHeight);
-	drawTopBar(g, font, canvasWidth); // also paints the bottom panel background
+	drawTopBar(g, font, canvasWidth, false); // also paints the bottom panel background
 	if (showArrows_) drawArrowControls(g);
 	// The bottom bar is drawHud(ui, HudModel) now (spec §4.2). This whole
 	// method has no caller — GameContext::render drives drawTopBar /
@@ -164,7 +165,54 @@ void Hud::drawFade(Graphics2D& g, int64_t nowMs) {
 	g.fillRect(0, 0, 480, 320, 0, 0, 0, static_cast<uint8_t>(std::clamp(overlay, 0, 255)));
 }
 
-void Hud::drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositive) {
+void Hud::brightenScreen(int64_t nowMs, int maxLocalBrightness, int initialBoost) {
+	maxLocalBrightness_ = maxLocalBrightness;   // src/Hud.cpp:600-608
+	brightenMaxReached_ = 0;
+	brightenBegin_ = nowMs;
+	brighten_ = true;
+	brightnessInitialBoost_ = initialBoost;
+}
+
+void Hud::stopBrightenScreen() {
+	maxLocalBrightness_ = 0;                    // src/Hud.cpp:610-618
+	brightenMaxReached_ = 0;
+	brightenBegin_ = 0;
+	brighten_ = false;
+	brightnessInitialBoost_ = 0;
+}
+
+namespace {
+uint8_t alpha8(double a) { return static_cast<uint8_t>(std::lround(std::clamp(a, 0.0, 1.0) * 255.0)); }
+} // namespace
+
+void Hud::drawFamiliarOverlay(Graphics2D& g, int64_t nowMs, int familiarType) {
+	int max = 32;                                                     // src/Render.cpp:2618-2640
+	if (brighten_) {
+		if (brightenMaxReached_ != 0 && nowMs > brightenMaxReached_ + 500 + 500) {
+			stopBrightenScreen();
+		} else {
+			int n2;
+			if (brightenMaxReached_ == 0) {
+				n2 = static_cast<int>(((nowMs - brightenBegin_) >> 4) & 0x7F) + brightnessInitialBoost_;
+				if (n2 >= maxLocalBrightness_) brightenMaxReached_ = nowMs;
+			} else if (nowMs < brightenMaxReached_ + 500) {
+				n2 = maxLocalBrightness_;
+			} else {
+				n2 = std::min(static_cast<int>(((brightenMaxReached_ + 500 + 500 - nowMs) >> 4) & 0x7F), maxLocalBrightness_);
+			}
+			max = std::max((n2 * n2 << 10) / 127 >> 5, 32);
+		}
+	}
+	if (brighten_) g.fillRect(0, 0, 480, 320, 255, 255, 255, alpha8(max / 2226.0));   // :2644-2646
+	ppUpdate_ += 0.05f;                                               // :2647-2658
+	ppScanY_ = (ppScanY_ + 1) % 30;
+	const double alpha = std::sin(ppUpdate_) * 0.05 + 0.35;
+	if (static_cast<uint16_t>(familiarType - 1) > 1u) g.fillRect(0, 0, 480, 256, 255, 0, 0, alpha8(alpha));
+	else g.fillRect(0, 0, 480, 256, 0, 255, 0, alpha8(alpha));
+	for (int i = 0; i < 256; i += 10) g.fillRect(0, i + ppScanY_ / 3, 480, 5, 0, 0, 0, alpha8(0.15));
+}
+
+void Hud::drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositive, bool familiar) {
 	// Attack arrow (src/Hud.cpp:507-524), y = screenRect[3] - 20 - 25.
 	if (nowMs < damageTime_ && damageCount_ > 0 && totalDamagePositive) {
 		if ((1 << damageDir_ & 0xC1) != 0) {
@@ -175,13 +223,14 @@ void Hud::drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositi
 				Graphics2D::kAnchorHCenter | Graphics2D::kAnchorVCenter);
 		}
 	} else if (damageTime_ != 0) {
-		// :525-529; stopBrightenScreen/stopScreenSmack have no counterpart.
+		// :525-529; stopScreenSmack has no counterpart (ADR 0041 §6).
 		damageTime_ = 0;
+		stopBrightenScreen();
 	}
 
-	// Vignette (src/Hud.cpp:533-583) over viewRect {0,20,480,250}; the
-	// familiar's imgDamageVignetteBot is absent.
+	// Vignette (src/Hud.cpp:533-583) over viewRect {0,20,480,250}.
 	if (!(nowMs < damageTime_ && damageCount_ >= 0 && totalDamagePositive)) return;
+	const Texture& sheet = familiar ? art().damageVignetteBot : art().damageVignette;   // :568
 	int n = 0;
 	switch (damageDir_) {
 		case 1: n = 2; break;
@@ -192,7 +241,7 @@ void Hud::drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositi
 		case 0: case 6: case 7: n = 8; break;
 	}
 	const int viewX = 0, viewY = 20, viewW = 480, viewH = 250;
-	int width = art().damageVignette.width(); // 16
+	int width = sheet.width(); // 16
 	if (width <= 0) return;                  // missing sheet: the tile loop would not advance
 	auto tile = [&](int x, int y, int w, int h, int rot) {
 		// Legacy fillRegion: repeat the 16x16 texture (no scaling).
@@ -202,7 +251,7 @@ void Hud::drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositi
 			int xBeg = x, xEnd = x + w;
 			while (xBeg < xEnd) {
 				int texw = std::min(xEnd - xBeg, width);
-				g.drawRegion(art().damageVignette, 0, 0, texw, texh, xBeg, yBeg, 0, rot);
+				g.drawRegion(sheet, 0, 0, texw, texh, xBeg, yBeg, 0, rot);
 				xBeg += texw;
 			}
 			yBeg += texh;
@@ -367,9 +416,10 @@ void Hud::drawBuffs(Graphics2D& g, const Font& font, const int16_t* buffs, int n
 	}
 }
 
-void Hud::drawTopBar(Graphics2D& g, const Font& font, int canvasWidth) {
+void Hud::drawTopBar(Graphics2D& g, const Font& font, int canvasWidth, bool familiar) {
 	if (!art().panelTop.valid()) return;
 	g.drawImage(art().panelTop, canvasWidth / 2, 0, Graphics2D::kAnchorHCenter);
+	if (familiar) g.drawImage(art().panelTopSentrybot, canvasWidth / 2, 0, Graphics2D::kAnchorHCenter);   // :240-242
 
 	// Segmented health bar under the panel (spec combat-stage1 §0.F):
 	// viewRect[1]=20 here + the legacy n3=6 inset = absolute y=26
@@ -380,12 +430,14 @@ void Hud::drawTopBar(Graphics2D& g, const Font& font, int canvasWidth) {
 	// (src/TouchController.cpp:544-545). Called here rather than from
 	// GameContext::render so the gameplay states {Playing, Looting, Dialog}
 	// that already own the drawTopBar call get it with no extra call site.
-	drawBottomPanel(g);
+	drawBottomPanel(g, familiar);
 }
 
-void Hud::drawBottomPanel(Graphics2D& g) {
+void Hud::drawBottomPanel(Graphics2D& g, bool familiar) {
 	if (!art().panelBottom.valid()) return;
 	g.drawImage(art().panelBottom, 0, kPanelBottomY, 0);
+	const Texture& bot = art().panelBottomSentrybot;   // src/TouchController.cpp:546-549
+	if (familiar && bot.valid()) g.drawImage(bot, 0, 320 - bot.height(), 0);
 }
 
 void Hud::drawImportantMessage(Graphics2D& g, const Font& font, const Text& text, uint32_t color) {

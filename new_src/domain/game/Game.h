@@ -58,7 +58,8 @@ public:
 
 	// Locked<->unlocked def swap: flips bit0 of the sprite-info tileNum and
 	// re-looks-up the EntityDef by tileNum+257 (src/Game.cpp:2477-2498).
-	// Entity::name sync omitted — Entity::name not ported.
+	// The legacy name sync (:2491-2494) is implicit: map doors keep name -1,
+	// which already means "the def's default name".
 	void setLineLocked(Entity* e, bool locked);
 
 	// Turn advance, subset of src/Game.cpp:1238-1281 (stats/bombs/monster
@@ -90,6 +91,7 @@ public:
 	// ScriptVM back-pointer for advanceTurn's PER_TURN hook; forward-declared
 	// here, included only in the .cpp (no header cycle). Set after construction.
 	void setVM(ScriptVM* vm) { vm_ = vm; }
+	ScriptVM* vm() const { return vm_; }   // Combat::radiusHurtEntities' tile scripts
 
 	// ---- Damage / death dispatch (ADR 0018) ----
 
@@ -140,6 +142,27 @@ public:
 		monsters.setXPSystems(player, loc, hud);
 		db.setPlayer(player);
 	}
+
+	// ---- Drop-entity spawners (ADR 0042) ----
+	// Coordinates are canvas units. Each takes the next ring entity
+	// (EntityDb::getFreeDropEnt), places its drop sprite on the floor
+	// (stored S_Z = legacy getHeight + 32 converted by SpriteLerps::spriteZBias)
+	// and links it at (x>>6, y>>6). relinkSprite is a no-op in the rewrite.
+	// src/Game.cpp:2647-2679; doThrow = throwDropItem.
+	Entity* spawnDropItem(int x, int y, int tile, const EntityDef* def, int param, bool doThrow);
+	// src/Game.cpp:2681-2690: def = find(eType, sub, parm); nullptr + log when absent.
+	Entity* spawnDropItem(int x, int y, int tile, int eType, int sub, int parm, int param, bool doThrow);
+	// src/Game.cpp:2822-2853: an 850 ms parabolic hop (height 48) to the first
+	// free of the 8 neighbours starting at a random direction; stays put if none.
+	void throwDropItem(int x, int y, int height, Entity* e);
+	// src/Game.cpp:2725-2768: the familiar's body (tile/name by characterChoice).
+	Entity* spawnPlayerEntityCopy(int x, int y, int characterChoice);
+	// src/Game.cpp:2770-2811: sentry-bot corpse for bot weapon w, loot n4 medkits / n5 water.
+	Entity* spawnSentryBotCorpse(int x, int y, int w, int n4, int n5);
+	// Player::attemptToDiscardFamiliar (src/Player.cpp:2427-2437): drops bot
+	// weapon w at the player's feet carrying its health (ammo[7]), or msg 221
+	// on a no-drop tile (mapFlags & 0x20).
+	void attemptToDiscardFamiliar(int w);
 
 	// Player::relink (src/Player.cpp:1425-1445): unlink entities[1] if linked, then link it at
 	// (destX>>6, destY>>6) when 0 <= destX,destY <= 2047; mirror the destination into the trace.

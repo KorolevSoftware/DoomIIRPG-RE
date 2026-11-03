@@ -78,7 +78,8 @@ public:
 	int damageCount() const { return damageCount_; }
 	// Arrow (src/Hud.cpp:507-530) then vignette (src/Hud.cpp:533-583),
 	// including the arrow's else-branch expiry write (:525-529).
-	void drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositive);
+	// familiar picks the bot vignette sheet (src/Hud.cpp:568).
+	void drawDamageEffects(Graphics2D& g, int64_t nowMs, bool totalDamagePositive, bool familiar);
 	// canvas->shakeTime = 0 (src/Combat.cpp:591).
 	void stopShake();
 	// Render::rockView (src/Render.cpp:2962-2968). Stores x<<4, y<<4, z<<4.
@@ -102,6 +103,14 @@ public:
 	bool isFading() const { return fadeFlags_ != 0; }
 	int fadeFlags() const { return fadeFlags_; }
 	void drawFade(Graphics2D& g, int64_t nowMs);
+	// Hud::brightenScreen / stopBrightenScreen (src/Hud.cpp:600-618); the
+	// state is Render's brightenPostProcess* in legacy.
+	void brightenScreen(int64_t nowMs, int maxLocalBrightness, int initialBoost);
+	void stopBrightenScreen();
+	// Familiar post-process, GL path of src/Render.cpp:2618-2659: brighten
+	// ramp + white wash, green (type 1/2) or red tint over the 3D view, dark
+	// scanlines. Call once per rendered frame while deployed.
+	void drawFamiliarOverlay(Graphics2D& g, int64_t nowMs, int familiarType);
 	// Level restart: Render::endFade (src/Render.cpp:2543-2546) plus the shake,
 	// rock and damage-indicator state a fresh boot starts without.
 	void clearScreenEffects() {
@@ -169,7 +178,8 @@ public:
 	// Top panel strip + segmented monster health bar. Public for the
 	// GameContext::render caller (spec combat-stage1 §0.F); messages are NOT
 	// drawn here — drawMessages owns them.
-	void drawTopBar(Graphics2D& g, const Font& font, int canvasWidth);
+	// familiar adds the sentry-bot strip (src/Hud.cpp:240-242) and panel.
+	void drawTopBar(Graphics2D& g, const Font& font, int canvasWidth, bool familiar);
 
 	// Player::drawBuffs + drawStatusEffectIcon (src/Player.cpp:1209-1260,
 	// :1597-1620): the buff box at the top-right of the 3D view. buffs is the
@@ -180,7 +190,7 @@ public:
 	// Bottom panel background: gameMenu_Panel_bottom.bmp (480x64) at y=256,
 	// the legacy band below the 3D viewport (src/TouchController.cpp:544-545,
 	// rendering.md 6.1). Background only, no widgets.
-	void drawBottomPanel(Graphics2D& g);
+	void drawBottomPanel(Graphics2D& g, bool familiar);
 
 	// Health-bar feed (replaces the demo setter; legacy state half of
 	// src/Hud.cpp:822-899): id = faced entity sprite index, -1 clears.
@@ -251,6 +261,16 @@ private:
 	int64_t damageTime_ = 0;
 	int damageCount_ = 0;
 	RockView rockView_;
+	// Render brightenPostProcess / brightenPostProcessBeginTime /
+	// brightenPPMaxReachedTime / maxLocalBrightness / brightnessInitialBoost.
+	bool brighten_ = false;
+	int64_t brightenBegin_ = 0;
+	int64_t brightenMaxReached_ = 0;
+	int maxLocalBrightness_ = 0;
+	int brightnessInitialBoost_ = 0;
+	// The function statics `update` / `y` of src/Render.cpp:2647-2648.
+	float ppUpdate_ = 0.f;
+	int ppScanY_ = 0;
 	// Render fadeTime / fadeDuration / fadeFlags.
 	int64_t fadeStartMs_ = 0;
 	int fadeDurMs_ = 0;

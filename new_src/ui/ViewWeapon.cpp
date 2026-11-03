@@ -100,7 +100,7 @@ void ViewWeapon::draw(Graphics2D& g, const Camera3D& cam, const ViewWeaponModel&
 
 	// Canvas shake; m.shakeY is already the legacy -|sy| (src/Combat.cpp:709).
 	const int x = scrX + m.poseX + m.shakeX;                   // (:786)
-	const int y = scrY - (m.poseY + m.shakeY);                 // (:787)
+	const int y = scrY - (m.poseY + m.shakeY) + m.extraY;      // (:787, :790-791)
 
 	// Muzzle flash FIRST so the gun art draws on top (:826-834): tile 1
 	// frame 3 at (+flashX+40, +flashY+40), 88x88 (scaleFactor 0x8000).

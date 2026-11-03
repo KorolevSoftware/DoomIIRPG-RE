@@ -181,6 +181,14 @@ public:
 	// damage message, the health-band warnings, then Player::pain.
 	void playerPain(int n, Entity* src, bool showMsg);
 
+	// Splash damage around tile (tx, ty) (src/Combat.cpp:1085-1108): every
+	// 3x3 tile with a clear 3D line from the centre gets hurtEntityAt (no
+	// knock on the centre), then each tile's 0x4004 | direction scripts run.
+	void radiusHurtEntities(int tx, int ty, int knock, int dmg, Entity* attacker, Entity* skip);
+	// src/Combat.cpp:1114-1196. Knockback is logged, not applied (deviation D4).
+	// attackerWeaponProj is read stale, as legacy.
+	void hurtEntityAt(int x, int y, int cx, int cy, int knock, int dmg, Entity* attacker, bool b, Entity* skip);
+
 private:
 	// Two-stage playerSeq timer (src/Combat.cpp:178-425 hitscan reduction).
 	bool playerSeq();

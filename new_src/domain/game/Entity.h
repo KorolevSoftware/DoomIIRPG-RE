@@ -56,6 +56,9 @@ public:
 	int info = 0;
 	int param = 0;
 	int pos[2] = { 0, 0 };
+	// Legacy Entity::name (text type in bit 10); -1 = the def's default name
+	// (ADR 0042 §4). Only drop entities set it.
+	int16_t name = -1;
 
 	// Loot table: legacy Entity::lootSet is an allocated int[3] (src/Entity.h:24),
 	// entries are u16 (class<<12 | idx<<6 | count). hasLootSet mirrors the

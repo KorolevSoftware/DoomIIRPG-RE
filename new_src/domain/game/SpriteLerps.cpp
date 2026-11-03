@@ -8,7 +8,9 @@
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
 #include "domain/game/MonsterAI.h"
+#include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
+#include "domain/game/TraceSystem.h"
 #include "domain/world/MapBits.h"
 #include "domain/world/MapData.h"
 
@@ -342,6 +344,17 @@ void SpriteLerps::freeLerpSprite(SpriteLerp* ls) {
 	if (ent != nullptr && ent->monster != nullptr &&
 	    (ent->monster->goalFlags & EntityMonster::kGoalFlagLerping) != 0 && env_.ai != nullptr) {
 		env_.ai->finishLerp(ent);
+	}
+	// A monster ending its step orthogonally next to the familiar's body forces
+	// the return (src/Game.cpp:3217-3226). ADR 0041 §4: only the latch is set
+	// here; GameContext::tick consumes it outside Camera/BotDying.
+	const Player* p = env_.player;
+	if (ent != nullptr && ent->monster != nullptr && p != nullptr && p->isFamiliar && env_.trace != nullptr &&
+	    env_.trace->distFrom(ent, p->saveX, p->saveY) <= 4096) {      // combat->tileDistances[0]
+		const int s = ent->getSprite();
+		const int n = env_.map->numSprites;
+		const int sx = env_.map->mapSprites[s], sy = env_.map->mapSprites[s + n];
+		if ((sx == p->saveX) != (sy == p->saveY)) env_.player->unsetFamiliarOnceOutOfCinematic = true;
 	}
 }
 

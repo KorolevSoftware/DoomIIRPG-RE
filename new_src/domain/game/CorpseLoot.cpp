@@ -55,6 +55,16 @@ void CorpseLoot::populateDefaultLootSet(Entity& e) {
 	}
 }
 
+void CorpseLoot::addToLootSet(Entity& e, int cls, int idx, int count) {
+	if (!e.hasLootSet || count <= 0) return;
+	for (int& slot : e.lootSet) {
+		if (slot == 0) {
+			slot = cls << 12 | idx << 6 | count;
+			return;
+		}
+	}
+}
+
 // See CorpseLoot.h. Adjacent-tile stand-in for the legacy one-tile trace
 // distance (tileDistSq(1) = 4096 = distFrom squared across one tile).
 Entity* CorpseLoot::findLootableCorpseFacing(int px, int py, int stepX, int stepY) {

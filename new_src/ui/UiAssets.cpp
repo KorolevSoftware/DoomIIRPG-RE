@@ -63,6 +63,11 @@ bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	ok &= loadUiTexture(store, read, "damage.bmp", damageVignette);
 	ok &= loadUiTexture(store, read, "Hud_Attack_Arrows.bmp", attackArrows);
 	ok &= loadUiTexture(store, read, "Hud_Test.bmp", hudTest);
+	ok &= loadUiTexture(store, read, "HUD_Panel_top_sentrybot.bmp", panelTopSentrybot);
+	ok &= loadUiTexture(store, read, "gameMenu_Panel_bottom_sentrybot.bmp", panelBottomSentrybot);
+	ok &= loadUiTexture(store, read, "damage_bot.bmp", damageVignetteBot);
+	ok &= loadUiTexture(store, read, "Hud_Sentry.bmp", sentryFace);
+	ok &= loadUiTexture(store, read, "HUD_sentry_active.bmp", sentryActive);
 	std::fprintf(stdout, "UiAssets: weaponNormal=%dx%d valid=%d, weaponActive valid=%d\n",
 		weaponNormal.width(), weaponNormal.height(), (int)weaponNormal.valid(),
 		(int)weaponActive.valid());

@@ -174,6 +174,23 @@ selected choice (355, 389, 402, 434, 448) → buttons/scrollbar:
   at x=96/x=288 inside the box, labels str30 "Exit"/str31 "Play" (flags&4) or
   str140 "No"/str141 "Yes" (flags&1), highlighted tint `n2+0x333333`
   (src/DialogSystem.cpp:408-451). Buttons 3/4 carry the touch areas.
+  Exact layout (all styles, including 12/13 and 3/0): drawn only when
+  `currentDialogLine >= numDialogLines - dialogViewLines` (408).
+  `n21 = canvas->dialogRect[1] + 16*dialogViewLines - 14` (417), button
+  height `v75 = FONT_HEIGHT+2 = 18`. LEFT button = var4 value 0 = str30/str140
+  at fillRect(96,n21,96,18), label centred at (144, n21+11) anchor 3
+  (423-428); RIGHT button = var4 value 1 = str31/str141 at
+  fillRect(288,n21,96,18), label at (336, n21+11) anchor 3 (437-442). Fill =
+  the style's box colour `n2` (e.g. 0xFFB18A01 for 12/13), border white (-1),
+  touch-highlight `(n2+0x333333)|0xFF000000`. Cursor = glyph `'\x8A'`
+  (3-arg `drawCursor` -> b=true, src/Graphics.cpp:670-686) at
+  x=`128 - labelW/2 + osc`, y=`n21 + FONT_HEIGHT/2 - 5`, anchor 0 when var4==0
+  (433-435); x=`320 - labelW/2 + osc`, same y, anchor 4 when var4==1
+  (447-449); `osc = OSC_CYCLE[time/200%4]` (355). The str50 `"||"` appended by
+  prepareDialog (637-647) leaves the blank lines the buttons sit on.
+  Default selection set by prepareDialog: var4=0 (left: "No"/"Exit") for
+  style 12, var4=1 (right: "Yes"/"Play") for every other style (638-643).
+  Style 12/13 closeDialog acts only on var4==1 && !skip (530, 563-598).
 - Scrollbar via `canvas->drawScrollBar` when more pages exist; page-up/down/OK
   icons are fmButtons 5/6/7 using `imgPageUP/DOWN/OK_Icon.bmp` at x=390
   (src/Canvas.cpp:330-350, src/DialogSystem.cpp:460-489).

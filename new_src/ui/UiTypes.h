@@ -14,6 +14,7 @@ enum class UiId : int {
 	LootBody, LootScroll,
 	// dialog box
 	DialogBody, DialogPageUp, DialogPageDown, DialogOk,
+	DialogChoiceLeft, DialogChoiceRight,   // dialog buttons 3/4 (Yes/No pair)
 	// in-game menu: nine row slots matching the legacy 9-button pool
 	// (src/MenuSystem.cpp:4440), their info buttons (GROUP 8) and the two soft
 	// keys (spec 2026-08-28-menu §8.4). The list has no single widget.
@@ -44,6 +45,10 @@ enum class UiAction : int {
 	// touch-only in the original's port too.
 	Info, InfoClose,
 	MiniGameTouch,    // index carries the legacy minigame button id, -1 = none
+	BotDiscard,       // HUD right soft key with a bot weapon held (src/Hud.cpp:1317-1319)
+	// Dialog Yes/No tap: index = scriptStateVars[4] to set, then the same
+	// FIRE the page-ok icon queues (src/TouchController.cpp:411-421, :283-288).
+	DialogChoice,
 };
 
 // One navigation edge per frame. Moves a selected index owned by the screen's

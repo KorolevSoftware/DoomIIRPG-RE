@@ -82,11 +82,14 @@ public:
 	std::vector<int16_t> mapSprites;    // numSprites * 10 (9 fields + slack)
 	std::vector<int32_t> mapSpriteInfo; // numSprites * 2 (low word + high word)
 	// numSprites = the file's sprites (numMapSprites) + kMaxCustomSprites
-	// hidden runtime slots appended after them (src/Render.cpp:2497-2508, ADR 0030).
+	// hidden runtime slots (src/Render.cpp:2497-2508, ADR 0030) + kMaxDropSprites
+	// drop slots (src/Render.cpp:2511-2523, ADR 0042) appended after them.
 	static constexpr int kMaxCustomSprites = 48;   // src/Render.h:53
+	static constexpr int kMaxDropSprites = 16;     // src/Render.h:54
 	int numMapSprites = 0;
 	int numSprites = 0;
 	int firstCustomSprite() const { return numMapSprites; }
+	int firstDropSprite() const { return numMapSprites + kMaxCustomSprites; }
 
 	// ---- Misc ----
 	std::vector<uint32_t> staticFuncs; // 12 ints

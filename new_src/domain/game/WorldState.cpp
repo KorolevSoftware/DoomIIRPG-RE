@@ -33,7 +33,7 @@ void roundTripSelfCheck() {
 	m.numLines = 11;                                   // partial trailing byte
 	m.lineFlags = { 0x08, 0x80, 0x88, 0x00, 0x80, 0x08 };   // line 10 = last line, bit 0 of the partial byte
 	m.numMapSprites = 5;                               // last byte covers slots 4..7
-	m.numSprites = m.numMapSprites + MapData::kMaxCustomSprites;
+	m.numSprites = m.numMapSprites + MapData::kMaxCustomSprites + MapData::kMaxDropSprites;
 	m.mapSpriteInfo.assign(m.numSprites * 2, 0);
 	m.mapSpriteInfo[0] = 0x10000;
 	m.mapSpriteInfo[3] = 0x200000;
@@ -269,7 +269,7 @@ std::vector<uint8_t> WorldState::save(bool brief) {
 		w.writeInt(t.FP);
 		for (int s = 0; s < t.FP; ++s) w.writeInt(t.scriptStack[s]);
 	}
-	w.writeInt(0);                                           // dropIndex: no drops
+	w.writeInt(game.db.dropIndex);                           // :1708
 	w.writeInt(player.moves);
 	for (int i = 0; i < 3; ++i) w.writeByte(0);              // notebook count, questComplete, questFailed
 	for (int i = 0; i < 16; ++i) w.writeShort(0);            // 8 x (notebookIndex, notebookPosition)
@@ -355,7 +355,12 @@ WorldState::Restore WorldState::restore(const std::vector<uint8_t>& blob) {
 		r.skip(4 + 1 + 4);                                   // unpauseTime, state, IP
 		r.skip(static_cast<size_t>(r.readInt()) * 4);        // FP + stack
 	}
-	r.readInt();                                             // dropIndex
+	const int dropIndex = r.readInt();                       // :1876
+	if (dropIndex < 0 || dropIndex >= EntityDb::kMaxDropEntities) {
+		std::fprintf(stderr, "[world] bad dropIndex %d\n", dropIndex);
+		return Restore::Corrupt;
+	}
+	game.db.dropIndex = dropIndex;
 	player.moves = r.readInt();
 	r.skip(3 + 16 * 2);                                      // notebook / quest
 	map.flagsBitmask = static_cast<int8_t>(r.readByte());

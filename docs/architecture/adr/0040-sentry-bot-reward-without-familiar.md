@@ -1,7 +1,7 @@
 # ADR 0040 — The sentry bot minigame grants a real bot weapon, but the familiar system (deploy/control) is deferred
 
 Date: 2026-10-30
-Status: accepted
+Status: accepted; decisions 2, 3 and 5 superseded by ADR 0041 (2026-11-02, spec `../familiar.md`)
 Spec: `../sentry-bot-minigame.md`
 
 ## Context

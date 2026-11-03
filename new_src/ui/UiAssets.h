@@ -42,6 +42,8 @@ public:
 	Texture arrowUpPressed, arrowDownPressed, arrowLeftPressed, arrowRightPressed;
 	Texture uiImages, portraitsSmall, pageUp, pageDown, pageOk;
 	Texture damageVignette, attackArrows, hudTest;
+	// Familiar HUD (src/Hud.cpp:44, src/MenuSystem.cpp:119, src/App.cpp:420, :452-453).
+	Texture panelTopSentrybot, panelBottomSentrybot, damageVignetteBot, sentryFace, sentryActive;
 	// In-game menu sheets (spec 2026-08-28-menu §8.5). menuInfo*/menuTornPage
 	// are for GROUP 8 and have no caller yet.
 	Texture menuHealth, menuShield;

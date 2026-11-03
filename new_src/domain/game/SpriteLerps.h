@@ -10,7 +10,9 @@ class Entity;
 class EntityDb;
 class MapData;
 class MonsterAI;
+class Player;
 class ScriptVM;
+class TraceSystem;
 struct ScriptThread;
 
 // Peer subsystem owning the script sprite lerp pool: the LERP* opcode
@@ -28,6 +30,8 @@ public:
 		ScriptVM* vm = nullptr;
 		MonsterAI* ai = nullptr;   // finishLerp of a completed monster step
 		bool* facingDirty = nullptr;   // canvas updateFacingEntity latch (src/Game.cpp:3128)
+		Player* player = nullptr;      // familiar monster-at-body latch (src/Game.cpp:3217-3226)
+		const TraceSystem* trace = nullptr;
 	};
 
 	static constexpr int kMaxLerpSprites = 16;   // pool size (src/Game.cpp:3028)

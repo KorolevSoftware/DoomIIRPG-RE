@@ -18,6 +18,9 @@ _Last updated: 2026-10-30_
 | I | open Inventory (items menu 72; legacy AVK_ITEMS_INFO, `src/Input.cpp:92`) |
 | O | open Nano Drinks (menu 75; legacy AVK_DRINKS, `src/Input.cpp:93`) |
 | K | debug: grant keycards + drinks 0..10 + holy-water pistol/50 water + 1000 credits (inventory[24]), restore health to max and armor to 200 (ours, removable; switches to the pistol if not owned) |
+| B | sentry bot: discard a held bot / return a deployed bot (legacy AVK_BOTDISCARD) |
+| F3 | debug: toggle the coordinate overlay (moved from B) |
+| F5 | debug: give the next bot weapon 3..6 (ours, removable) |
 | J / Shift+J | debug: start the sentry-bot minigame, botType 0 / 1, no script thread (ours, removable) |
 | Z / X | zoom in / out while the sniper scope is up (legacy next/prev weapon keys) |
 | H | debug: start the hacking minigame (map00 puzzle: 3 columns, 15 turns), no script thread (ours, removable) |

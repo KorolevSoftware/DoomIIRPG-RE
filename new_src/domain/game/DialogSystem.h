@@ -118,6 +118,7 @@ private:
 	int numHelpMessages_ = 0;
 
 	Text scratch_;
+	Text choiceLeft_, choiceRight_;              // Yes/No labels lent to the view model
 };
 
 } // namespace newcore

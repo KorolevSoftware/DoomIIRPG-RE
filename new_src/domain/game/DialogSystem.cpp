@@ -198,7 +198,9 @@ void DialogSystem::closeDialog(bool skip) {
 		env_.vm->resumeThread(thread_);
 		env_.game->skipDialog = false;
 	}
-	// Styles 12/13 purchases (:564-597): familiar/armor systems out of scope.
+	// Style 12: the familiar self-destruct question (:564-569). Style 13
+	// (armor repair, :570-597) is out of scope.
+	if (style_ == 12) env_.ctx->familiar().onSelfDestructDialogClosed(env_.vm->vars[4] == 1 && !skip);
 }
 
 // ---- help FIFO ----
@@ -414,6 +416,24 @@ bool DialogSystem::buildViewModel(DialogViewModel& m) {
 	// choice dialog the ok icon and the box body swallow the tap.
 	m.activateFires = !(currentDialogLine_ >= numDialogLines_ - viewLines_ &&
 		(flags_ & 0x7) != 0);
+
+	// Bottom Yes/No pair on the last page (408-451): str 140/141 for flags&1,
+	// else 30/31. It is the else-arm of the flags&2 vertical pair (:357).
+	if ((flags_ & 0x2) == 0 && (flags_ & 0x5) != 0 && currentDialogLine_ >= numDialogLines_ - viewLines_) {
+		const bool yesNo = (flags_ & 0x1) != 0;
+		choiceLeft_.setLength(0);
+		composeText(kTextMain, yesNo ? 140 : 30, choiceLeft_);
+		choiceLeft_.dehyphenate();
+		choiceRight_.setLength(0);
+		composeText(kTextMain, yesNo ? 141 : 31, choiceRight_);
+		choiceRight_.dehyphenate();
+		m.showChoice = true;
+		m.choiceSel = env_.vm->vars[4];
+		m.choiceLeft = &choiceLeft_;
+		m.choiceRight = &choiceRight_;
+		if (env_.tables != nullptr && env_.tables->oscCycle.size() >= 4)
+			m.cursorOsc = env_.tables->oscCycle[(env_.ctx->upTimeMs / 200) % 4];   // (:355)
+	}
 	return true;
 }
 

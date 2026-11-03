@@ -41,6 +41,30 @@ constexpr int kSoftLeftX = 2,    kSoftLeftY = 320;
 constexpr int kSoftCenterX = 240, kSoftCenterY = 320;
 constexpr int kSoftRightX = 478, kSoftRightY = 320;
 
+// Familiar bottom bar (src/Hud.cpp:644-681): health colour band, the
+// HUD_sentry_active plate while button 3 (pass turn) is held, the bot face
+// (green row 0, red row 17) and one 4x14 segment per 5% health, unclamped.
+void drawFamiliarBar(Ui& ui, const HudModel& m, UiResult& res) {
+	const UiAssets& art = ui.art();
+	const int h = m.botHealth;
+	uint32_t colour = h > 80 ? 0xFF59A907 : h > 60 ? 0xFF96DA0E : h > 40 ? 0xFFEDD703
+	                : h > 20 ? 0xFFFF8B00 : 0xFFFF0C00;
+	if (m.interactive && ui.buttonRect(UiId::HudPortrait, m.portraitHit)) {   // :1257-1259
+		res.action = UiAction::PassTurn;
+	}
+	if (ui.isActive(UiId::HudPortrait)) {
+		colour = 0xFFFFFFFF;
+		ui.image(art.sentryActive, 143, 261, kTopLeft);
+	}
+	// SCR_CX - (15 + 118) / 2 = 174, anchor 3 = HCENTER | VCENTER.
+	ui.imageRegion(art.sentryFace, 0, m.botRed ? 17 : 0, 29, 17, 174, 278,
+		Graphics2D::kAnchorHCenter | Graphics2D::kAnchorVCenter);
+	const int x0 = 240 + art.sentryFace.width() - 66;
+	int segs = h * 20 / 100;
+	if (segs < 20 && h != 0) ++segs;
+	for (int i = 0; i < segs; ++i) ui.panel({ x0 + 6 * i, 271, 4, 14 }, colour);
+}
+
 } // namespace
 
 // Draw order is the legacy one inside Hud::drawBottomBar (src/Hud.cpp:636-724):
@@ -87,7 +111,7 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 		if (ui.softKey(UiId::HudSoftRight, *m.softRight, kSoftRightX, kSoftRightY,
 				Graphics2D::kAnchorRight | Graphics2D::kAnchorBottom, m.softRightHit,
 				m.interactive)) {
-			res.action = UiAction::Automap;
+			res.action = m.softRightAction;
 		}
 	}
 	ui.image(ui.isActive(UiId::HudSoftRight) && m.softRight != nullptr
@@ -100,37 +124,41 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 	// ITEMS_DRINKS, ITEMS, QUESTLOG — src/Hud.cpp:1322-1352) have no counterpart
 	// in the rewrite yet, so they are neither hit-tested nor highlighted
 	// (Deviation D3). Button 3, the portrait, IS wired below.
-	ui.weaponIcon(art.weaponNormal, kWeaponX, kWeaponY, kWeaponRowH, m.weapon);
-	if (m.showAmmo) {
-		ui.number3(art.numbers, kAmmoX, kAmmoY, kDigitSpace, m.ammo, m.slashAmmo);
+	if (m.familiar) {
+		drawFamiliarBar(ui, m, res);
+	} else {
+		ui.weaponIcon(art.weaponNormal, kWeaponX, kWeaponY, kWeaponRowH, m.weapon);
+		if (m.showAmmo) {
+			ui.number3(art.numbers, kAmmoX, kAmmoY, kDigitSpace, m.ammo, m.slashAmmo);
+		}
+
+		// ---- shield plate ----
+		ui.image(art.shieldNormal, kShieldX, kShieldY, kTopLeft);
+		ui.number3(art.numbers, kShieldDigitsX, kShieldDigitsY, kDigitSpace, m.shield, false);
+
+		// ---- keys ----
+		ui.keys(art.keyNormal, kKeysX, kKeysY, kKeysRowH, m.keysRow);
+
+		// ---- health plate ----
+		ui.image(art.healthNormal, kHealthX, kHealthY, kTopLeft);
+		ui.number3(art.numbers, kHealthDigitsX, kHealthDigitsY, kDigitSpace, m.health, false);
+
+		// ---- portrait: face row from health, then the frame on top ----
+		// Hud button 3, rect (219,264, imgPlayerFaces->width + 10 = 42, 36)
+		// (src/Hud.cpp:76), fires ACTION_PASSTURN (src/Hud.cpp:1343-1345). While it
+		// is held the original swaps BOTH the face sheet and the frame to their
+		// *_Active variants, keeping the same face row (src/Hud.cpp:700-708).
+		// The hit test runs before the blits so the highlight shows on the press
+		// frame itself, as it does for the two soft keys above.
+		if (m.interactive && ui.buttonRect(UiId::HudPortrait, m.portraitHit)) {
+			res.action = UiAction::PassTurn;
+		}
+		const bool portraitHeld = ui.isActive(UiId::HudPortrait);
+		ui.face(portraitHeld ? art.playerActive : art.playerFaces, kFaceX, kFaceY,
+			kFaceRowH, m.health, m.maxHealth);
+		ui.image(portraitHeld ? art.playerFrameActive : art.playerFrameNormal,
+			kFrameX, kFrameY, kTopLeft);
 	}
-
-	// ---- shield plate ----
-	ui.image(art.shieldNormal, kShieldX, kShieldY, kTopLeft);
-	ui.number3(art.numbers, kShieldDigitsX, kShieldDigitsY, kDigitSpace, m.shield, false);
-
-	// ---- keys ----
-	ui.keys(art.keyNormal, kKeysX, kKeysY, kKeysRowH, m.keysRow);
-
-	// ---- health plate ----
-	ui.image(art.healthNormal, kHealthX, kHealthY, kTopLeft);
-	ui.number3(art.numbers, kHealthDigitsX, kHealthDigitsY, kDigitSpace, m.health, false);
-
-	// ---- portrait: face row from health, then the frame on top ----
-	// Hud button 3, rect (219,264, imgPlayerFaces->width + 10 = 42, 36)
-	// (src/Hud.cpp:76), fires ACTION_PASSTURN (src/Hud.cpp:1343-1345). While it
-	// is held the original swaps BOTH the face sheet and the frame to their
-	// *_Active variants, keeping the same face row (src/Hud.cpp:700-708).
-	// The hit test runs before the blits so the highlight shows on the press
-	// frame itself, as it does for the two soft keys above.
-	if (m.interactive && ui.buttonRect(UiId::HudPortrait, m.portraitHit)) {
-		res.action = UiAction::PassTurn;
-	}
-	const bool portraitHeld = ui.isActive(UiId::HudPortrait);
-	ui.face(portraitHeld ? art.playerActive : art.playerFaces, kFaceX, kFaceY,
-		kFaceRowH, m.health, m.maxHealth);
-	ui.image(portraitHeld ? art.playerFrameActive : art.playerFrameNormal,
-		kFrameX, kFrameY, kTopLeft);
 
 	// ---- centre "Wait" ----
 	// Hardcoded ASCII in the original, drawn only while BOTH soft keys are set

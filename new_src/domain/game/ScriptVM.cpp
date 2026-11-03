@@ -308,7 +308,7 @@ bool ScriptVM::evReturn(ScriptThread* t) {
 
 void ScriptVM::updateScriptVars() {
 	vars[0] = 0;                                   // status effects n/a
-	vars[1] = (short)env_.player->getHealth();
+	vars[1] = (short)env_.player->ce.getStat(Enums::STAT_HEALTH);   // the player's, not the bot's
 	vars[2] = (short)(env_.player->viewX >> 6);
 	vars[3] = (short)(env_.player->viewY >> 6);
 	vars[8] = env_.player->inventory[24];
@@ -318,7 +318,7 @@ void ScriptVM::updateScriptVars() {
 	// hardcode marine so EVT 617 takes the v14==1 branch (hides doorway
 	// walkers 10+9 @IPs 3297/3299, docs/research/2026-08-26-choice-branch.md).
 	vars[14] = 1;
-	vars[16] = 0;                                  // familiar
+	vars[16] = env_.player->isFamiliar ? 1 : 0;
 	// vars[12] (difficulty) is stamped at load only (src/Game.cpp:3461-3471).
 }
 
@@ -1575,7 +1575,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			env_.game->useMastermindHack = readByte(t) != 0;
 			break;
 
-		case Enums::EV_FORCE_BOT_RETURN:           // :1744-1751, gated on isFamiliar: always 0 here
+		case Enums::EV_FORCE_BOT_RETURN:           // :1744-1751
+			if (env_.player->isFamiliar) env_.ctx->familiar().returnsToPlayer(false);
 			break;
 
 		case Enums::EV_ANGER_VIOS:                 // :1821-1825
@@ -1633,18 +1634,20 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			env_.player->usedChainsaw();
 			break;
 
-		case Enums::EV_DESTROY_PLAYER: {           // :1925-1947 (noclip and isFamiliar are always 0 here)
-			readUByte(t);                          // only read by the familiar branch
+		case Enums::EV_DESTROY_PLAYER: {           // :1925-1947 (noclip is always 0 here)
+			const int leaveRemains = readUByte(t);
 			Combat& combat = env_.game->combat;
 			Player& player = *env_.player;
-			const int amount = player.ce.getStat(Enums::STAT_HEALTH);
-			combat.playerPainEvent(nullptr, false);
+			const bool familiar = player.isFamiliar;
+			const int amount = familiar ? player.ammo[Enums::AMMO_SENTRY_BOT] : player.ce.getStat(Enums::STAT_HEALTH);
+			if (!familiar) combat.playerPainEvent(nullptr, false);
 			env_.hud->setDamageTime(env_.ctx->upTimeMs + 1000);
 			combat.totalDamage = 1;
 			combat.playerPain(amount, nullptr, true);
 			// Tail of Player::pain (src/Player.cpp:703-705), skipped by its god return (:654-656).
 			if (!player.god && env_.ctx->state() == StateId::Automap) env_.ctx->setState(StateId::Playing);
-			player.addArmor(-player.ce.getStat(Enums::STAT_ARMOR));
+			if (!familiar) player.addArmor(-player.ce.getStat(Enums::STAT_ARMOR));
+			else if (leaveRemains == 0) player.noFamiliarRemains = true;   // :1942-1944
 			break;
 		}
 

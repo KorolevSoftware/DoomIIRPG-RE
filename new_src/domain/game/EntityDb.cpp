@@ -12,6 +12,26 @@ void EntityDb::resetEntities() {
 	entities_.clear();
 	entities_.resize(kEntities);
 	std::fill(entityDb_, entityDb_ + 1024, nullptr);
+	firstDropIndex = kEntities;   // no drop slots until Game::loadEntities appends them
+	dropIndex = 0;
+	lastDropEntIndex = 0;
+}
+
+// Verbatim shape of src/Game.cpp:2612-2622: `last` is only advanced in the
+// increment, so the first test re-checks the start slot and slot
+// dropIndex + 1 is never examined (legacy quirk, kept).
+Entity* EntityDb::getFreeDropEnt() {
+	if (firstDropIndex + kMaxDropEntities > static_cast<int>(entities_.size())) return nullptr;   // ring disabled
+	int idx = dropIndex;
+	int last = firstDropIndex + idx;
+	if ((entities_[last].info & Entity::kInfoLinked) != 0) {
+		for (idx = (idx + 1) % kMaxDropEntities;
+		     idx != dropIndex && (entities_[last].info & Entity::kInfoLinked) != 0;
+		     idx = (idx + 1) % kMaxDropEntities, last = firstDropIndex + idx) {}
+	}
+	dropIndex = (idx + 1) % kMaxDropEntities;
+	lastDropEntIndex = last;
+	return &entities_[last];
 }
 
 // ---- entityDb (32x32 tile lists) ----

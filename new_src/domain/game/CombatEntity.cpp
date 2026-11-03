@@ -198,10 +198,9 @@ int CombatEntity::calcHit(Combat& c, CombatEntity& attackerCe, CombatEntity& def
 
 int CombatEntity::calcDamage(Combat& c, CombatEntity& attackerCe, Entity* targetEnt,
                              CombatEntity& defenderCe, bool vsPlayer, int parm) {
-	// src/CombatEntity.cpp:300-378. Omitted: the REFLECT early-out (:311-313)
-	// and the familiar split (:357-366 keeps only the normal armor path). parm
-	// is the legacy n (unused by this body — kept for signature parity with
-	// calcCombat's targetSubType pass-through).
+	// src/CombatEntity.cpp:300-378. Omitted: the REFLECT early-out (:311-313).
+	// parm is the legacy n (unused by this body — kept for signature parity
+	// with calcCombat's targetSubType pass-through).
 	(void)parm;
 	const Player* p = c.env().player;
 	// :302 weapon = attackerCe.weapon * 9 — the row is looked up by id.
@@ -252,10 +251,15 @@ int CombatEntity::calcDamage(Combat& c, CombatEntity& attackerCe, Entity* target
 		}
 		damage = weaponWeakness * dmgStrMin >> 8;                // :354
 	} else {                                                     // :356-371 monster attack
-		armorDamage = std::min(((171 * dmgStrMin >> 8) + 1) / 2,   // :357-359 normal armor split
-		                       defenderCe.getStat(Enums::STAT_ARMOR));
-		damage = dmgStrMin - 2 * armorDamage;
-		// familiar branches (:361-366) omitted.
+		if (p == nullptr || !p->isFamiliar) {
+			armorDamage = std::min(((171 * dmgStrMin >> 8) + 1) / 2,   // :357-359 normal armor split
+			                       defenderCe.getStat(Enums::STAT_ARMOR));
+			damage = dmgStrMin - 2 * armorDamage;
+		} else if (p->familiarType == 1 || p->familiarType == 2) {   // :361-366 the bot: no armor
+			damage = dmgStrMin * 7 / 8;
+		} else {
+			damage = dmgStrMin * 5 / 8;
+		}
 		if (Combat::checkWeaponMask(attackerCe.weapon, 0x900000) &&   // :367-370 ANTIFIRE
 		    p != nullptr && p->buffs[9] > 0) {
 			armorDamage = 0;

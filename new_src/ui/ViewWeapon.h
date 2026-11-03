@@ -51,6 +51,9 @@ struct ViewWeaponModel {
 	// RENDER_FLAG_BRIGHTREDSHIFT on the gun art while the damage vignette is
 	// up (src/Combat.cpp:710-712).
 	bool brightRed = false;
+	// Added to the final y: -35 for a deployed familiar (y -= 35,
+	// src/Combat.cpp:790-791, GL path), else 0.
+	int extraY = 0;
 };
 
 // First-person view weapon + muzzle flash (spec 2026-08-26-decomposition

@@ -27,12 +27,12 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	defs_ = &defs;
 	db.init({ &map });                             // peer subsystem wiring (spec §P2-GF)
 	trace.init({ &db, &map });                     // peer subsystem wiring (spec §P2-GA)
-	doors.init({ &db, &map, vm_, &trace });        // peer subsystem wiring (spec §P2-GB)
+	doors.init({ &db, &map, vm_, &trace, player_ });   // peer subsystem wiring (spec §P2-GB)
 	monsters.init({ &db, &map, &defs, vm_, &combat, &trace, &monstersTurn,
 	                &facingDirty, &lerps, &ai, player_, &sprites });    // spec §P2-GC
 	ai.init({ &db, &map, &trace, &combat, &monsters, player_, &lerps, &doors,
 	          &visibility });                                           // ADR 0028
-	lerps.init({ &db, &map, vm_, &ai, &facingDirty });             // peer subsystem wiring (spec §P2-GD)
+	lerps.init({ &db, &map, vm_, &ai, &facingDirty, player_, &trace });   // peer subsystem wiring (spec §P2-GD)
 	sprites.init({ &map, &lerps, player_ });            // ADR 0030
 	loot.init({ &db, &defs });                          // peer subsystem wiring (spec §P2-GE)
 	db.resetEntities();
@@ -283,6 +283,19 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 				x >> 6, y >> 6, linked ? "" : " unlinked");
 		}
 	}
+	// Drop entities (src/Game.cpp:487-495): entity k bound to hidden drop sprite k.
+	db.firstDropIndex = nextSlot;
+	for (int k = 0; k < EntityDb::kMaxDropEntities; ++k) {
+		if (nextSlot == EntityDb::kEntities) {
+			// Legacy Error(35) is fatal; here the ring is disabled instead
+			// (getFreeDropEnt returns nullptr, the spawners refuse).
+			std::fprintf(stderr, "[spawn] ERR_MAX_ENTITIES(35): no slot for drop entity %d\n", k);
+			db.firstDropIndex = EntityDb::kEntities;
+			break;
+		}
+		db.entities()[nextSlot++].setSprite(map.firstDropSprite() + k);
+		map.mapSpriteInfo[map.firstDropSprite() + k] |= 0x10000;
+	}
 	std::fprintf(stderr,
 		"[spawn] %d entities (%d/%d slots), %d linked, %d destroyable; "
 		"monster=%d npc=%d door=%d item=%d decor=%d envdmg=%d corpse=%d "
@@ -304,6 +317,152 @@ void Game::relinkPlayer(const Player& p) {
 		db.linkEntity(pe, p.destX >> 6, p.destY >> 6);
 	}
 	trace.setPlayerDest(p.destX, p.destY);
+}
+
+// ---- Drop-entity spawners (ADR 0042) ----
+
+namespace {
+constexpr int kDropDirs[16] = { 64, 0, 64, 64, 0, 64, -64, 64, -64, 0, -64, -64, 0, -64, 64, -64 };   // src/Game.h:25
+constexpr int kRowX = 0, kRowY = 1, kRowZ = 2, kRowMode = 3, kRowEnt = 7, kRowScale = 8;
+} // namespace
+
+// Shared floor placement of the drop spawners (src/Game.cpp:2664-2671 and twins).
+static void placeDropSprite(MapData& map, const SpriteLerps& lerps, int sprite, int x, int y, int entIndex) {
+	const int n = map.numSprites;
+	map.mapSprites[sprite + kRowX * n] = (int16_t)x;
+	map.mapSprites[sprite + kRowY * n] = (int16_t)y;
+	map.mapSprites[sprite + kRowZ * n] = (int16_t)(32 + map.heightAt(x, y) - lerps.spriteZBias(sprite, x, y));
+	map.mapSprites[sprite + kRowEnt * n] = (int16_t)entIndex;
+	map.mapSprites[sprite + kRowScale * n] = 64;
+}
+
+Entity* Game::spawnDropItem(int x, int y, int tile, const EntityDef* def, int param, bool doThrow) {
+	Entity* e = db.getFreeDropEnt();                                   // src/Game.cpp:2647-2679
+	if (e == nullptr) return nullptr;
+	e->def = def;
+	e->name = (int16_t)(def->name | 0x400);
+	if (tile >= 1 && tile < 14) tile |= 0x200;
+	if ((e->info & Entity::kInfoLinked) != 0) db.unlinkEntity(e);
+	e->info &= 0xFFFF;
+	e->info |= Entity::kInfoDirty;
+	if (def->eType == Enums::ET_ATTACK_INTERACTIVE) e->info |= Entity::kInfoActive;
+	const int sprite = e->getSprite();
+	const int height = map_->heightAt(x, y);
+	map_->mapSpriteInfo[sprite] = tile;
+	placeDropSprite(*map_, lerps, sprite, x, y, db.lastDropEntIndex);
+	e->param = param;
+	db.linkEntity(e, x >> 6, y >> 6);
+	if (doThrow) throwDropItem(x, y, height, e);
+	return e;
+}
+
+Entity* Game::spawnDropItem(int x, int y, int tile, int eType, int sub, int parm, int param, bool doThrow) {
+	const EntityDef* def = defs_->find(eType, sub, parm);              // src/Game.cpp:2681-2690
+	if (def == nullptr) {
+		std::fprintf(stderr, "[drop] Cannot find a def for the spawnDropItem (%d,%d,%d)\n", eType, sub, parm);
+		return nullptr;
+	}
+	return spawnDropItem(x, y, tile, def, param, doThrow);
+}
+
+void Game::throwDropItem(int x, int y, int height, Entity* e) {
+	const int sprite = e->getSprite();                                 // src/Game.cpp:2822-2853
+	SpriteLerps::SpriteLerp* ls = lerps.allocLerpSprite(nullptr, sprite, e->def->eType != Enums::ET_ITEM);
+	if (ls == nullptr) return;
+	ls->srcX = x;
+	ls->srcY = y;
+	ls->srcZ = (int16_t)(32 + height);   // lerps run in legacy baked Z space
+	ls->dstX = x;
+	ls->dstY = y;
+	ls->dstZ = ls->srcZ;
+	ls->height = 48;
+	ls->flags |= SpriteLerps::SpriteLerp::kFlagAsync | SpriteLerps::SpriteLerp::kFlagParabola;
+	ls->srcScale = ls->dstScale = map_->mapSprites[sprite + kRowScale * map_->numSprites];
+	ls->startTime = lerps.clockMs();
+	ls->travelTime = 850;
+	int dir = combat.nextByte() & 0x7;
+	int tries = 8;
+	while (--tries >= 0) {
+		const int dx = ls->srcX + kDropDirs[dir << 1];
+		const int dy = ls->srcY + kDropDirs[(dir << 1) + 1];
+		const TraceHit h = trace.trace(ls->srcX, ls->srcY, dx, dy, e, 15855, 25);
+		if (!h.blocks() && !ai.baseVisited(dx >> 6, dy >> 6)) {
+			ls->dstX = dx;
+			ls->dstY = dy;
+			ls->dstZ = (int16_t)(map_->heightAt(dx, dy) + 32);
+			break;
+		}
+		dir = (dir + 1) & 0x7;
+	}
+}
+
+Entity* Game::spawnPlayerEntityCopy(int x, int y, int characterChoice) {
+	int tile = 72;                                                     // src/Game.cpp:2725-2768
+	int nameId = 224;
+	switch (characterChoice) {
+	case 1: tile = 68; nameId = 224; break;
+	case 3: tile = 66; nameId = 225; break;
+	case 2: tile = 72; nameId = 226; break;
+	}
+	Entity* e = db.getFreeDropEnt();
+	if (e == nullptr) return nullptr;
+	e->def = defs_->lookup(tile);
+	e->name = (int16_t)nameId;
+	if ((e->info & Entity::kInfoLinked) != 0) db.unlinkEntity(e);
+	e->info &= 0xFFFF;
+	e->info |= Entity::kInfoDirty;
+	const int sprite = e->getSprite();
+	map_->mapSpriteInfo[sprite] = tile;
+	placeDropSprite(*map_, lerps, sprite, x, y, db.lastDropEntIndex);
+	map_->mapSprites[sprite + kRowMode * map_->numSprites] = 0;
+	e->param = 0;
+	db.linkEntity(e, x >> 6, y >> 6);
+	return e;
+}
+
+Entity* Game::spawnSentryBotCorpse(int x, int y, int w, int n4, int n5) {
+	int tile = 19;                                                     // src/Game.cpp:2770-2811
+	int parm = 0;
+	if (w == 5 || w == 6) {
+		tile = 18;
+		parm = 1;
+	}
+	const EntityDef* def = defs_->find(Enums::ET_CORPSE, 11, parm);
+	if (def == nullptr) {   // legacy dereferences it unguarded
+		std::fprintf(stderr, "[drop] no sentry corpse def (parm %d)\n", parm);
+		return nullptr;
+	}
+	Entity* e = db.getFreeDropEnt();
+	if (e == nullptr) return nullptr;
+	e->def = def;
+	e->name = (int16_t)(def->name | 0x400);
+	CorpseLoot::populateDefaultLootSet(*e);
+	e->param = 0;
+	if (w == 3 || w == 5) CorpseLoot::addToLootSet(*e, 2, 1, 10);
+	else CorpseLoot::addToLootSet(*e, 0, 12, 1);
+	CorpseLoot::addToLootSet(*e, 0, 16, n4);
+	CorpseLoot::addToLootSet(*e, 0, 13, n5);
+	if ((e->info & Entity::kInfoLinked) != 0) db.unlinkEntity(e);
+	e->info &= 0xFFFF;
+	e->info |= Entity::kInfoCorpse | Entity::kInfoDirty | Entity::kInfoActive;   // 0x1420000
+	const int sprite = e->getSprite();
+	map_->mapSpriteInfo[sprite] = tile | 0xD00;
+	placeDropSprite(*map_, lerps, sprite, x, y, db.lastDropEntIndex);
+	map_->mapSprites[sprite + kRowMode * map_->numSprites] = 0;
+	db.linkEntity(e, x >> 6, y >> 6);
+	return e;
+}
+
+void Game::attemptToDiscardFamiliar(int w) {
+	Player& p = *player_;                                              // src/Player.cpp:2427-2437
+	if ((map_->mapFlags[(p.viewY >> 6) * 32 + (p.viewX >> 6)] & 0x20) != 0) {
+		if (hud_ != nullptr && loc_ != nullptr) hud_->addMessage(loc_->get(kTextMain, 221), 0xAA000000, 3);
+		return;
+	}
+	// Keep the bot when no drop entity could take it (ring disabled, rewrite-only case).
+	if (spawnDropItem(p.viewX, p.viewY, Combat::getWeaponTileNum(w), Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON, w,
+		p.ammo[Enums::AMMO_SENTRY_BOT], false) == nullptr) return;
+	p.give(Enums::ITEM_CLASS_WEAPON, w, -1);
 }
 
 // ---- Phase 5: script-facing services ----

@@ -54,6 +54,14 @@ struct HudModel {
 	// (src/Hud.cpp:76, src/Hud.cpp:1343-1345).
 	const Text* softCenter = nullptr;
 	const Text* softRight = nullptr;
+	// What a release on the right soft key raises: BOT_DISCARD while a bot
+	// weapon is held outside the automap, else AUTOMAP (src/Hud.cpp:1312-1322).
+	UiAction softRightAction = UiAction::Automap;
+	// Familiar bottom bar (src/Hud.cpp:644-681): replaces weapon, shield,
+	// keys, health and portrait with the bot face and a segmented health bar.
+	bool familiar = false;
+	int botHealth = 0;      // player->ammo[7]
+	bool botRed = false;    // familiarType 3/4: the red face row
 	// Hit boxes are caller constants, all three registered by the original in
 	// Hud::startup (src/Hud.cpp:67-76).
 	UiRect softLeftHit;

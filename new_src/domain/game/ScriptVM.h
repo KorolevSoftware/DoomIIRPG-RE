@@ -56,6 +56,9 @@ public:
 	};
 
 	short vars[kNumStateVars] = { 0 };   // scriptStateVars (src/Game.h:129)
+	// src/Game.cpp:3461-3471 (refreshed slots only); public for Familiar
+	// (src/Player.cpp:2094, :2099, :2171).
+	void updateScriptVars();
 
 	void init(const Env& env);
 
@@ -116,7 +119,6 @@ private:
 	int attemptResume(ScriptThread* t, int64_t gameTime); // src/ScriptThread.cpp:2063-2072
 	int evWait(ScriptThread* t, int ms);               // src/ScriptThread.cpp:120-137
 	bool evReturn(ScriptThread* t);                    // src/ScriptThread.cpp:139-153
-	void updateScriptVars();                           // src/Game.cpp:3461-3471 (refreshed slots only)
 
 	// EV_GIVELOOT payload: reads the entry list off the thread, grants every
 	// entry immediately and shows the composed list as a style-4 dialog

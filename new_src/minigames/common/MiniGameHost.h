@@ -16,6 +16,7 @@
 
 namespace newcore {
 
+class DialogSystem;
 class EntityDefs;
 class Game;
 class Hud;
@@ -47,6 +48,7 @@ public:
 		const EntityDefs* defs = nullptr;
 		const int64_t* upTimeMs = nullptr;  // legacy app->time
 		Hud* hud = nullptr;                 // evaluateResults message
+		DialogSystem* dialogs = nullptr;    // sentry award help 16
 		std::function<void(int)> openMenu;  // GameContext: nextMenuId_ = id; setState(Menu)
 	};
 

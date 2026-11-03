@@ -241,10 +241,37 @@ UiResult drawDialog(Ui& ui, const DialogViewModel& m) {
 		ty += kLineH;
 	}
 
-	// var4 Yes/No widgets (flags&2 vertical pair, flags&4/&1 bottom pair,
-	// src/DialogSystem.cpp:355-452): still deferred — the map00 intro chain
-	// uses only flagless styles 1/8. var4 cursor logic is live in
-	// DialogSystem::handleInput.
+	// flags&4 / flags&1 bottom Yes/No pair (src/DialogSystem.cpp:416-450):
+	// two 96x18 buttons in the style fill (lighter while held) with a white
+	// frame, centred labels, the '\x8A' cursor left of the selected label.
+	// Tapping one selects it and confirms (dialog buttons 3/4). The flags&2
+	// vertical pair (:357-406) is still deferred.
+	if (m.showChoice && m.choiceLeft != nullptr && m.choiceRight != nullptr) {
+		const int by = ry + kLineH * m.viewLines - 14;          // n21 (:417)
+		const int bh = kFontHeight + 2;                          // v75 (:419)
+		const uint32_t lit = (fill + 0x333333u) | 0xFF000000u;   // highlighted (:425, :439)
+		struct Choice { UiId id; int x; const Text* label; int cursorX; int anchor; };
+		const Choice pair[2] = {
+			{ UiId::DialogChoiceLeft, 96, m.choiceLeft, 128, Graphics2D::kAnchorNone },
+			{ UiId::DialogChoiceRight, 288, m.choiceRight, 320, Graphics2D::kAnchorLeft },
+		};
+		for (int k = 0; k < 2; ++k) {
+			const Choice& c = pair[k];
+			// Touch area (x, n21 - 40, 96, FONT_HEIGHT + 42) (:430, :444).
+			if (ui.buttonRect(c.id, UiRect{ c.x, by - 40, 96, kFontHeight + 42 })) {
+				res.action = UiAction::DialogChoice;
+				res.index = k;
+			}
+			ui.panel(UiRect{ c.x, by, 96, bh }, ui.isActive(c.id) ? lit : fill);
+			ui.frame(UiRect{ c.x, by, 96, bh }, kColorWhite);
+			ui.label(*c.label, c.x + 48, by + (bh >> 1) + 2,
+				Graphics2D::kAnchorHCenter | Graphics2D::kAnchorVCenter);
+			if (m.choiceSel == k) {                              // drawCursor (:433-435, :447-449)
+				ui.glyph('\x8A', c.cursorX - (c.label->getStringWidth() >> 1) + m.cursorOsc,
+					by + (kFontHeight >> 1) - 5, c.anchor);
+			}
+		}
+	}
 
 	// Scrollbar + page icons (454-489).
 	if (!m.showScrollBar) {

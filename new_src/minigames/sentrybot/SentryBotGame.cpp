@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "domain/game/DialogSystem.h"
+#include "domain/game/Game.h"
 #include "domain/game/ItemPickup.h"
 #include "domain/game/Player.h"
 #include "io/Localization.h"
@@ -248,12 +250,15 @@ void SentryBotGame::handleTouch(int buttonId) {
 
 void SentryBotGame::award() {
 	const int w = botType_ == 0 ? (botCursor_ == 0 ? 3 : 4) : (botCursor_ == 0 ? 5 : 6);   // :276-282
-	Player& p = *host_->env().player;
-	if (p.hasASentryBot()) {
-		// shortcut: attemptToDiscardFamiliar drops the old bot as a world item and showHelp(16)
-		// explains it (src/Player.cpp:2427-2437); give() below just evicts the bit. Upgrade with
-		// the familiar system.
-		std::fprintf(stderr, "[familiar] discard of owned bot deferred (give evicts it), help 16 skipped\n");
+	const MiniGameHost::Env& e = host_->env();
+	Player& p = *e.player;
+	for (int k = 3; k <= 6; ++k) {                       // awardSentryBot (src/SentryBotGame.cpp:784-802)
+		if ((p.weapons & (1 << k)) == 0) continue;
+		e.game->attemptToDiscardFamiliar(k);
+		// showHelp(16, true); state is MiniGame, so the help is not dequeued here.
+		p.helpBitmask |= 1 << 16;
+		e.dialogs->enqueueHelpDialog(kTextMain, 16, -1);
+		break;
 	}
 	p.give(1, w, 1);   // ammo[7] = 100, bits 0x78 cleared, bit w set, selectWeapon(w)
 	std::fprintf(stderr, "[sentrybot] awarded bot weapon %d\n", w);

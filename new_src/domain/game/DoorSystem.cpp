@@ -5,6 +5,7 @@
 
 #include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
+#include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/game/TraceSystem.h"
 #include "domain/world/MapBits.h"
@@ -23,7 +24,8 @@ void DoorSystem::init(const Env& env) {
 // Unlinked (open) doors are not traceable — legacy traces walk entityDb,
 // which holds only linked entities. Locked doors are refused without
 // animating (src/PlayingInputHandler.cpp:447-449).
-DoorSystem::DoorUseResult DoorSystem::useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY) {
+DoorSystem::DoorUseResult DoorSystem::useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY,
+                                                    bool asFamiliar) {
 	(void)map;
 	const int tiles[2][2] = {
 		{ px >> 6, py >> 6 },
@@ -34,6 +36,7 @@ DoorSystem::DoorUseResult DoorSystem::useDoorFacing(const MapData& map, int px, 
 		for (Entity* e = env_.db->findMapEntity(t[0], t[1]); e && walk.ok(e); e = e->nextOnTile) {
 			if (!e->isDoor()) continue;
 			if (!(e->info & Entity::kInfoLinked)) continue;
+			if (asFamiliar) return DoorUseResult::BotRefused;
 			if (e->def->eSubType == Enums::DOOR_LOCKED) return DoorUseResult::Locked;
 			performDoorEvent(0, e, 1);             // player use never snaps (src/PlayingInputHandler.cpp:451)
 			return DoorUseResult::Opened;
@@ -186,6 +189,7 @@ void DoorSystem::unlinkDoor(Entity* door) {
 // the player or a monster on the door tile, or on either neighbor tile along
 // the passage axis, blocks auto-close.
 bool DoorSystem::canCloseDoor(Entity* door) {
+	if (env_.player != nullptr && env_.player->isFamiliar) return false;   // :1218-1220
 	if (!door || !env_.map) return false;
 	int link = door->linkIndex;
 	int tx = link % 32, ty = link / 32;

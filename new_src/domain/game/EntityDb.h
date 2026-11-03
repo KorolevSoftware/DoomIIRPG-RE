@@ -85,6 +85,21 @@ public:
 	const std::vector<Entity>& entities() const { return entities_; }
 	std::vector<Entity>& entities() { return entities_; }
 
+	// ---- Drop-entity ring (ADR 0042): 16 entities appended after the map
+	// entities, entity k bound to drop sprite k (src/Game.cpp:487-495). ----
+	static constexpr int kMaxDropEntities = 16;
+	int firstDropIndex = kEntities;   // kEntities = no drop ring (before loadEntities, or not all 16 fit)
+	int dropIndex = 0;
+	int lastDropEntIndex = 0;
+	// src/Game.cpp:2612-2622; when all 16 are linked the oldest is recycled.
+	// nullptr when the ring is disabled (firstDropIndex == kEntities).
+	Entity* getFreeDropEnt();
+	// Entity::isDroppedEntity (src/Entity.cpp:1406-1410).
+	bool isDropped(const Entity* e) const {
+		const int index = static_cast<int>(e - entities_.data());
+		return index >= firstDropIndex && index < firstDropIndex + kMaxDropEntities;
+	}
+
 private:
 	Env env_;
 

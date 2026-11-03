@@ -65,6 +65,7 @@ public:
 		std::function<void()> backToMain;    // canvas->backToMain stand-in: quit (ADR 0037 §6)
 		std::function<void()> continueLevelStats;   // MENU_LEVEL_STATS select: loadMap(next, true, false)
 		VendingMachine* vending = nullptr;   // vending menus 83-85: prices, exits
+		std::function<void()> returnToPlayer;   // ACTION_RETURN_TO_PLAYER: familiarReturnsToPlayer(false)
 	};
 	void init(const Env& env);
 

@@ -7,6 +7,7 @@ namespace newcore {
 
 class EntityDb;
 class MapData;
+class Player;
 class ScriptVM;
 class TraceSystem;
 struct ScriptThread;
@@ -26,14 +27,16 @@ public:
 		MapData* map = nullptr;
 		ScriptVM* vm = nullptr;
 		const TraceSystem* trace = nullptr;
+		const Player* player = nullptr;      // isFamiliar gate of canCloseDoor
 	};
 
 	// Wiring + per-level reset (called from Game::loadEntities).
 	void init(const Env& env);
 
 	// Plain-door use outcome (legacy hud msg44 / open+advanceTurn split,
-	// src/PlayingInputHandler.cpp:445-453).
-	enum class DoorUseResult { None, Opened, Locked };
+	// src/PlayingInputHandler.cpp:445-453). BotRefused = the familiar faced a
+	// door, refused before the locked test (:446, :455-458).
+	enum class DoorUseResult { None, Opened, Locked, BotRefused };
 
 	// Legacy interact: trace along the view ray, first ET_DOOR hit within
 	// Chebyshev distance² <= tileDistSq(1) = 4096 (1 tile)
@@ -43,7 +46,7 @@ public:
 	// facing direction (both satisfy dist² <= 4096 by construction); own
 	// tile wins (ray fraction ~0). Returns the outcome; locked doors are
 	// refused without animating.
-	DoorUseResult useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY);
+	DoorUseResult useDoorFacing(const MapData& map, int px, int py, int stepX, int stepY, bool asFamiliar);
 
 	// Open/close a door entity (n=0 open, n=1 close). n2 is the legacy snap
 	// selector (src/Game.cpp:1153-1155): 0 = finish the animation instantly,

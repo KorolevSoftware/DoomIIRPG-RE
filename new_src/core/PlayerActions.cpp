@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "core/Familiar.h"
 #include "core/TargetPractice.h"
 #include "core/ZoomController.h"
 #include "domain/game/Automap.h"
@@ -115,10 +116,70 @@ int PlayerActions::flagForFacingDir(int i) const {
 	return 0;
 }
 
+bool PlayerActions::attemptMove(int tx, int ty) {
+	Player& p = *env_.player;
+	// Familiar: no-bot tiles refuse the step, except the body's own tile
+	// (src/MovementController.cpp:322-325).
+	if (p.isFamiliar && (env_.map->mapFlags[(ty >> 6) * 32 + (tx >> 6)] & 0x10) != 0 &&
+	    (tx != p.saveX || ty != p.saveY)) {
+		if (env_.hud != nullptr && env_.loc != nullptr)
+			env_.hud->addMessage(env_.loc->get(kTextMain, 222), 0xAA000000, 3);
+		return false;
+	}
+	// Leave event BEFORE collision/trace; abortMove cancels the move
+	// (src/MovementController.cpp:326-331).
+	env_.game->eventFlagsForMovement(p.viewX, p.viewY, tx, ty);
+	env_.game->abortMove = false;
+	env_.vm->executeTile(p.viewX >> 6, p.viewY >> 6, env_.game->eventFlags_[0], true);
+	if (env_.game->abortMove) return false;
+	TraceSystem& trace = env_.game->trace;
+	TraceHit h = trace.trace(p.viewX, p.viewY, tx, ty,
+		env_.game->db.playerEntity(), Contents::PLAYERSOLID, 16);
+	// DEVIATION (blue-door block bug): an ET_NPC whose circle contains
+	// the trace START (startsInside) is the scripted-greeter overlap state;
+	// legacy dissolves it through the per-turn NPC AI that ADR 0005 has
+	// not ported yet, so until then a start-inside NPC hit never blocks.
+	// Re-trace past that entity so real blockers BEHIND it (a shut door)
+	// still apply.
+	for (int pass = 0; h.blocks() && pass < 4 &&
+	     h.startsInside() && h.isEntity() &&
+	     h.eType == Enums::ET_NPC; ++pass) {
+		std::fprintf(stderr, "[dbg] start-inside NPC spr=%d stepped past\n",
+			h.entity->getSprite()); // TEMP [dbg]
+		h = trace.trace(p.viewX, p.viewY, tx, ty,
+			h.entity, Contents::PLAYERSOLID, 16);
+	}
+	// The familiar walking onto its body returns into it (:333-336).
+	const bool intoBody = p.isFamiliar && tx == p.saveX && ty == p.saveY && h.isEntity() &&
+		p.playerEntityCopyIndex >= 0 && h.entity == &env_.game->db.entities()[p.playerEntityCopyIndex];
+	if (!h.blocks() || intoBody) {
+		if (intoBody) env_.familiar->returnsToPlayer(true);
+		p.attemptMove(tx, ty);
+		p.setDestHeight(env_.map->heightAt(tx, ty));
+		p.setZStep(p.destZ - p.viewZ);
+		env_.game->relinkPlayer(p);                    // src/MovementController.cpp:348
+		return true;
+	}
+	// TEMP [dbg] move-block audit (remove after blue-door bug fixed)
+	std::fprintf(stderr,
+		"[dbg] moveBlocked to %d,%d by spr=%d type=%d linked=%d frac=%d\n",
+		tx >> 6, ty >> 6,
+		h.entity ? (h.entity->getSprite()) : -1,
+		h.isEntity() ? h.eType : -1,       // world hit logged as -1, as before
+		(h.entity && (h.entity->info & Entity::kInfoLinked)) != 0 ? 1 : 0,
+		h.frac);
+	// A blocked step in the automap still costs a turn (src/MovementController.cpp:351-353).
+	if (env_.host->state() == StateId::Automap) env_.game->advanceTurn();
+	return false;
+}
+
 // ---- playing action handlers ----
 
 void PlayerActions::handleAction(Action a) {
 	Player& p = *env_.player;
+	// The bot has no inventory screens (src/InputEventController.cpp:79-91;
+	// the PDA has no rewrite key).
+	if (p.isFamiliar && (a == Action::Items || a == Action::ItemsDrinks)) return;
 	// ST_COMBAT handler (src/InputEventController.cpp:364-372): during a
 	// monster attack only turning acts, startRotation runs for every key; the
 	// player's own attack swallows all input. No idle gate here (legacy has
@@ -162,53 +223,11 @@ void PlayerActions::handleAction(Action a) {
 		p.startRotation();
 		break;
 	case Action::Forward:
-	case Action::Back: {
-		int stepX = p.viewStepX, stepY = p.viewStepY;
-		if (a == Action::Back) { stepX = -stepX; stepY = -stepY; }
-		int tx = p.viewX + stepX;
-		int ty = p.viewY + stepY;
-		// Leave event BEFORE collision/trace; abortMove cancels the move
-		// (src/MovementController.cpp:326-331).
-		env_.game->eventFlagsForMovement(p.viewX, p.viewY, tx, ty);
-		env_.game->abortMove = false;
-		env_.vm->executeTile(p.viewX >> 6, p.viewY >> 6, env_.game->eventFlags_[0], true);
-		if (env_.game->abortMove) break;
-		TraceSystem& trace = env_.game->trace;
-		TraceHit h = trace.trace(p.viewX, p.viewY, tx, ty,
-			env_.game->db.playerEntity(), Contents::PLAYERSOLID, 16);
-		// DEVIATION (blue-door block bug): an ET_NPC whose circle contains
-		// the trace START (startsInside) is the scripted-greeter overlap state;
-		// legacy dissolves it through the per-turn NPC AI that ADR 0005 has
-		// not ported yet, so until then a start-inside NPC hit never blocks.
-		// Re-trace past that entity so real blockers BEHIND it (a shut door)
-		// still apply.
-		for (int pass = 0; h.blocks() && pass < 4 &&
-		     h.startsInside() && h.isEntity() &&
-		     h.eType == Enums::ET_NPC; ++pass) {
-			std::fprintf(stderr, "[dbg] start-inside NPC spr=%d stepped past\n",
-				h.entity->getSprite()); // TEMP [dbg]
-			h = trace.trace(p.viewX, p.viewY, tx, ty,
-				h.entity, Contents::PLAYERSOLID, 16);
-		}
-		if (!h.blocks()) {
-			p.attemptMove(tx, ty);
-			p.setDestHeight(env_.map->heightAt(tx, ty));
-			p.setZStep(p.destZ - p.viewZ);
-			env_.game->relinkPlayer(p);                    // src/MovementController.cpp:348
-		} else {
-			// TEMP [dbg] move-block audit (remove after blue-door bug fixed)
-			std::fprintf(stderr,
-				"[dbg] moveBlocked to %d,%d by spr=%d type=%d linked=%d frac=%d\n",
-				tx >> 6, ty >> 6,
-				h.entity ? (h.entity->getSprite()) : -1,
-				h.isEntity() ? h.eType : -1,       // world hit logged as -1, as before
-				(h.entity && (h.entity->info & Entity::kInfoLinked)) != 0 ? 1 : 0,
-				h.frac);
-			// A blocked step in the automap still costs a turn (src/MovementController.cpp:351-353).
-			if (env_.host->state() == StateId::Automap) env_.game->advanceTurn();
-		}
+		attemptMove(p.viewX + p.viewStepX, p.viewY + p.viewStepY);
 		break;
-	}
+	case Action::Back:
+		attemptMove(p.viewX - p.viewStepX, p.viewY - p.viewStepY);
+		break;
 	case Action::Use: {
 		// Loot source naming, the very first thing the legacy ACTION_FIRE
 		// branch does (src/PlayingInputHandler.cpp:189-195): a faced
@@ -276,8 +295,12 @@ void PlayerActions::handleAction(Action a) {
 			if (!env_.game->skipAdvanceTurn) env_.game->advanceTurn();
 		} else {
 			DoorSystem::DoorUseResult dr = env_.game->doors.useDoorFacing(
-				*env_.map, p.viewX, p.viewY, p.viewStepX, p.viewStepY);
-			if (dr == DoorSystem::DoorUseResult::Opened) {
+				*env_.map, p.viewX, p.viewY, p.viewStepX, p.viewStepY, p.isFamiliar);
+			if (dr == DoorSystem::DoorUseResult::BotRefused) {
+				std::fprintf(stderr, "[sound] 1111\n");    // :455-458, no turn
+				if (env_.loc != nullptr) env_.hud->addMessage(env_.loc->get(kTextMain, 193), 0xAA000000, 2);
+				consumed = true;
+			} else if (dr == DoorSystem::DoorUseResult::Opened) {
 				env_.game->advanceTurn();                  // opened doors consume the turn (:451-452)
 				consumed = true;
 			} else if (dr == DoorSystem::DoorUseResult::Locked) {
@@ -326,20 +349,24 @@ void PlayerActions::handleAction(Action a) {
 				// Within 1 tile of a wall: lower the weapon, jolt the view 2
 				// units toward the wall, NO turn consumed (:467-487); while
 				// zoomed the press is swallowed (:468-470). Hero is forced to
-				// characterChoice 1 -> no_use2 (:472-480).
+				// characterChoice 1 -> no_use2; the bot bumps with 1111 (:472-480).
 				if (zoomed) break;
 				Combat& c = env_.game->combat;
-				std::fprintf(stderr, "[sound] 1073\n");
+				std::fprintf(stderr, "[sound] %d\n", p.isFamiliar ? 1111 : 1073);
 				c.shiftWeapon(true);                                   // :482
 				c.pushedWall = true;                                   // :483-484
 				c.pushedTime = (int)*c.env().gameTime + 500;
 				env_.hud->startRockView(*c.env().upTimeMs, 1000,       // :485
 					p.viewX + (p.viewStepX >> 6) * 2, p.viewY + (p.viewStepY >> 6) * 2, p.viewZ);
 			} else {
-				// Bot weapons do not attack: legacy attemptToDeploySentryBot (:493-495), whose
-				// familiar system is not ported (ADR 0040).
-				if (((1 << weapon2) & Enums::WP_SENTRY_BOT_MASK) != 0) {
-					std::fprintf(stderr, "[familiar] deploy deferred\n");
+				// An exploding bot asks to self-destruct, a held bot deploys
+				// (:489-495); a shooting bot falls through to the normal shot.
+				if (p.isFamiliar && (p.familiarType == 2 || p.familiarType == 4)) {
+					env_.familiar->startSelfDestructDialog();
+					break;
+				}
+				if (!p.isFamiliar && ((1 << weapon2) & Enums::WP_SENTRY_BOT_MASK) != 0) {
+					env_.familiar->attemptToDeploy();
 					break;
 				}
 				// Zoom entry (mask 512 -> initZoom) consumes the input (:504-507).
@@ -396,6 +423,14 @@ void PlayerActions::handleAction(Action a) {
 			env_.hud->showCenterMessage(pass, 0xAA000000, 3500);
 		}
 		env_.game->advanceTurn();
+		break;
+	case Action::BotDiscard:   // src/PlayingInputHandler.cpp:77-84
+		if (env_.host->state() == StateId::Automap) break;
+		if (p.isFamiliar) {
+			env_.familiar->returnsToPlayer(false);
+		} else if (p.ce.weapon >= 0 && ((1 << p.ce.weapon) & Enums::WP_SENTRY_BOT_MASK) != 0) {
+			env_.game->attemptToDiscardFamiliar(p.ce.weapon);
+		}
 		break;
 	case Action::Automap:   // src/PlayingInputHandler.cpp:86-98
 		if (inTP) break;

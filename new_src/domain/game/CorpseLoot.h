@@ -32,6 +32,9 @@ public:
 	// Port of Entity::populateDefaultLootSet (src/Entity.cpp:1997-2048),
 	// called at spawn time for every monster/corpse entity.
 	static void populateDefaultLootSet(Entity& e);
+	// Entity::addToLootSet (src/Entity.cpp:2298-2307): first empty slot gets
+	// cls<<12 | idx<<6 | count; count is not masked, as legacy.
+	static void addToLootSet(Entity& e, int cls, int idx, int count);
 
 	// Faced lootable corpse: legacy ACTION_FIRE traces forward and selects an
 	// ET_CORPSE candidate exactly one tile away (dist == tileDistSq(1))

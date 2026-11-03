@@ -21,6 +21,7 @@ enum class StateId : int {
 	TravelMap   = 21, // legacy ST_TRAVELMAP (src/Canvas.h:88)
 	Looting     = 23, // legacy ST_LOOTING (src/Canvas.h:90; loot-crouch camera,
 	                  // docs/research/2026-08-25-camera-pitch-loot.md)
+	BotDying    = 25, // legacy ST_BOT_DYING (src/Canvas.h:92; familiar death, ADR 0041 §3)
 };
 
 // Discrete input actions (legacy getKeyAction subset,
@@ -33,6 +34,7 @@ enum class Action : int {
 	Items,   // ACTION_ITEMS (AVK_ITEMS_INFO, src/Input.cpp:92)
 	ItemsDrinks,   // ACTION_ITEMS_DRINKS (AVK_DRINKS, src/Input.cpp:93)
 	NextWeapon, PrevWeapon,   // ACTION_NEXTWEAPON / ACTION_PREVWEAPON (src/Enums.h:1002-1003)
+	BotDiscard,   // ACTION_BOT_DISCARD (src/Enums.h:1010, AVK_BOTDISCARD src/Input.h:149)
 	// No key produces this one: the in-game menu's right soft key is touch-only
 	// in the original (src/MenuSystem.cpp:4787-4789 calls returnToGame directly),
 	// so it exists purely so the UI intent travels through the one action queue
@@ -55,6 +57,8 @@ enum class Action : int {
 	DebugSentryBot, DebugSentryBotRed,
 	// DEBUG (removable, map change): N / Shift+N
 	DebugNextMap, DebugPrevMap,
+	// DEBUG (removable, familiar): F5 gives the next bot weapon 3, 4, 5, 6.
+	DebugGiveBot,
 };
 
 // The only thing a module may know about the state machine (spec

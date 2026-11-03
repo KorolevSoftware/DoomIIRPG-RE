@@ -70,6 +70,7 @@ void GameContext::init(const Init& sys) {
 	menuEnv.backToMain = [this] { quitRequested_ = true; };
 	menuEnv.continueLevelStats = [this] { loading_.loadMap(loading_.nextMap(), true, false); };
 	menuEnv.vending = &minigames_.vending();
+	menuEnv.returnToPlayer = [this] { familiar_.returnsToPlayer(false); };
 	menu_.init(menuEnv);
 	Targeting::Env tgtEnv;
 	tgtEnv.game = sys_.game;
@@ -105,6 +106,7 @@ void GameContext::init(const Init& sys) {
 	actEnv.host = this;
 	actEnv.zoom = &zoom_;
 	actEnv.practice = &practice_;
+	actEnv.familiar = &familiar_;
 	actEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
 	actions_.init(actEnv);
 	ZoomController::Env zoomEnv;
@@ -134,6 +136,20 @@ void GameContext::init(const Init& sys) {
 	tpEnv.cinematic = &cinematic_;
 	tpEnv.upTimeMs = &upTimeMs;
 	practice_.init(tpEnv);
+	Familiar::Env famEnv;
+	famEnv.game = sys_.game;
+	famEnv.player = sys_.player;
+	famEnv.vm = sys_.vm;
+	famEnv.map = sys_.map;
+	famEnv.hud = sys_.hud;
+	famEnv.loc = sys_.loc;
+	famEnv.defs = sys_.defs;
+	famEnv.dialogs = sys_.dialogs;
+	famEnv.actions = &actions_;
+	famEnv.host = this;
+	famEnv.cinematic = &cinematic_;
+	famEnv.upTimeMs = &upTimeMs;
+	familiar_.init(famEnv);
 	MiniGameHost::Env mgEnv;
 	mgEnv.vm = sys_.vm;
 	mgEnv.host = this;
@@ -144,6 +160,7 @@ void GameContext::init(const Init& sys) {
 	mgEnv.defs = sys_.defs;
 	mgEnv.upTimeMs = &upTimeMs;
 	mgEnv.hud = sys_.hud;
+	mgEnv.dialogs = sys_.dialogs;
 	mgEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
 	minigames_.init(mgEnv);
 	LoadingManager::Env loadEnv;
@@ -243,6 +260,9 @@ void GameContext::enterState_(StateId s) {
 		deathTimeMs_ = upTimeMs;
 		sys_.dialogs->clearHelpQueue();
 		std::fprintf(stderr, "[player] died\n");
+		break;
+	case StateId::BotDying:
+		familiar_.onEnterBotDying();           // src/Canvas.cpp:1130-1141
 		break;
 	case StateId::Looting:
 		// The session itself (pose latch + poolLoot) lives in LootSession;
@@ -365,6 +385,14 @@ void GameContext::tick() {
 			minigames_.start(MiniGameHost::kSentryBot, a == Action::DebugSentryBotRed ? 1 : 0, -1, -1, nullptr);
 			continue;
 		}
+		if (a == Action::DebugGiveBot) {
+			// DEBUG (removable, familiar): F5 = the next bot weapon of 3, 4, 5, 6.
+			debugBotWeapon_ = debugBotWeapon_ == 6 ? 3 : debugBotWeapon_ + 1;
+			sys_.player->give(Enums::ITEM_CLASS_WEAPON, debugBotWeapon_, 1);
+			std::fprintf(stderr, "[debug] bot weapon %d, ammo[7]=%d\n", debugBotWeapon_,
+				sys_.player->ammo[Enums::AMMO_SENTRY_BOT]);
+			continue;
+		}
 		if (a == Action::DebugNextMap || a == Action::DebugPrevMap) {
 			// DEBUG (removable, map change): N = next mapID, Shift+N = previous; header spawn.
 			const int id = sys_.game->loadMapID;
@@ -440,7 +468,8 @@ void GameContext::tick() {
 		// branch, src/Canvas.cpp:920-926); view/input updates do not.
 		break;
 	case StateId::Dying:   tickDying(); break;
-	case StateId::Saving:                              // nothing else ticks (src/Canvas.cpp:853-903)
+	case StateId::BotDying: familiar_.tickDying(); break;
+	case StateId::Saving:                             // nothing else ticks (src/Canvas.cpp:853-903)
 		if (framesRendered_ != frameAtStateEntry_) loading_.tickSaving();   // box presented first
 		break;
 	case StateId::Menu:
@@ -462,6 +491,9 @@ void GameContext::tick() {
 	// Screen shake randomize/expire, every state incl. Playing (legacy
 	// updateView block, src/MovementController.cpp:381-388).
 	sys_.hud->tickShake(upTimeMs);
+
+	// Familiar monster-at-body return, at most one tick late (ADR 0041 §4).
+	familiar_.consumeMonsterLatch(state_);
 
 	stateChanged = false;                                  // src/Canvas.cpp:987
 }
@@ -576,6 +608,21 @@ void GameContext::restartLevel() {
 
 // ---- Playing (fixed order, spec §6) ----
 
+// Player death (ce health) or the familiar's death (ammo[7]), src/GameStateRunner.cpp:170-177.
+bool GameContext::checkDeath_() {
+	Player& p = *sys_.player;
+	if (p.ce.getStat(Enums::STAT_HEALTH) <= 0) {
+		setState(StateId::Dying);
+		return true;
+	}
+	if (p.isFamiliar && p.ammo[Enums::AMMO_SENTRY_BOT] <= 0) {
+		p.ammo[Enums::AMMO_SENTRY_BOT] = 0;
+		familiar_.dying(false);
+		return true;
+	}
+	return false;
+}
+
 void GameContext::tickPlaying() {
 	// 1. [held-button auto-repeat — n/a, keyboard discrete]
 	// 2. deferred turn consumer (dialog-close analog, src/Canvas.cpp:812-815).
@@ -591,11 +638,8 @@ void GameContext::tickPlaying() {
 		c.shiftWeapon(false);
 		c.pushedWall = false;
 	}
-	// 3. death check (src/GameStateRunner.cpp:170-173).
-	if (sys_.player->getHealth() <= 0) {
-		setState(StateId::Dying);
-		return;
-	}
+	// 3. death check (src/GameStateRunner.cpp:170-177).
+	if (checkDeath_()) return;
 	// 4. combat seq / monster phase at the legacy position (:181-183). While
 	//    an attack seq runs (ST_COMBAT analog, ADR 0028) it ticks; a finished
 	//    player attack consumes the turn, a finished monster attack hands
@@ -628,11 +672,9 @@ void GameContext::tickPlaying() {
 		sys_.game->monsters.updateMonsters();
 	}
 	// Legacy enters ST_DYING inside Player::pain (src/Player.cpp:706-708 ->
-	// :711-733); step 3 above stays as the second line of defence.
-	if (sys_.player->getHealth() <= 0) {
-		setState(StateId::Dying);
-		return;
-	}
+	// :711-733) and the bot's death at the end of a monster attack
+	// (src/Combat.cpp:1035-1036); step 3 above stays as the second line of defence.
+	if (checkDeath_()) return;
 	// 4.5 The facing probe no longer runs here: legacy recomputes it from the
 	//     HUD top bar on every rendered frame (src/Hud.cpp:735-742), see
 	//     GameContext::render.
@@ -846,6 +888,10 @@ constexpr UiRect kSoftRightHit{ 438, 268, 32, 32 };
 // src/Hud.cpp:1343-1345 for the action). The centre "Wait" literal has no touch
 // area at all in the original (src/Hud.cpp:712-720 only draws it).
 constexpr UiRect kPortraitHit{ 219, 264, 42, 36 };
+// While familiar a press strictly inside the 194x38 HUD_sentry_active plate at
+// (143, 262) is button 3 (src/Hud.cpp:1245-1248). DEVIATION: legacy also needs
+// the press to start on some HUD button; the gaps between buttons count here.
+constexpr UiRect kBotHit{ 144, 263, 193, 37 };
 
 void setSoftKeyText(Text& out, const std::string& s) {
 	// composeText + dehyphenate, as the original does for every soft-key label
@@ -886,15 +932,28 @@ void GameContext::buildHudModel(HudModel& m, bool showBottomBar, bool interactiv
 	// The portrait's touch area does not depend on the soft-key labels, unlike
 	// the two side rects below; the view gates it on m.interactive.
 	m.portraitHit = kPortraitHit;
+	m.familiar = p.isFamiliar;
+	if (m.familiar) {
+		m.botHealth = p.ammo[Enums::AMMO_SENTRY_BOT];
+		m.botRed = p.familiarType == 3 || p.familiarType == 4;
+		m.portraitHit = kBotHit;
+	}
 
-	// Soft keys: gameplay defaults only. The rewrite has no softKeyLeftID/
-	// RightID state machine, so the per-screen variants (Exit / Leave /
-	// Re-turn / Dis-card, docs/original-code/ui.md §6) are not modelled and the
-	// slots stay null outside the bottom-bar states — which is exactly the
-	// legacy "== -1" case the view already handles.
+	// Soft keys: the playing variants of drawPlayingSoftKeys
+	// (src/SoftKeyController.cpp:77-100); the rewrite has no softKeyLeftID/
+	// RightID state machine, so the slots stay null outside the bottom-bar
+	// states — which is exactly the legacy "== -1" case the view already
+	// handles. The automap variant lives in automapModel_.
 	if (showBottomBar && sys_.loc != nullptr) {
+		const bool botHeld = p.ce.weapon >= 0 && ((1 << p.ce.weapon) & Enums::WP_SENTRY_BOT_MASK) != 0;
+		int rightId = kSoftKeyMapId;
+		if (!sys_.game->zoom.isZoomedIn) {
+			if (p.isFamiliar) rightId = 216;      // "Return"
+			else if (botHeld) rightId = 220;      // "Discard"
+		}
+		m.softRightAction = botHeld && state_ != StateId::Automap ? UiAction::BotDiscard : UiAction::Automap;
 		setSoftKeyText(softLeftText_, sys_.loc->get(kTextMain, kSoftKeyMenuId));
-		setSoftKeyText(softRightText_, sys_.loc->get(kTextMain, kSoftKeyMapId));
+		setSoftKeyText(softRightText_, sys_.loc->get(kTextMain, rightId));
 		setSoftKeyText(softCenterText_, "Wait");   // hardcoded ASCII (src/Hud.cpp:715-721)
 		m.softLeft = &softLeftText_;
 		m.softRight = &softRightText_;
@@ -919,16 +978,27 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 	const Player& p = *sys_.player;
 	const int w = p.ce.weapon;                                 // (src/Combat.cpp:677)
 	if (w < 0 || p.weapons == 0) return;                       // (:706-708)
+	// A deployed bot shows the rifle (weapon 0 art and pose row) for the
+	// shooting types and nothing for the exploding ones (:695-700); m.weapon
+	// keeps ce.weapon for the +12 bot scrY bias applied before the swap.
+	if (p.isFamiliar && p.familiarType != 1 && p.familiarType != 3) return;
+	const int pw = p.isFamiliar ? 0 : w;
 
 	// wpinfo table 1: idleX,idleY,atkX,atkY,flashX,flashY signed bytes per
 	// weapon (src/Combat.h:53-59). Row missing => draw nothing, same as the
 	// former ((size_t)(w * 6 + 5) >= weaponInfo.size()) early return.
-	const WeaponPose* pose = sys_.tables->weaponPose(w);
+	const WeaponPose* pose = sys_.tables->weaponPose(pw);
 	if (pose == nullptr) return;
-	const int idleX = pose->idleX;
-	const int idleY = pose->idleY;
-	const int atkX  = pose->atkX;
-	const int atkY  = pose->atkY;
+	int idleX = pose->idleX;
+	int idleY = pose->idleY;
+	int atkX  = pose->atkX;
+	int atkY  = pose->atkY;
+	if (p.isFamiliar) {                                        // (:719-724)
+		atkX = 1 + (atkX - idleX);
+		atkY = 50 + (atkY - idleY);
+		idleX = 1;
+		idleY = 50;
+	}
 
 	// Attack pose: hold (atkX,atkY) until flashDone, then lerp back over
 	// animTime in 16.16 (src/Combat.cpp:735-767). b5 = "the player's own
@@ -942,7 +1012,7 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 		wpX = atkX;
 		wpY = atkY;
 		if (!c.flashDone) {
-			flash = ((1 << w) & 0x200) == 0;                   // :741 (weapon 9 excluded)
+			flash = ((1 << pw) & 0x200) == 0;                  // :741 (weapon 9 excluded)
 		} else {
 			// SHOTHOLD return lerp; chainsaw jitter branch (:752-761) omitted.
 			const int elapsed = (int)(gameTime - c.animStartTime);
@@ -971,10 +1041,11 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 
 	m.visible = true;
 	m.weapon = w;
-	m.weaponTile = Combat::getWeaponTileNum(w);
+	m.weaponTile = Combat::getWeaponTileNum(pw);
 	m.flashTile = Combat::getWeaponTileNum(0);                 // (:826-834)
-	if (w == 9) m.underlayTile = Combat::getWeaponTileNum(0);  // (:835-837)
-	if (w >= 3 && w <= 6) {                                    // weaponIsASentryBot (:797-813)
+	if (pw == 9) m.underlayTile = Combat::getWeaponTileNum(0); // (:835-837)
+	if (p.isFamiliar) m.extraY = -35;                          // (:790-791, GL path)
+	if (pw >= 3 && pw <= 6) {                                  // weaponIsASentryBot (:797-813)
 		m.botTile = (w == 3 || w == 4) ? 19 : 18;
 		const int t = (int)((upTimeMs + m.botTile * 1337) / 1024) & 0xF;   // app->time
 		m.botMirror = t == 0 || (t >= 4 && t <= 7) || (t >= 10 && t <= 12);  // flags ^= 0x20000
@@ -985,7 +1056,7 @@ void GameContext::buildViewWeaponModel(ViewWeaponModel& m) const {
 	m.lowerY = lowerY;
 	// The second legacy flash gate sat at the blit (:826); both are ANDed here
 	// so the view only reads a bool. Neither condition is dropped or merged.
-	m.muzzleFlash = flash && ((1 << w) & 0x181) != 0;
+	m.muzzleFlash = flash && ((1 << pw) & 0x181) != 0;
 	m.flashX = pose->flashX;
 	m.flashY = pose->flashY;
 	// Canvas shake; legacy negates sy first (sy = -|sy|, src/Combat.cpp:709),
@@ -1007,6 +1078,11 @@ void GameContext::applyUiAction(UiAction a, int index) {
 	case UiAction::Back:       queued = Action::BackKey; break;
 	case UiAction::PassTurn:   queued = Action::Passturn; break;
 	case UiAction::Activate:   queued = Action::Use; break;
+	case UiAction::BotDiscard: queued = Action::BotDiscard; break;
+	case UiAction::DialogChoice:
+		sys_.vm->vars[4] = static_cast<short>(index);
+		queued = Action::Use;
+		break;
 	// The scroll mapping is chosen so a wheel behaves exactly like the arrow
 	// keys already do in the loot list (new_src/core/LootSession.cpp:104-120).
 	case UiAction::ScrollUp:   queued = Action::Forward; break;
@@ -1105,7 +1181,9 @@ void GameContext::render(AppContext& app) {
 	const bool gameplayView = state_ == StateId::Playing ||
 	                          state_ == StateId::Looting || underDialog;
 	// No view weapon while zoomed (src/Canvas.cpp:1348).
-	if (cinePose == nullptr && !cinematic_.active() && gameplayView && !sys_.game->zoom.isZoomedIn) {
+	// ST_BOT_DYING keeps it too: drawWeapon only skips ST_DYING (src/Combat.cpp:706).
+	if (cinePose == nullptr && !cinematic_.active() && (gameplayView || state_ == StateId::BotDying) &&
+	    !sys_.game->zoom.isZoomedIn) {
 		ViewWeaponModel wp;
 		buildViewWeaponModel(wp);
 		// Legacy latches the finished lower/raise inside drawWeapon
@@ -1122,6 +1200,10 @@ void GameContext::render(AppContext& app) {
 	if (cinePose != nullptr && sys_.hud->cockpitOverlay()) {
 		sys_.hud->drawOverlay(g, 0, 42, 480);
 	}
+
+	// Familiar tint/scanlines/brighten, the end of the 3D pass before the fade
+	// (src/Canvas.cpp:1344-1353, src/Render.cpp:2642-2659).
+	if (sys_.player->isFamiliar) sys_.hud->drawFamiliarOverlay(g, upTimeMs, sys_.player->familiarType);
 
 	// Screen fade at the end of the legacy REPAINT_VIEW3D slot: over the world,
 	// view/cinematic weapon and cockpit overlay, under particles, HUD,
@@ -1165,8 +1247,8 @@ void GameContext::render(AppContext& app) {
 				upTimeMs - sys_.player->turnTime < 600);
 		}
 		// Repaint bit 0x1 (drawEffects) before 0x2 (drawTopBar), src/Hud.cpp:725-742.
-		sys_.hud->drawDamageEffects(g, upTimeMs, sys_.game->combat.totalDamage > 0);
-		sys_.hud->drawTopBar(g, *sys_.font, 480);
+		sys_.hud->drawDamageEffects(g, upTimeMs, sys_.game->combat.totalDamage > 0, sys_.player->isFamiliar);
+		sys_.hud->drawTopBar(g, *sys_.font, 480, sys_.player->isFamiliar);
 	}
 
 	// Bottom bar through the UI layer (spec §4.2): legacy repaint bit 0x4,
@@ -1182,9 +1264,18 @@ void GameContext::render(AppContext& app) {
 	// the two 52x64 corner buttons — is never reached in either state.
 	const bool hudInteractive = gameplayView && state_ != StateId::Dialog &&
 	                            state_ != StateId::Looting;
+	// ST_BOT_DYING paints only the bottom bar (hud->repaintFlags = 36,
+	// src/GameStateRunner.cpp:287) with cleared soft keys (src/Canvas.cpp:1133),
+	// over the sentry-bot panel; nothing is touchable.
+	const bool botDying = state_ == StateId::BotDying;
+	if (botDying) sys_.hud->drawBottomPanel(g, true);
 	if (ui != nullptr) {
 		HudModel hud;
-		buildHudModel(hud, gameplayView, hudInteractive);
+		buildHudModel(hud, gameplayView || botDying, hudInteractive);
+		if (botDying) {
+			hud.softLeft = hud.softCenter = hud.softRight = nullptr;
+			hud.softLeftHit = hud.softRightHit = UiRect{};
+		}
 		const UiResult r = drawHud(*ui, hud);
 		applyUiAction(r.action, r.index);
 	}
@@ -1203,7 +1294,8 @@ void GameContext::render(AppContext& app) {
 	// Messages overlay while cockpit/HUD stay hidden. Not while dying:
 	// hud->repaintFlags = 32 there (src/GameStateRunner.cpp:259), so Hud::draw
 	// paints nothing over the fade (src/Hud.cpp:723-819).
-	if (state_ != StateId::Dying) sys_.hud->drawMessages(g, *sys_.font);
+	// Same for ST_BOT_DYING (repaintFlags = 36, src/GameStateRunner.cpp:287).
+	if (state_ != StateId::Dying && !botDying) sys_.hud->drawMessages(g, *sys_.font);
 
 	// DEBUG (rewrite-only, not a port): player coordinate readout, B toggles
 	// it (GameLoop.cpp). view* is the interpolated actual position, so the

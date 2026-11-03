@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <iterator>
 #include <string>
+#include <utility>
 
 #include "domain/game/Combat.h"
 #include "domain/game/Entity.h"
@@ -123,11 +124,25 @@ void Player::reset() {
 	disabledWeapons = 0;
 	facingEntity = nullptr;
 	god = false;
+	// src/Player.cpp:501-526, before the journal give so it lands in the real
+	// inventory. weaponsCopy/ammoCopy/inventoryCopy and noFamiliarRemains are
+	// left alone, as legacy does.
+	isFamiliar = false;
+	familiarType = 0;
+	attemptingToSelfDestructFamiliar = false;
+	botReturnedDueToMonster = false;
+	unsetFamiliarOnceOutOfCinematic = false;
+	playerEntityCopyIndex = -1;
+	saveX = saveY = saveZ = saveAngle = savePitch = 0;
 	give(0, 18, 1); // journal
 	numbuffs = 0;                      // src/Player.cpp:535-544
 	for (auto& v : buffs) v = 0;
 	numStatusEffects = 0;
 	for (auto& v : statusEffects) v = 0;
+	numbuffsCopy = 0;                  // :545-555
+	for (auto& v : buffsCopy) v = 0;
+	numStatusEffectsCopy = 0;
+	for (auto& v : statusEffectsCopy) v = 0;
 	// src/Player.cpp:558-563, after the inventory clear so the credits stick.
 	// shortcut: the difficulty == 2 DEFENSE 0 override is skipped (Player has
 	// no Game access); add it when a difficulty other than 1 becomes selectable.
@@ -177,7 +192,7 @@ void Player::setStatsAccordingToCharacterChoice() {
 void Player::levelInit() {
 	moves = 0;
 	if (clock_) turnTime = *clock_;
-	if (getHealth() == 0) ce.setStat(Enums::STAT_HEALTH, 1);
+	if (ce.getStat(Enums::STAT_HEALTH) == 0) ce.setStat(Enums::STAT_HEALTH, 1);   // src/Player.cpp:102
 }
 
 int Player::modifyStat(int n, int n2) {
@@ -232,11 +247,11 @@ void Player::removeOneVendingMachineTry(int id) {
 	}
 }
 
-// src/Player.cpp:970-1063. The isFamiliar mirror arrays (weaponsCopy /
-// inventoryCopy / ammoCopy, :995-1000,:1010,:1036) are not ported — no
-// familiar system exists — so every branch takes the real-array side.
-bool Player::give(int kind, int slot, int amount, bool quiet) {
+// src/Player.cpp:970-1063. While familiar (and !forceReal) grants go to the
+// bot's bag: weaponsCopy / inventoryCopy / ammoCopy (:995-996,:1010,:1036).
+bool Player::give(int kind, int slot, int amount, bool quiet, bool forceReal) {
 	if (amount == 0) return false;
+	const bool toBag = isFamiliar && !forceReal;
 	switch (kind) {
 	case 1: { // weapon bitmask
 		int bit = 1 << (slot & 0xFF);
@@ -244,26 +259,30 @@ bool Player::give(int kind, int slot, int amount, bool quiet) {
 		// evicts the previously owned bot bits, so the acquisition below always
 		// counts as new. Runs BEFORE `isNew` is sampled, as in legacy.
 		if ((bit & Enums::WP_SENTRY_BOT_MASK) != 0 && amount > 0) {
+			if (isFamiliar) return false;
 			give(Enums::ITEM_CLASS_AMMO, Enums::AMMO_SENTRY_BOT, 100, true);
 			weapons &= ~Enums::WP_SENTRY_BOT_MASK;
 		}
 		bool isNew = (weapons & bit) == 0;  // :985
 		if (amount < 0) {
-			weapons &= ~bit;
-			if (slot == weapon) {              // legacy has ONE active-weapon
-				weapon = -1;                   // field, player->ce->weapon; the
-				ce.weapon = -1;                // rewrite mirrors it in both
+			if (!toBag) {                      // :987
+				weapons &= ~bit;
+				if (slot == weapon) {          // legacy has ONE active-weapon
+					weapon = -1;               // field, player->ce->weapon; the
+					ce.weapon = -1;            // rewrite mirrors it in both
+				}
+				// Legacy reselects via selectNextWeapon() (:991-992), which is
+				// not ported; the -1 fallback stands in for it.
 			}
-			// Legacy reselects via selectNextWeapon() (:991-992), which is not
-			// ported; the -1 fallback stands in for it.
 			return true;
 		}
-		weapons |= bit;                        // :1000
+		if (toBag) weaponsCopy |= bit;         // :995-1000
+		else weapons |= bit;
 		if (!quiet) {
 			// showWeaponHelp(slot, false) (:1001-1003) — no help-popup
 			// plumbing for gameplay grants (spec §5).
 		}
-		if (isNew) {                           // :1004-1006
+		if (isNew && !isFamiliar) {            // :1004-1006
 			selectWeapon(slot, defs_ != nullptr
 				? defs_->find(Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON, slot)
 				: nullptr);
@@ -273,27 +292,30 @@ bool Player::give(int kind, int slot, int amount, bool quiet) {
 	case 0: { // inventory slot
 		int slotIdx = slot - 0;
 		if (slotIdx < 0 || slotIdx >= 26) return false;
-		int n = amount + inventory[slotIdx];
+		int16_t* arr = toBag ? inventoryCopy : inventory;   // :1010
+		int n = amount + arr[slotIdx];
 		if (slotIdx == 24) n = std::min(n, 9999);
 		else n = std::min(n, 999);
 		if (n < 0) return false;
 		// Bottled water is not stored: the whole NEW total (not the delta) is
 		// converted to holy water at x20 and inventory[13] stays 0
-		// (:1023-1025). Legacy quirk, reproduced verbatim.
-		if (slotIdx == Enums::INV_BOTTLED_WATER) {
-			give(Enums::ITEM_CLASS_AMMO, Enums::AMMO_HOLY_WATER, n * 20, true);
+		// (:1023-1025). Legacy quirk, reproduced verbatim. The bot's bag keeps
+		// slot 13 as a count.
+		if (slotIdx == Enums::INV_BOTTLED_WATER && !toBag) {
+			give(Enums::ITEM_CLASS_AMMO, Enums::AMMO_HOLY_WATER, n * 20, true, true);
 		} else {
-			inventory[slotIdx] = (int16_t)n;
+			arr[slotIdx] = (int16_t)n;
 		}
 		return true;
 	}
 	case 2: { // ammo
 		if (slot < 0 || slot >= 9) return false;
-		int n = amount + ammo[slot];
+		int16_t* arr = (toBag && slot != 6) ? ammoCopy : ammo;   // :1036
+		int n = amount + arr[slot];
 		if (slot == 6) n = std::min(n, 5);
 		else n = std::min(n, 100);
 		if (n < 0) return false;
-		ammo[slot] = (int16_t)n;
+		arr[slot] = (int16_t)n;
 		// hud->repaintFlags |= 0x4 (:1051): the HUD model is rebuilt per frame.
 		return true;
 	}
@@ -306,6 +328,7 @@ bool Player::give(int kind, int slot, int amount, bool quiet) {
 }
 
 void Player::selectWeapon(int i, const EntityDef* def) {
+	if (isFamiliar) return;                    // (src/Player.cpp:135-137)
 	if (i != Enums::WP_ITEM) {                 // (src/Player.cpp:138-141)
 		weapons &= ~(1 << Enums::WP_ITEM);
 		ammo[Enums::AMMO_ITEM] = 0;
@@ -371,6 +394,45 @@ void Player::restoreInventory() {   // :2707-2759
 		: nullptr);
 }
 
+void Player::clearOutFamiliarsStatusEffects() {   // src/Player.cpp:2176-2187
+	numbuffsCopy = 0;
+	for (auto& v : buffsCopy) v = 0;
+	numStatusEffectsCopy = 0;
+	for (auto& v : statusEffectsCopy) v = 0;
+}
+
+void Player::swapStatusEffects() {   // :2189-2206
+	std::swap(numbuffs, numbuffsCopy);
+	std::swap(buffs, buffsCopy);
+	std::swap(numStatusEffects, numStatusEffectsCopy);
+	std::swap(statusEffects, statusEffectsCopy);
+}
+
+// Called after isFamiliar is cleared, so give() writes the real arrays.
+bool Player::stealFamiliarsInventory() {   // :2286-2311
+	bool any = false;
+	for (int i = 0; i < 26; ++i) {
+		if (inventoryCopy[i] != 0) {
+			give(0, i, inventoryCopy[i], true);
+			any = true;
+		}
+	}
+	for (int j = 0; j < 9; ++j) {
+		if (ammoCopy[j] != 0) {
+			give(2, j, ammoCopy[j], true);
+			any = true;
+		}
+	}
+	const int bag = weaponsCopy;   // legacy snapshots it before the gives
+	for (int k = 0; k < 15; ++k) {
+		if (((1 << k) & bag) != 0) {
+			give(1, k, 1, true);
+			any = true;
+		}
+	}
+	return any;
+}
+
 void Player::usedChainsaw() {   // src/Player.cpp:2636-2652
 	++chainsawStrengthBonusCount;
 	if (chainsawStrengthBonusCount >= 30) {
@@ -397,15 +459,18 @@ bool Player::requireItem(int kind, int slot, int min, int max) const {
 }
 
 bool Player::addHealth(int amount, bool showMessage) {
-	int stat = ce.getStat(Enums::STAT_HEALTH);
-	int stat2 = ce.getStat(Enums::STAT_MAX_HEALTH);
+	// src/Player.cpp:422-445: the bot's health is ammo[7], max 100, no upper clamp.
+	int16_t& botHp = ammo[Enums::AMMO_SENTRY_BOT];
+	int stat = isFamiliar ? botHp : ce.getStat(Enums::STAT_HEALTH);
+	int stat2 = isFamiliar ? 100 : ce.getStat(Enums::STAT_MAX_HEALTH);
 	if (amount > 0) {
 		if (stat == stat2) return false;
 	} else if (god) {
 		return false;
 	}
-	ce.addStat(Enums::STAT_HEALTH, amount);
-	const int now = ce.getStat(Enums::STAT_HEALTH);
+	if (isFamiliar) botHp = (int16_t)std::max(0, botHp + amount);
+	else ce.addStat(Enums::STAT_HEALTH, amount);
+	const int now = getHealth();
 	if (showMessage && now > stat && hud_ != nullptr && loc_ != nullptr) {   // src/Player.cpp:445-449
 		std::string text = loc_->get(kTextMain, 111);   // "Gained %01 health"
 		std::string args[1] = { std::to_string(now - stat) };
@@ -620,6 +685,7 @@ void Player::removeStatusEffect(int n) {                    // src/Player.cpp:15
 }
 
 bool Player::addStatusEffect(int n, int amount, int turns) {   // src/Player.cpp:1562-1595
+	if (isFamiliar) return false;                           // :1565-1567
 	if (n == Enums::STATUS_EFFECT_FIRE) {                   // :1568-1573
 		if (buffs[Enums::BUFF_ANTIFIRE] > 0) return false;
 		std::fprintf(stderr, "[sound] 1034\n");
@@ -643,6 +709,10 @@ bool Player::addStatusEffect(int n, int amount, int turns) {   // src/Player.cpp
 Player::PainBand Player::pain(int n) {
 	if (god) return PainBand::None;                        // src/Player.cpp:654-656
 	if (n == 0) return PainBand::None;                     // :672-674
+	if (isFamiliar) {                                      // :675-677
+		addHealth(-n);
+		return PainBand::None;
+	}
 	const int stat = ce.getStat(Enums::STAT_HEALTH);
 	const int maxHp = ce.getStat(Enums::STAT_MAX_HEALTH);
 	const int n2 = (stat << 16) / (maxHp << 8);            // :683-684
