@@ -699,6 +699,20 @@ Inline in the fire handler (`src/PlayingInputHandler.cpp`):
    weapon is never fired at the crate.
 There is no `use`, `activate` or `touched` call for crates; state change = `param` + unlink.
 
+**Unarmed edge case (verified 2026-11-03, `docs/research/2026-11-03-map00-crate-6-22.md`).**
+Between steps 2 and 3 the elected eType-10 entity is dropped when
+`(1 << eSubType & 0x1) == 0 && WorldDistToTileDist(dist2) > weapons[weapon2*9 + 3]`
+(`src/PlayingInputHandler.cpp:378-381`). For an adjacent crate `WorldDistToTileDist(4096) == 1`
+(`src/Combat.cpp:1235-1242`). The handler has **no** "has a weapon" gate, and `ce->weapon` is
+`-1` until the first weapon is given (`src/CombatEntity.cpp:26`; `Player::reset` never sets it,
+`src/Player.cpp:488-560`; `selectNextWeapon` with `weapons == 0` selects nothing,
+`src/Player.cpp:192-216`). With `weapon2 == -1` the gate reads `weapons[-6]`, an out-of-bounds
+byte before `new int8_t[...]` (`src/App.cpp:375`) — undefined behaviour, so `src/` does not
+define whether an unarmed player's crate opens. On map00 this is reachable: spawn tile 612 =
+(4,19), the assault rifle (`GIVEITEM def=1`, IP 3401) comes only from EVT 54 @(9,19), while the
+crates at (6,22)/(7,18) are next to the spawn. The tile script (step 4) runs regardless, so the
+worst case is "loot granted, crate stays closed and solid forever".
+
 ### 7.4 Opening animation
 Driven inside the renderer, not by a lerp/animator (`src/Render.cpp:1607-1617`):
 frame = `(mapSpriteInfo >> 8) & 0xFF` (`:1508`); while `param != 0`, every time

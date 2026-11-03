@@ -417,15 +417,28 @@ bool DialogSystem::buildViewModel(DialogViewModel& m) {
 	m.activateFires = !(currentDialogLine_ >= numDialogLines_ - viewLines_ &&
 		(flags_ & 0x7) != 0);
 
-	// Bottom Yes/No pair on the last page (408-451): str 140/141 for flags&1,
-	// else 30/31. It is the else-arm of the flags&2 vertical pair (:357).
-	if ((flags_ & 0x2) == 0 && (flags_ & 0x5) != 0 && currentDialogLine_ >= numDialogLines_ - viewLines_) {
+	// Vertical pair (357-406) on every page: str 141/140 (Yes/No), or with
+	// flags&8 214/215 (VIOS Malloc/Delete). Otherwise the bottom pair on the
+	// last page (408-451): str 140/141 for flags&1, else 30/31.
+	int firstId = -1, secondId = -1;
+	if ((flags_ & 0x2) != 0) {
+		const bool vios = (flags_ & 0x8) != 0;
+		firstId = vios ? 214 : 141;
+		secondId = vios ? 215 : 140;
+		m.choiceVertical = true;
+		m.choiceTapFires = style_ == 10 || style_ == 11;
+	} else if ((flags_ & 0x5) != 0 && currentDialogLine_ >= numDialogLines_ - viewLines_) {
 		const bool yesNo = (flags_ & 0x1) != 0;
+		firstId = yesNo ? 140 : 30;
+		secondId = yesNo ? 141 : 31;
+		m.choiceTapFires = true;
+	}
+	if (firstId >= 0) {
 		choiceLeft_.setLength(0);
-		composeText(kTextMain, yesNo ? 140 : 30, choiceLeft_);
+		composeText(kTextMain, firstId, choiceLeft_);
 		choiceLeft_.dehyphenate();
 		choiceRight_.setLength(0);
-		composeText(kTextMain, yesNo ? 141 : 31, choiceRight_);
+		composeText(kTextMain, secondId, choiceRight_);
 		choiceRight_.dehyphenate();
 		m.showChoice = true;
 		m.choiceSel = env_.vm->vars[4];

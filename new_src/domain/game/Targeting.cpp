@@ -38,7 +38,7 @@ void Targeting::viewForward(int& fwdX, int& fwdY) const {
 TraceHit Targeting::electFireTarget(int weapon) {
 	Player& p = *env_.player;
 	Combat& combat = env_.game->combat;
-	const bool melee = Combat::checkWeaponMask(weapon, 2);  // WP_MELEEMASK = chainsaw only (src/Enums.h:155)
+	const bool melee = weapon >= 0 && Combat::checkWeaponMask(weapon, 2);  // WP_MELEEMASK = chainsaw only (src/Enums.h:155)
 	int mask = Contents::WEAPONSOLID;                       // src/Enums.h:31
 	if (weapon == 2) mask |= Contents::HOLY_WATER_EXTRA;    // holy water: ENV_DAMAGE + DECOR_NOCLIP (:203-205)
 	if (melee) mask |= Contents::MELEE_EXTRA;               // chainsaw: PLAYERCLIP (:212-215)
@@ -145,8 +145,9 @@ TraceHit Targeting::electFireTarget(int weapon) {
 
 	int dist2 = combat.tileDistSq(10);                          // :356-359
 	if (elected.blocks()) dist2 = trace.distFrom(elected, p.viewX, p.viewY);
-	// eType 10 out of weapon range (:379-381).
-	if (elected.isEntity() &&                                   // was: entity != nullptr && entity->def != nullptr
+	// eType 10 out of weapon range (:379-381). DEVIATION: unarmed (weapon -1)
+	// has no range gate; legacy reads the weapon row out of bounds there.
+	if (weapon >= 0 && elected.isEntity() &&                    // was: entity != nullptr && entity->def != nullptr
 	    elected.eType == Enums::ET_ATTACK_INTERACTIVE &&
 	    ((1 << elected.eSubType) & 0x1) == 0 &&
 	    combat.worldDistToTileDist(dist2) > combat.weaponDef(weapon).rangeMax) {

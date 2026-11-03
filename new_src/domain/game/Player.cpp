@@ -13,6 +13,7 @@
 #include "domain/game/Game.h"
 #include "domain/game/WeaponTable.h"
 #include "io/Localization.h"
+#include "io/Tables.h"
 #include "ui/Hud.h"
 
 namespace newcore {
@@ -267,12 +268,15 @@ bool Player::give(int kind, int slot, int amount, bool quiet, bool forceReal) {
 		if (amount < 0) {
 			if (!toBag) {                      // :987
 				weapons &= ~bit;
-				if (slot == weapon) {          // legacy has ONE active-weapon
-					weapon = -1;               // field, player->ce->weapon; the
-					ce.weapon = -1;            // rewrite mirrors it in both
+				if (slot == ce.weapon) {       // :989-991
+					selectNextWeapon();
+					// Legacy leaves the removed weapon selected when nothing
+					// else qualifies; the rewrite clears both mirrors instead.
+					if (ce.weapon == slot) {
+						weapon = -1;
+						ce.weapon = -1;
+					}
 				}
-				// Legacy reselects via selectNextWeapon() (:991-992), which is
-				// not ported; the -1 fallback stands in for it.
 			}
 			return true;
 		}
@@ -324,6 +328,28 @@ bool Player::give(int kind, int slot, int amount, bool quiet, bool forceReal) {
 	}
 	default:
 		return false;
+	}
+}
+
+void Player::selectNextWeapon() {   // src/Player.cpp:192-217
+	if (tables_ == nullptr) return;
+	const int cur = ce.weapon;
+	const int owned = weapons & ~disabledWeapons;
+	auto usable = [&](int i) {
+		if ((owned & (1 << i)) == 0) return false;
+		const WeaponDef& row = tables_->weaponDef(i);
+		return row.ammoUsage == 0 || (row.ammoType >= 0 && row.ammoType < 9 && ammo[row.ammoType] != 0) || i == 2;
+	};
+	auto pick = [&](int i) {
+		selectWeapon(i, defs_ != nullptr ? defs_->find(Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON, i) : nullptr);
+	};
+	for (int i = cur + 1; i < 15; ++i) {
+		if (usable(i)) { pick(i); return; }
+	}
+	if (ce.weapon == cur && cur != 0) {
+		for (int j = 0; j < cur; ++j) {
+			if (usable(j)) { pick(j); return; }
+		}
 	}
 }
 

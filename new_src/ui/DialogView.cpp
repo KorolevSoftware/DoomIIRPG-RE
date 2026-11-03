@@ -1,5 +1,6 @@
 #include "ui/DialogView.h"
 
+#include <algorithm>
 #include <cstdint>
 
 #include "render/Graphics2D.h"
@@ -244,9 +245,32 @@ UiResult drawDialog(Ui& ui, const DialogViewModel& m) {
 	// flags&4 / flags&1 bottom Yes/No pair (src/DialogSystem.cpp:416-450):
 	// two 96x18 buttons in the style fill (lighter while held) with a white
 	// frame, centred labels, the '\x8A' cursor left of the selected label.
-	// Tapping one selects it and confirms (dialog buttons 3/4). The flags&2
-	// vertical pair (:357-406) is still deferred.
-	if (m.showChoice && m.choiceLeft != nullptr && m.choiceRight != nullptr) {
+	// Tapping one selects it and confirms (dialog buttons 3/4).
+	if (m.showChoice && m.choiceVertical && m.choiceLeft != nullptr && m.choiceRight != nullptr) {
+		// flags&2 vertical pair (:357-406) at (screenRect[0] + 3, screenRect[3] - 214)
+		// = (3, 106): two grey 32 px boxes 64 px apart, labels anchor 4 at
+		// (x + 4, y + 9 / y + 73), the '\x84' cursor right-aligned (0x18) after the
+		// box. Dialog buttons 0/1, touch area (x, box y, w, 27).
+		constexpr int x = 3, y = 106, h = 32;
+		const int w = std::max(m.choiceLeft->getStringWidth(), m.choiceRight->getStringWidth()) + 20;
+		const UiId ids[2] = { UiId::DialogChoiceLeft, UiId::DialogChoiceRight };
+		const Text* labels[2] = { m.choiceLeft, m.choiceRight };
+		for (int k = 0; k < 2; ++k) {
+			const int boxY = y + 64 * k;
+			const int strY = boxY + 9;
+			if (ui.buttonRect(ids[k], UiRect{ x, boxY, w, h - 5 }) && m.choiceTapFires) {
+				res.action = UiAction::DialogChoice;
+				res.index = k;
+			}
+			ui.panel(UiRect{ x, boxY, w, h }, ui.isActive(ids[k]) ? 0xFF8A8A8Au : 0xFF4A4A4Au);
+			ui.frame(UiRect{ x, boxY, w, h }, kColorWhite);
+			ui.label(*labels[k], x + 4, strY, Graphics2D::kAnchorLeft);
+			if (m.choiceSel == k) {
+				ui.glyph('\x84', x + 4 + w + m.cursorOsc - 8, strY,
+					Graphics2D::kAnchorRight | Graphics2D::kAnchorTop);
+			}
+		}
+	} else if (m.showChoice && m.choiceLeft != nullptr && m.choiceRight != nullptr) {
 		const int by = ry + kLineH * m.viewLines - 14;          // n21 (:417)
 		const int bh = kFontHeight + 2;                          // v75 (:419)
 		const uint32_t lit = (fill + 0x333333u) | 0xFF000000u;   // highlighted (:425, :439)

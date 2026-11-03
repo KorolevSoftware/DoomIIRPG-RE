@@ -68,12 +68,18 @@ struct DialogViewModel {
 	// they are only drawn on pages where it cannot bite.
 	bool activateFires = true;
 
-	// Bottom Yes/No pair of flags&4 / flags&1 on the last page
-	// (src/DialogSystem.cpp:408-451). choiceSel = scriptStateVars[4] (0 left,
-	// 1 right); the labels are producer-owned, already dehyphenated;
-	// cursorOsc = OSC_CYCLE[time / 200 % 4] (:355). The flags&2 vertical
-	// pair (:357-406) is not modelled yet.
+	// Choice pair, selection scriptStateVars[4] (0 = first, 1 = second); the
+	// labels are producer-owned, already dehyphenated; cursorOsc =
+	// OSC_CYCLE[time / 200 % 4] (src/DialogSystem.cpp:355).
+	// - bottom pair (choiceVertical false): flags&4 / flags&1 on the last page
+	//   (:408-451), choiceLeft / choiceRight side by side;
+	// - vertical pair (choiceVertical true): flags&2 on every page (:357-406),
+	//   choiceLeft on top (Yes / Malloc), choiceRight below (No / Delete).
 	bool showChoice = false;
+	bool choiceVertical = false;
+	// Whether a tap on a choice selects it and fires: always for the bottom
+	// pair, only styles 10/11 for the vertical one (src/TouchController.cpp:411-448).
+	bool choiceTapFires = false;
 	int choiceSel = 0;
 	const Text* choiceLeft = nullptr;
 	const Text* choiceRight = nullptr;

@@ -13,6 +13,7 @@ class Combat;
 class Entity;
 class Hud;
 class Localization;
+class Tables;
 
 // useItem outcome. Used = the legacy `b == true` tail: the caller must call
 // Game::advanceTurn() (src/Player.cpp:956-958). UsedNoTurn = success without a
@@ -119,6 +120,13 @@ public:
 	// The defs table give() needs for the auto-equip lookup the legacy does
 	// itself (find(6, 1, wp), src/Player.cpp:160). Wired in core/Main.cpp.
 	void setDefs(const EntityDefs* defs) { defs_ = defs; }
+	// Weapon rows (ammo type / usage) read by selectNextWeapon. Wired in core/Main.cpp.
+	void setTables(const Tables* tables) { tables_ = tables; }
+
+	// src/Player.cpp:192-217: select the next owned, not disabled weapon after
+	// ce.weapon that has ammo (or needs none, or is holy water 2), wrapping
+	// to the lowest; nothing found leaves ce.weapon unchanged.
+	void selectNextWeapon();
 
 	// give(kind, slot, amount, quiet, forceReal): kind 0 = inventory, 1 =
 	// weapons, 2 = ammo, 3 = health. Mirrors legacy Player::give
@@ -262,6 +270,7 @@ public:
 
 private:
 	const EntityDefs* defs_ = nullptr;
+	const Tables* tables_ = nullptr;
 	Hud* hud_ = nullptr;
 	const Localization* loc_ = nullptr;
 	const int64_t* clock_ = nullptr;

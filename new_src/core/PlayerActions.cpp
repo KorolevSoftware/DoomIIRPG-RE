@@ -267,13 +267,9 @@ void PlayerActions::handleAction(Action a) {
 		// (TraceSystem.cpp:233-239), which a later trace would overwrite;
 		// entity hits are position-derived and stable.
 		const int weapon2 = p.ce.weapon;                   // legacy ce->weapon (:197)
-		TraceHit elected;                                  // legacy `entity`
-		int electedDist = 0;
-		if (weapon2 >= 0) {
-			elected = env_.targeting->electFireTarget(weapon2);
-			electedDist = elected.blocks()
-				? env_.game->trace.distFrom(elected, p.viewX, p.viewY) : 0;
-		}
+		const TraceHit elected = env_.targeting->electFireTarget(weapon2);   // legacy `entity`
+		const int electedDist = elected.blocks()
+			? env_.game->trace.distFrom(elected, p.viewX, p.viewY) : 0;
 		// Crate open (:387-393): eType 10 / eSubType 2 within one tile.
 		// tileDistSq(1) is legacy tileDistances[0] = 4096 (Combat.cpp:69-72).
 		// The weapon 11 else-arm of the legacy is empty.
@@ -311,9 +307,6 @@ void PlayerActions::handleAction(Action a) {
 		if (consumed) break;   // fire election only when nothing consumed the press
 		// Secret push wall (src/PlayingInputHandler.cpp:461-466): elected
 		// ET_SPRITEWALL within one tile AND the FACING tile carries 0x4. No turn.
-		// shortcut: `elected` is only filled when weapon2 >= 0, so with no
-		// weapon the secret cannot be opened; upgrade if an unarmed state
-		// becomes reachable in play.
 		if (elected.isEntity() && elected.eType == Enums::ET_SPRITEWALL &&
 		    electedDist <= env_.game->combat.tileDistSq(1) &&
 		    (env_.map->mapFlags[ty * 32 + tx] & TileFlag::SECRET_DOOR) != 0) {
