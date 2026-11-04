@@ -179,7 +179,7 @@ void PlayerActions::handleAction(Action a) {
 	Player& p = *env_.player;
 	// The bot has no inventory screens (src/InputEventController.cpp:79-91;
 	// the PDA has no rewrite key).
-	if (p.isFamiliar && (a == Action::Items || a == Action::ItemsDrinks)) return;
+	if (p.isFamiliar && (a == Action::Items || a == Action::ItemsDrinks || a == Action::QuestLog)) return;
 	// ST_COMBAT handler (src/InputEventController.cpp:364-372): during a
 	// monster attack only turning acts, startRotation runs for every key; the
 	// player's own attack swallows all input. No idle gate here (legacy has
@@ -195,17 +195,22 @@ void PlayerActions::handleAction(Action a) {
 	// Zoomed ST_PLAYING input goes to the zoom handler first; only FIRE comes
 	// back (src/InputEventController.cpp:358-361).
 	const bool zoomed = env_.game->zoom.isZoomedIn && env_.host->state() == StateId::Playing;
+	// The zoomed weapon tap is handleZoomEvents(ACTION_BACK) (src/Hud.cpp:1325-1327).
+	if (zoomed && a == Action::HudNextWeapon) a = Action::BackKey;
 	if (zoomed && env_.zoom->handle(a)) return;
 	const bool inTP = env_.practice != nullptr && env_.practice->active();
 	// Legacy gate: all playing input is ignored while any animation runs,
 	// skipped while zoomed (src/PlayingInputHandler.cpp:25-27).
 	bool gateBlocked = (p.viewX != p.destX || p.viewY != p.destY || p.viewAngle != p.destAngle);
 	if (!zoomed && gateBlocked) return;
+	// The weapon-select overlay swallows all playing input (src/PlayingInputHandler.cpp:67-69).
+	if (env_.weaponSelectOpen && env_.weaponSelectOpen()) return;
 	// Monster gate (src/PlayingInputHandler.cpp:71-74): everything but turning
 	// waits for the monsters to be snapped and animating effects to end.
 	// snapMonsters may start a queued monster attack, which swallows the
 	// action. activePropogators is tested first: it short-circuits snapMonsters.
-	if (a != Action::TurnLeft && a != Action::TurnRight &&
+	// The weapon tap is exempt like NEXTWEAPON (:72).
+	if (a != Action::TurnLeft && a != Action::TurnRight && a != Action::HudNextWeapon &&
 	    (env_.game->sprites.activePropogators() != 0 ||
 	     !env_.game->monsters.snapMonsters(env_.host->state() == StateId::Automap) || env_.game->lerps.animatingEffects() != 0)) {
 		return;
@@ -458,9 +463,27 @@ void PlayerActions::handleAction(Action a) {
 		env_.hud->clearMessages();            // msgCount = 0
 		if (env_.openMenu) env_.openMenu(kMenuItemsDrinks);
 		break;
+	case Action::QuestLog:                    // src/PlayingInputHandler.cpp:179-188
+		if (inTP) { env_.practice->exit(); break; }
+		env_.hud->clearMessages();            // msgCount = 0
+		if (env_.openMenu) env_.openMenu(kMenuQuestLog);
+		break;
+	case Action::HudNextWeapon: {             // src/PlayingInputHandler.cpp:122-136
+		const int before = p.ce.weapon;
+		if (before == Enums::WP_ITEM) break;  // weapon 14: no-op, no help bit
+		p.selectNextWeapon();
+		// composeText(1, longName) is the verbatim group-1 string (src/Hud.cpp:150-157).
+		if (p.ce.weapon != before && env_.loc != nullptr && p.activeWeaponDef != nullptr) {
+			env_.hud->addMessage(env_.loc->get(kTextIngame, p.activeWeaponDef->longName),
+			                     0xAA000000, Hud::kMsgFlagForce);   // addMessage(1, longName, 1)
+		}
+		p.helpBitmask |= 0x100;
+		break;               // no turn is spent
+	}
 	default:
-		// shortcut: NextWeapon/PrevWeapon only act while zoomed (ZoomController::handle);
-		// Player::selectNext/PrevWeapon is not ported, port it if weapon cycling keys are wanted.
+		// shortcut: keys NextWeapon/PrevWeapon only act while zoomed (ZoomController::handle);
+		// selectNextWeapon is ported (HUD weapon tap), selectPrevWeapon and the key bindings
+		// are not — port them if weapon cycling keys are wanted.
 		break;
 	}
 }

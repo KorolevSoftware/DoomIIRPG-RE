@@ -38,6 +38,7 @@ public:
 		TargetPractice* practice = nullptr;  // in-range input hooks (src/PlayingInputHandler.cpp)
 		Familiar* familiar = nullptr;        // deploy / self-destruct / return (ADR 0041)
 		std::function<void(int)> openMenu;   // enter Menu on a given MenuId (ACTION_ITEMS)
+		std::function<bool()> weaponSelectOpen;   // HUD weapon-select overlay swallows input
 	};
 
 	void init(const Env& env);

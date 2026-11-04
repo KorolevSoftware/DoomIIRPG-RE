@@ -40,6 +40,12 @@ enum class Action : int {
 	ItemsDrinks,   // ACTION_ITEMS_DRINKS (AVK_DRINKS, src/Input.cpp:93)
 	NextWeapon, PrevWeapon,   // ACTION_NEXTWEAPON / ACTION_PREVWEAPON (src/Enums.h:1002-1003)
 	BotDiscard,   // ACTION_BOT_DISCARD (src/Enums.h:1010, AVK_BOTDISCARD src/Input.h:149)
+	// ACTION_QUESTLOG; touch-only in the rewrite (legacy AVK_PDA P stays unmapped,
+	// new_src/core/UiInputCollector.cpp:117-118).
+	QuestLog,
+	// The HUD weapon tap's ACTION_NEXTWEAPON. A separate touch-only action so
+	// key Z keeps its zoom-only meaning (ADR 0045).
+	HudNextWeapon,
 	// No key produces this one: the in-game menu's right soft key is touch-only
 	// in the original (src/MenuSystem.cpp:4787-4789 calls returnToGame directly),
 	// so it exists purely so the UI intent travels through the one action queue

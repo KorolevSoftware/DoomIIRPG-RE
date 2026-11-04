@@ -34,6 +34,8 @@ same anchors: id0 switch-right area (0,256,52,64), id1 switch-left
 id4 shield (49,258,79,44), id5 health (133,258,79,44), id6 key
 (375,258,55,44). A highlighted button only swaps the *_Active sheet — no
 position change.
+What each button does on release (incl. the weapon long-press overlay) is in
+`hud-buttons.md`.
 
 ## 2. Numbers renderer — `Hud::drawNumbers(g, x, y, space, num, weapon)` (`src/Hud.cpp:1127-1152`)
 

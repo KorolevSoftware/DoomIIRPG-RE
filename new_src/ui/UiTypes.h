@@ -10,6 +10,10 @@ enum class UiId : int {
 	// HUD bottom bar (rects: docs/original-code/ui.md §1)
 	HudSwitchLeft, HudSwitchRight, HudWeapon, HudPortrait, HudShield,
 	HudHealth, HudKeys, HudSoftLeft, HudSoftCenter, HudSoftRight,
+	// weapon-select overlay icons, one per weapon id (m_weaponsButtons, src/Hud.cpp:88-92)
+	HudWeaponSel0, HudWeaponSel1, HudWeaponSel2, HudWeaponSel3, HudWeaponSel4,
+	HudWeaponSel5, HudWeaponSel6, HudWeaponSel7, HudWeaponSel8, HudWeaponSel9,
+	HudWeaponSel10, HudWeaponSel11, HudWeaponSel12, HudWeaponSel13, HudWeaponSel14,
 	// loot list
 	LootBody, LootScroll,
 	// dialog box
@@ -33,9 +37,7 @@ enum class UiId : int {
 
 // What the UI reports. Every value must be translatable into the EXISTING
 // Action queue (new_src/core/GameStates.h:26-27) — spec §4.2.
-// Deliberately no NextWeapon/PrevWeapon: the switch buttons' semantics are not
-// established (docs/original-code/ui.md §1 documents only their rects and the
-// highlight swap), so they report None for now (Deviation D3).
+// HUD bottom-bar buttons 2/4/5/6: docs/architecture/hud-bar-buttons.md (ADR 0045).
 enum class UiAction : int {
 	None = 0,
 	Menu, Automap, Back, PassTurn, Activate,
@@ -54,6 +56,9 @@ enum class UiAction : int {
 	// FIRE the page-ok icon queues (src/TouchController.cpp:411-421, :283-288).
 	DialogChoice,
 	ScreenTouch,      // index = legacy button id of a front-end screen (char select 0-4, prologue 0-2)
+	ItemsDrinks, Items, QuestLog,   // HUD buttons 4/5/6 (src/Hud.cpp:1346-1353)
+	WeaponTap,        // HUD button 2 release (src/Hud.cpp:1324-1342)
+	WeaponSelect,     // overlay icon release, index = weapon id (src/Hud.cpp:1281-1288)
 };
 
 // One navigation edge per frame. Moves a selected index owned by the screen's

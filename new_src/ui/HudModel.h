@@ -68,6 +68,12 @@ struct HudModel {
 	UiRect softLeftHit;
 	UiRect softRightHit;
 	UiRect portraitHit;
+	// Hud buttons 2/4/5/6, set always; the view uses them only when not familiar.
+	UiRect weaponHit, shieldHit, healthHit, keysHit;
+	// Weapon-select overlay (docs/architecture/hud-bar-buttons.md G3).
+	bool weaponSelect = false;        // legacy Hud::isInWeaponSelect
+	int  weaponSelectMask = 0;        // ~disabledWeapons & weapons, bits 0..14 (src/Hud.cpp:1183)
+	int  weaponSelectAmmo[15] = {};   // ammo[ammoType(i)] per weapon, for the icon digits
 };
 
 } // namespace newcore

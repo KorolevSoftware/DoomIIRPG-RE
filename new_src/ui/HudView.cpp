@@ -35,6 +35,17 @@ constexpr int kKeysX = 375, kKeysY = 258;
 constexpr int kKeysRowH = 44;                            // 55x176 = 4 rows
 constexpr int kDigitSpace = 1;                           // drawNumbers `space`
 
+// Weapon-select overlay (src/Hud.cpp:1181-1209): dim below the top bar
+// (FMGL_fillRect(0, 20, 480, 320, 0.5f) clipped to the canvas, :1187), rows of
+// 4 weapon-panel icons from x = (480 - 16 - 4*102) / 2 (:1184),
+// first row y = 320 - 108 - 4 (:1185, :1193), steps +106 / -48 (:1198-1208).
+constexpr UiRect kSelDim{ 0, 20, 480, 300 };
+constexpr uint32_t kSelDimArgb = 0x80000000;
+constexpr int kSelX0 = 28, kSelY0 = 208;
+constexpr int kSelStepX = 106, kSelStepY = 48, kSelPerRow = 4;
+constexpr int kSelW = 102, kSelH = 44;
+constexpr int kSelAmmoDX = 57, kSelAmmoDY = 8;           // (w >> 1) + 6, 8 (:1122-1124)
+
 // Soft-key label anchors (docs/original-code/ui.md §6,
 // src/TouchController.cpp:560-577, src/Hud.cpp:715-723).
 constexpr int kSoftLeftX = 2,    kSoftLeftY = 320;
@@ -79,6 +90,32 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 
 	const UiAssets& art = ui.art();
 
+	// ---- weapon-select overlay ----
+	// Drawn before the bottom bar (src/Hud.cpp:772-782); the bottom panel is
+	// repainted over the dim (src/TouchController.cpp:544-545).
+	if (m.weaponSelect) {
+		ui.panel(kSelDim, kSelDimArgb);
+		int k = 0;
+		for (int i = 0; i < 15; ++i) {
+			if (((m.weaponSelectMask >> i) & 1) == 0) continue;
+			const UiRect r{ kSelX0 + kSelStepX * (k % kSelPerRow),
+				kSelY0 - kSelStepY * (k / kSelPerRow), kSelW, kSelH };
+			++k;
+			const UiId id = static_cast<UiId>(static_cast<int>(UiId::HudWeaponSel0) + i);
+			if (m.interactive && ui.buttonRect(id, r)) {
+				res.action = UiAction::WeaponSelect;
+				res.index = i;
+			}
+			ui.weaponIcon(ui.isActive(id) ? art.weaponActive : art.weaponNormal,
+				r.x, r.y, kWeaponRowH, i);
+			if (i != 1) {
+				ui.number3(art.numbers, r.x + kSelAmmoDX, r.y + kSelAmmoDY, kDigitSpace,
+					m.weaponSelectAmmo[i], i == 13);
+			}
+		}
+		ui.image(art.panelBottom, 0, 320 - art.panelBottom.height(), kTopLeft);
+	}
+
 	// ---- soft keys + switch arrows ----
 	// In the original these are ONE button per side: hud button 0 (0,256,52,64)
 	// highlights the LEFT arrow art and fires ACTION_MENU, button 1
@@ -119,28 +156,34 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 		kSwitchRightX, kSwitchRightY, kTopLeft);
 
 	// ---- weapon icon + ammo digits ----
-	// The *_Active sheets of the weapon/shield/health/keys widgets are the touch
-	// highlights of hud buttons 2, 4, 5, 6, whose actions (NEXTWEAPON,
-	// ITEMS_DRINKS, ITEMS, QUESTLOG — src/Hud.cpp:1322-1352) have no counterpart
-	// in the rewrite yet, so they are neither hit-tested nor highlighted
-	// (Deviation D3). Button 3, the portrait, IS wired below.
+	// Hud buttons 2, 4, 5, 6 (docs/architecture/hud-bar-buttons.md): hit test
+	// before the blit so the *_Active sheet shows on the press frame
+	// (src/Hud.cpp:685-691, :1174-1178), the portrait idiom below.
 	if (m.familiar) {
 		drawFamiliarBar(ui, m, res);
 	} else {
-		ui.weaponIcon(art.weaponNormal, kWeaponX, kWeaponY, kWeaponRowH, m.weapon);
+		if (m.interactive && ui.buttonRect(UiId::HudWeapon, m.weaponHit)) res.action = UiAction::WeaponTap;
+		ui.weaponIcon(ui.isActive(UiId::HudWeapon) ? art.weaponActive : art.weaponNormal,
+			kWeaponX, kWeaponY, kWeaponRowH, m.weapon);   // src/Hud.cpp:1114-1119
 		if (m.showAmmo) {
 			ui.number3(art.numbers, kAmmoX, kAmmoY, kDigitSpace, m.ammo, m.slashAmmo);
 		}
 
 		// ---- shield plate ----
-		ui.image(art.shieldNormal, kShieldX, kShieldY, kTopLeft);
+		if (m.interactive && ui.buttonRect(UiId::HudShield, m.shieldHit)) res.action = UiAction::ItemsDrinks;
+		ui.image(ui.isActive(UiId::HudShield) ? art.shieldActive : art.shieldNormal,
+			kShieldX, kShieldY, kTopLeft);
 		ui.number3(art.numbers, kShieldDigitsX, kShieldDigitsY, kDigitSpace, m.shield, false);
 
 		// ---- keys ----
-		ui.keys(art.keyNormal, kKeysX, kKeysY, kKeysRowH, m.keysRow);
+		if (m.interactive && ui.buttonRect(UiId::HudKeys, m.keysHit)) res.action = UiAction::QuestLog;
+		ui.keys(ui.isActive(UiId::HudKeys) ? art.keyActive : art.keyNormal,
+			kKeysX, kKeysY, kKeysRowH, m.keysRow);
 
 		// ---- health plate ----
-		ui.image(art.healthNormal, kHealthX, kHealthY, kTopLeft);
+		if (m.interactive && ui.buttonRect(UiId::HudHealth, m.healthHit)) res.action = UiAction::Items;
+		ui.image(ui.isActive(UiId::HudHealth) ? art.healthActive : art.healthNormal,
+			kHealthX, kHealthY, kTopLeft);
 		ui.number3(art.numbers, kHealthDigitsX, kHealthDigitsY, kDigitSpace, m.health, false);
 
 		// ---- portrait: face row from health, then the frame on top ----

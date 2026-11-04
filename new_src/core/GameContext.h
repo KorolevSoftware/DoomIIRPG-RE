@@ -11,6 +11,7 @@
 #include "core/CreditsSession.h"
 #include "core/Familiar.h"
 #include "core/GameStates.h"
+#include "core/HudButtons.h"
 #include "core/IntroMovieSession.h"
 #include "core/LoadingManager.h"
 #include "core/LootSession.h"
@@ -208,6 +209,8 @@ private:
 	Text softLeftText_;
 	Text softCenterText_;
 	Text softRightText_;
+	// Bottom-bar button state: weapon-select overlay, long press, drag latch (ADR 0045).
+	HudButtons hudButtons_;
 
 	// Cinematic camera runtime (cutscenes-camera.md §1-§3).
 	CinematicCamera cinematic_;

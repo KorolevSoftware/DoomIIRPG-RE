@@ -116,6 +116,7 @@ void GameContext::init(const Init& sys) {
 	actEnv.practice = &practice_;
 	actEnv.familiar = &familiar_;
 	actEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
+	actEnv.weaponSelectOpen = [this] { return hudButtons_.weaponSelectOpen(); };
 	actions_.init(actEnv);
 	ZoomController::Env zoomEnv;
 	zoomEnv.game = sys_.game;
@@ -1014,6 +1015,11 @@ constexpr UiRect kSoftRightHit{ 438, 268, 32, 32 };
 // src/Hud.cpp:1343-1345 for the action). The centre "Wait" literal has no touch
 // area at all in the original (src/Hud.cpp:712-720 only draws it).
 constexpr UiRect kPortraitHit{ 219, 264, 42, 36 };
+// Hud buttons 2/4/5/6 (docs/architecture/hud-bar-buttons.md §2).
+constexpr UiRect kWeaponHit{ 268, 258, 102, 44 };   // src/Hud.cpp:73
+constexpr UiRect kShieldHit{ 49, 258, 79, 44 };     // src/Hud.cpp:79
+constexpr UiRect kHealthHit{ 133, 258, 79, 44 };    // src/Hud.cpp:82
+constexpr UiRect kKeysHit{ 375, 258, 55, 44 };      // src/Hud.cpp:85
 // While familiar a press strictly inside the 194x38 HUD_sentry_active plate at
 // (143, 262) is button 3 (src/Hud.cpp:1245-1248). DEVIATION: legacy also needs
 // the press to start on some HUD button; the gaps between buttons count here.
@@ -1059,6 +1065,18 @@ void GameContext::buildHudModel(HudModel& m, bool showBottomBar, bool interactiv
 	// The portrait's touch area does not depend on the soft-key labels, unlike
 	// the two side rects below; the view gates it on m.interactive.
 	m.portraitHit = kPortraitHit;
+	m.weaponHit = kWeaponHit;
+	m.shieldHit = kShieldHit;
+	m.healthHit = kHealthHit;
+	m.keysHit = kKeysHit;
+	m.weaponSelect = hudButtons_.weaponSelectOpen() && !p.isFamiliar;
+	m.weaponSelectMask = p.weapons & ~p.disabledWeapons & 0x7FFF;   // src/Hud.cpp:1183
+	if (sys_.tables != nullptr) {
+		for (int i = 0; i < 15; ++i) {
+			const int ammoType = sys_.tables->weaponDef(i).ammoType;
+			if (ammoType >= 0 && ammoType < 9) m.weaponSelectAmmo[i] = p.ammo[ammoType];
+		}
+	}
 	m.familiar = p.isFamiliar;
 	if (m.familiar) {
 		m.botHealth = p.ammo[Enums::AMMO_SENTRY_BOT];
@@ -1206,6 +1224,14 @@ void GameContext::applyUiAction(UiAction a, int index) {
 	case UiAction::PassTurn:   queued = Action::Passturn; break;
 	case UiAction::Activate:   queued = Action::Use; break;
 	case UiAction::BotDiscard: queued = Action::BotDiscard; break;
+	case UiAction::ItemsDrinks: queued = Action::ItemsDrinks; break;
+	case UiAction::Items:      queued = Action::Items; break;
+	case UiAction::QuestLog:   queued = Action::QuestLog; break;
+	case UiAction::WeaponTap:  queued = Action::HudNextWeapon; break;
+	case UiAction::WeaponSelect:   // src/Hud.cpp:1281-1288: no ammo check, no message, no turn
+		sys_.player->selectWeapon(index, sys_.defs != nullptr
+			? sys_.defs->find(Enums::ET_ITEM, Enums::ITEM_CLASS_WEAPON, index) : nullptr);
+		return;
 	case UiAction::DialogChoice:
 		sys_.vm->vars[4] = static_cast<short>(index);
 		queued = Action::Use;
@@ -1404,13 +1430,19 @@ void GameContext::render(AppContext& app) {
 	const bool botDying = state_ == StateId::BotDying;
 	if (botDying) sys_.hud->drawBottomPanel(g, true);
 	if (ui != nullptr) {
+		hudButtons_.trackPointer(ui->in());
 		HudModel hud;
 		buildHudModel(hud, gameplayView || botDying, hudInteractive);
 		if (botDying) {
 			hud.softLeft = hud.softCenter = hud.softRight = nullptr;
 			hud.softLeftHit = hud.softRightHit = UiRect{};
 		}
-		const UiResult r = drawHud(*ui, hud);
+		HudButtons::Frame frame;
+		frame.upTimeMs = upTimeMs;
+		frame.blockInput = blockInputTime != 0;   // the raw latch, src/Hud.cpp:1238
+		frame.combat = sys_.game->combat.active;
+		frame.zoomed = sys_.game->zoom.isZoomedIn;
+		const UiResult r = hudButtons_.resolve(drawHud(*ui, hud), *ui, hud, frame);
 		applyUiAction(r.action, r.index);
 	}
 	// Zoom dial in repaint bit 0x4, outside ST_DIALOG (src/Hud.cpp:747-768).
