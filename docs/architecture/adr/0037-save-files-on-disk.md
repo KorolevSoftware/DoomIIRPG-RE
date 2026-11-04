@@ -2,6 +2,8 @@
 
 Date: 2026-10-30. Status: accepted. Spec: `../save-load.md`. Amends ADR 0034 §1 (storage),
 §3, §4 and §5.
+**§6 superseded by ADR 0043 (2026-11-03)**: boot opens the main menu, `--newgame` / capture
+runs bypass the front end, BACKTOMAIN and save-exit return to the main menu instead of quitting.
 
 ## Context
 
@@ -48,7 +50,7 @@ game boots straight into a new game (`new_src/core/Main.cpp:359`).
    valid. A world record that passes the CRC but fails parsing (only a serializer bug can do
    that) is logged and left partially applied, which is memory-safe. Write failures keep the
    previous file (atomic rename), are logged, and suppress the "Game Saved" message.
-6. **No main menu yet — stand-ins.** Boot = `MenuSystem::startGame(!hasSavedState())`:
+6. **(Superseded by ADR 0043.) No main menu yet — stand-ins.** Boot = `MenuSystem::startGame(!hasSavedState())`:
    Continue (`loadState(getRecentLoadType())`) when a save exists, else New Game
    (`removeState` + new-game resets). The CLI flag `--newgame` replaces "New Game" + confirm
    14 (wipes the slot). `backToMain` (Main Menu → Save Game / Don't Save, dead-menu Main

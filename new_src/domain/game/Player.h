@@ -11,6 +11,7 @@ namespace newcore {
 
 class Combat;
 class Entity;
+class Game;
 class Hud;
 class Localization;
 class Tables;
@@ -122,6 +123,8 @@ public:
 	void setDefs(const EntityDefs* defs) { defs_ = defs; }
 	// Weapon rows (ammo type / usage) read by selectNextWeapon. Wired in core/Main.cpp.
 	void setTables(const Tables* tables) { tables_ = tables; }
+	// Difficulty read by reset() (src/Player.cpp:560-564). Wired in core/Main.cpp.
+	void setGame(const Game* g) { game_ = g; }
 
 	// src/Player.cpp:192-217: select the next owned, not disabled weapon after
 	// ce.weapon that has ammo (or needs none, or is holy water 2), wrapping
@@ -271,6 +274,7 @@ public:
 private:
 	const EntityDefs* defs_ = nullptr;
 	const Tables* tables_ = nullptr;
+	const Game* game_ = nullptr;
 	Hud* hud_ = nullptr;
 	const Localization* loc_ = nullptr;
 	const int64_t* clock_ = nullptr;

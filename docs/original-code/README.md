@@ -32,6 +32,7 @@ Topic files (created on demand):
 | `hacking-minigame.md` | Hacking ("Hacker") minigame: EV_MINIGAME type 2 args (custom, columns, turns), column-sort rules, scramble generation and IQ scaling, keys/touch, exact draw layout and colors, sounds, vars[7] result; brief sentry-bot sibling summary |
 | `sentry-bot-minigame.md` | Sentry bot "Matrix Skip" minigame (EV_MINIGAME type 0): skip-code/IQ formula, board and solution, keys/touch, draw layout, vars[7], bot choice and `awardSentryBot`; scoped summary of the familiar (controllable bot) system |
 | `target-practice.md` | Target practice (map00 shooting range): EV_START_TARGETPRACTICE 84, strip to rifle+8 bullets, head/body/leg zones 30/20/10, score>120 → +1 accuracy, score bar, input/exit, target sprite frames |
+| `front-end.md` | Boot → `ST_LOGO` (l2.bmp) → `ST_INTRO_MOVIE` (prolog pan + crawl) → `MENU_MAIN` rows/skin/dial → confirm 14 → difficulty 16 (1/2/4) → `startGame` → `ST_CHARACTER_SELECTION` layout/input/stats → `ST_INTRO` prologue → `loadMap(1)`; `backToMain`, Save & Quit, sounds |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
 | `audio.md` | sound/music |
 | `app.md` | App lifecycle, game states, input mapping |

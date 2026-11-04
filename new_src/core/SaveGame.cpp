@@ -183,7 +183,8 @@ bool SaveGame::loadConfig() {
 		corrupt_ = true;
 		return false;
 	}
-	r.skip(1 + 1 + 1 + 1 + 1 + 1 + 4);                   // difficulty .. defaultLanguage
+	const int difficulty = r.readByte();                  // src/Game.cpp:1984
+	r.skip(1 + 1 + 1 + 1 + 1 + 4);                       // allowSounds .. defaultLanguage
 	const int currentLevelDeaths = r.readInt();
 	const int totalDeaths = r.readInt();
 	r.skip(4 + 4 + 4 + 1 + (5 + 10) * 4);                // animFrames .. menu indexes
@@ -199,6 +200,9 @@ bool SaveGame::loadConfig() {
 		corrupt_ = true;
 		return false;
 	}
+	const bool difficultyOk = difficulty == 1 || difficulty == 2 || difficulty == 4;
+	if (!difficultyOk) std::fprintf(stderr, "[save] config difficulty %d invalid -> 1\n", difficulty);
+	env_.game->setDifficulty(difficultyOk ? difficulty : 1);
 	Player& p = *env_.player;
 	p.currentLevelDeaths = currentLevelDeaths;
 	p.totalDeaths = totalDeaths;

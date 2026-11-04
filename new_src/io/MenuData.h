@@ -6,9 +6,12 @@
 
 namespace newcore {
 
-// Legacy Menus::menus ids (src/Menus.h:210-311); only the in-game subtree.
+// Legacy Menus::menus ids (src/Menus.h:210-311); in-game tree + main menu.
 enum MenuId : int {
 	kMenuLevelStats    = 1,
+	kMenuMain          = 3, kMenuMainHelp = 4, kMenuMainAbout = 8,
+	kMenuMainExit      = 13, kMenuMainConfirmNew = 14, kMenuMainDifficulty = 16,
+	kMenuMainOptions   = 17, kMenuMainMinigame = 18, kMenuMainMoreGames = 19,
 	kMenuInGame        = 29,
 	kMenuStatus        = 30, kMenuPlayer = 31, kMenuLevel = 32, kMenuGrades = 33,
 	kMenuOptions       = 35,
@@ -28,6 +31,7 @@ enum MenuId : int {
 	kMenuItemsSyringeMsg = 81, kMenuItemsHolyWaterMax = 82,
 	kMenuVending       = 83, kMenuVendingDrinks = 84, kMenuVendingSnacks = 85,
 	kMenuVendingConfirm = 86, kMenuVendingCantBuy = 87,
+	kMenuComicBook     = 89,
 };
 
 // Menus::MENUTYPE_* (src/Menus.h:7-15)
@@ -43,14 +47,15 @@ enum MenuItemFlag : int {
 	kItemChecked = 0x0400, kItemHidden = 0x8000,
 };
 
-// Menus::ACTION_* (src/Menus.h:135-167); only what the in-game tree uses.
+// Menus::ACTION_* (src/Menus.h:135-167); what the in-game tree + main menu use.
 enum MenuAction : int {
 	kActionNone = 0, kActionGoto = 1, kActionBack = 2, kActionLoad = 3,
-	kActionSave = 4, kActionBackToMain = 5, kActionChangeState = 9,
+	kActionSave = 4, kActionBackToMain = 5, kActionNewGame = 7, kActionExit = 8,
+	kActionChangeState = 9, kActionDifficulty = 10,
 	kActionRestartLevel = 12, kActionSaveQuit = 13, kActionShowDetails = 16,
 	kActionUseItemWeapon = 18, kActionUseItemSyring = 20, kActionUseItemOther = 21,
-	kActionConfirmUse = 24, kActionSaveExit = 25, kActionBackTwo = 26,
-	kActionConfirmBuy = 28, kActionBuyDrink = 29, kActionBuySnack = 30,
+	kActionContinue = 22, kActionConfirmUse = 24, kActionSaveExit = 25, kActionBackTwo = 26,
+	kActionMinigame = 27, kActionConfirmBuy = 28, kActionBuyDrink = 29, kActionBuySnack = 30,
 	kActionReturnToPlayer = 33,
 };
 

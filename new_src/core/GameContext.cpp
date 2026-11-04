@@ -21,13 +21,17 @@
 #include "render/api/RenderBackend.h"
 #include "text/Font.h"
 #include "ui/AutomapView.h"
+#include "ui/CharacterSelectView.h"
 #include "ui/DialogView.h"
 #include "ui/Hud.h"
 #include "ui/HudView.h"
+#include "ui/IntroMovieView.h"
 #include "ui/LoadingView.h"
 #include "ui/LootView.h"
 #include "ui/TravelMapView.h"
+#include "ui/MainMenuView.h"
 #include "ui/MenuView.h"
+#include "ui/PrologueView.h"
 #include "ui/Ui.h"
 
 namespace newcore {
@@ -67,7 +71,10 @@ void GameContext::init(const Init& sys) {
 	menuEnv.restartLevel = [this] { restartLevel(); };
 	menuEnv.saveGame = [this](int type) { loading_.requestSave(type); };
 	menuEnv.loadGame = [this] { return loadGame(loading_.recentLoadType()); };
-	menuEnv.backToMain = [this] { quitRequested_ = true; };
+	menuEnv.backToMain = [this] { backToMain_(); };
+	menuEnv.startGame = [this](bool n) { return loading_.startGame(n); };
+	menuEnv.hasSavedState = [this] { return loading_.save().hasSavedState(); };
+	menuEnv.quit = [this] { quitRequested_ = true; };
 	menuEnv.continueLevelStats = [this] { loading_.loadMap(loading_.nextMap(), true, false); };
 	menuEnv.vending = &minigames_.vending();
 	menuEnv.returnToPlayer = [this] { familiar_.returnsToPlayer(false); };
@@ -177,12 +184,33 @@ void GameContext::init(const Init& sys) {
 	loadEnv.upTimeMs = &upTimeMs;
 	loadEnv.openMenu = [this](int id) { nextMenuId_ = id; setState(StateId::Menu); };
 	loadEnv.quit = [this] { quitRequested_ = true; };
+	loadEnv.backToMain = [this] { backToMain_(); };
 	loading_.init(loadEnv);
 	TravelMapSession::Env travelEnv;
 	travelEnv.upTimeMs = &upTimeMs;
 	travelEnv.art = sys_.ui != nullptr ? &sys_.ui->art() : nullptr;
 	travelEnv.tables = sys_.tables;
 	travel_.init(travelEnv);
+	CharacterSelectSession::Env charEnv;
+	charEnv.player = sys_.player;
+	charEnv.game = sys_.game;
+	charEnv.loc = sys_.loc;
+	charEnv.tables = sys_.tables;
+	charEnv.host = this;
+	charEnv.upTimeMs = &upTimeMs;
+	charEnv.backToMain = [this] { backToMain_(); };
+	charSelect_.init(charEnv);
+	PrologueSession::Env introEnv;
+	introEnv.player = sys_.player;
+	introEnv.loc = sys_.loc;
+	introEnv.host = this;
+	prologue_.init(introEnv);
+	IntroMovieSession::Env movieEnv;
+	movieEnv.tables = sys_.tables;
+	movieEnv.loc = sys_.loc;
+	movieEnv.upTimeMs = &upTimeMs;
+	movieEnv.exit = [this] { exitIntroMovie_(); };
+	introMovie_.init(movieEnv);
 	if (sys_.tables) {
 		sys_.game->lerps.setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (SpriteLerps.h)
 	}
@@ -246,11 +274,13 @@ void GameContext::enterState_(StateId s) {
 		break;
 	case StateId::Dying:
 		zoom_.drop();                          // src/Canvas.cpp:1116-1124
-		// Player::died (src/Player.cpp:711-733). The hero is the marine
-		// (characterChoice 1, ScriptVM::updateScriptVars), hence sound 1092 (:720-722).
+		// Player::died (src/Player.cpp:711-733); death sound by character (:720-726).
 		++sys_.player->currentLevelDeaths;
 		++sys_.player->totalDeaths;
-		std::fprintf(stderr, "[sound] 1092\n");
+		{
+			const int cc = sys_.player->characterChoice;
+			if (cc >= 1 && cc <= 3) std::fprintf(stderr, "[sound] %d\n", cc == 1 ? 1092 : cc == 2 ? 1091 : 1090);
+		}
 		sys_.hud->startShake(upTimeMs, 350, 10);   // startShake(350, 5, 500): intensity 2*5 (:729)
 		sys_.player->ce.setStat(Enums::STAT_HEALTH, 0);
 		sys_.game->monsters.combatMonsters = nullptr;
@@ -282,6 +312,23 @@ void GameContext::enterState_(StateId s) {
 		// initGame clears the soft keys only; clearing the queue is the
 		// Dialog/Menu events analog, so world keys never leak into the game.
 		pendingActions_.clear();
+		break;
+	case StateId::CharacterSelect:
+		// src/Canvas.cpp:1166-1173; prologue Back restores the previous
+		// choice (src/IntroSequenceManager.cpp:723-726).
+		pendingActions_.clear();
+		charSelect_.begin(oldState == StateId::Intro ? sys_.player->characterChoice : 1);
+		break;
+	case StateId::Intro:
+		pendingActions_.clear();                       // (src/Canvas.cpp:1174-1178)
+		prologue_.begin();
+		break;
+	case StateId::Logo:
+		pendingActions_.clear();
+		break;
+	case StateId::IntroMovie:
+		pendingActions_.clear();                       // numEvents = 0 (src/GameStateRunner.cpp:343-347)
+		introMovie_.begin();
 		break;
 	case StateId::TravelMap:
 		// setState zeroes stateVars, then travelMapManager.init (src/Canvas.cpp:1062-1063).
@@ -365,6 +412,24 @@ void GameContext::tick() {
 		// (src/InputEventController.cpp:429-431).
 		if (state_ == StateId::TravelMap) {
 			if (travel_.handleAction(a)) loading_.finishTravelMap();
+			continue;
+		}
+		if (state_ == StateId::CharacterSelect) {
+			if (a == Action::ScreenTouch) charSelect_.handleTouch(screenTouchId_);
+			else charSelect_.handleAction(a);
+			continue;
+		}
+		if (state_ == StateId::Intro) {
+			if (a == Action::ScreenTouch) prologue_.handleTouch(screenTouchId_);
+			else prologue_.handleAction(a);
+			continue;
+		}
+		// ST_LOGO: only raw key 18 (shutdown) acts (src/InputEventController.cpp:167-172).
+		if (state_ == StateId::Logo) continue;
+		// ST_INTRO_MOVIE: any event skips, hasSeenIntro being forced true in the
+		// port (src/Canvas.cpp:833-841, src/CAppContainer.cpp:186-188).
+		if (state_ == StateId::IntroMovie) {
+			exitIntroMovie_();
 			continue;
 		}
 		// ST_AUTOMAP runs the playing handler unchanged (src/InputEventController.cpp:354-356).
@@ -486,6 +551,19 @@ void GameContext::tick() {
 		// Excluded from the update chain (src/Canvas.cpp:827); all timing is
 		// computed while drawing.
 		break;
+	case StateId::CharacterSelect:
+		// No map is loaded (loadMapID 0); the screen's only clock is upTimeMs, read while drawing.
+		break;
+	case StateId::Intro:
+		if (prologue_.done()) loading_.startNewGameMap();   // disposeIntro (src/Canvas.cpp:848-851)
+		break;
+	case StateId::Logo:                                     // pacLogoTime -1 .. 120 (src/GameStateRunner.cpp:332-347)
+		if (stateVars[0] <= 121) ++stateVars[0];
+		else setState(StateId::IntroMovie);
+		break;
+	case StateId::IntroMovie:
+		introMovie_.tick();
+		break;
 	}
 
 	// Screen shake randomize/expire, every state incl. Playing (legacy
@@ -523,10 +601,11 @@ void GameContext::tickLoading() {
 	if (!sys_.loadMapFile || !sys_.loadMapFile(sys_.game->loadMapID))
 		std::fprintf(stderr, "[load] map %d FAILED to load\n", sys_.game->loadMapID);
 	sys_.vm->resetPool();                                  // 20 threads freed (src/Game.cpp:332-360)
-	// Difficulty stamped BEFORE loadEntities, which reads it for the spawn-time
-	// +25% hp bump; at the legacy default 1 (src/Game.cpp:43) that bump does
-	// not apply (user decision 2026-09-23, spec 2026-09-22-monster-attacks §2.1a).
-	sys_.vm->vars[12] = 1;                                 // difficulty default (:692)
+	// Stamped BEFORE loadEntities; the spawn-time +25% hp bump
+	// (domain/game/Game.cpp:213) applies on difficulties 2/4 as in legacy.
+	sys_.vm->vars[12] = static_cast<short>(sys_.game->difficulty());   // (:692)
+	std::fprintf(stderr, "[load] difficulty %d character %d\n",
+		sys_.game->difficulty(), sys_.player->characterChoice);
 	sys_.game->loadEntities(*sys_.map, *sys_.defs);        // (:658); loadWorldState slot: fresh entry no-op (:670)
 	loading_.onEntitiesLoaded();
 	actions_.spawnPlayer();                                // (:673)
@@ -580,6 +659,26 @@ void GameContext::unloadMap_() {
 	// Player::reset clears the session (src/Player.cpp:504-505). Every reset path here
 	// (new game, load, restart) reloads the map, and the parked thread dies with resetPool.
 	practice_.reset();
+}
+
+// Canvas::backToMain(false) (src/Canvas.cpp:1372-1407).
+void GameContext::backToMain_() {
+	unloadMap_();                                        // unloadMapData + render->unloadMap analog (:1377-1379)
+	sys_.vm->resetPool();                                // the map's threads die with it
+	sys_.game->loadMapID = 0;                            // (:1375)
+	sys_.player->reset();                                // (:1376)
+	sys_.hud->clearScreenEffects();                      // render->endFade (:1380)
+	pauseGameTime = true;                                // as at boot
+	std::fprintf(stderr, "[sound] 1071\n");              // Music_Title (:1404)
+	nextMenuId_ = kMenuMain;
+	setState(StateId::Menu);                             // setMenu(MENU_MAIN) (:1405, src/MenuSystem.cpp:645-649)
+}
+
+void GameContext::exitIntroMovie_() {
+	std::fprintf(stderr, "[sound] stop\n");              // soundStop (src/IntroSequenceManager.cpp:872)
+	loading_.save().hasSeenIntro = true;
+	loading_.save().saveConfig();
+	backToMain_();
 }
 
 // ---- Restart Level (spec 2026-09-22-monster-attacks §10) ----
@@ -911,6 +1010,7 @@ void GameContext::buildHudModel(HudModel& m, bool showBottomBar, bool interactiv
 	// Producer half of the former Hud::feedPlayerStatus: the RAW live stats the
 	// legacy widgets read every draw pass (src/Hud.cpp:683-709).
 	const Player& p = *sys_.player;
+	m.characterChoice = p.characterChoice;
 	m.health = p.getHealth();
 	m.maxHealth = p.getMaxHealth();
 	m.shield = p.ce.getStat(Enums::STAT_ARMOR);
@@ -1122,6 +1222,10 @@ void GameContext::applyUiAction(UiAction a, int index) {
 		minigames_.latchTouch(index);
 		queued = Action::MiniGameTouch;
 		break;
+	case UiAction::ScreenTouch:
+		screenTouchId_ = index;
+		queued = Action::ScreenTouch;
+		break;
 	case UiAction::Resume:
 		// Touch-only in the original (src/MenuSystem.cpp:4787-4789): no key
 		// produces this action.
@@ -1160,14 +1264,17 @@ void GameContext::render(AppContext& app) {
 	sys_.world->setPracticeTargetFrames(tpFrames[0], tpFrames[1], tpFrames[2], tpFrames[3]);
 	ZoomPose zp;
 	const ZoomPose* zpp = (cinePose == nullptr && zoom_.renderPose(zp)) ? &zp : nullptr;
-	scene_.drawWorld(renderer, app.window(), cinePose, underDialog, zpp);
-	// The only writer of Game::visibility (ADR 0029). disableRenderActivate is
-	// tied to ST_CAMERA, not to the camera pose (src/Canvas.cpp:1038, :1211).
-	sys_.game->visibility = scene_.visibility();
-	sys_.game->visibility.cinematic = state_ == StateId::Camera;
-	// Seen marks of this frame (ADR 0036); gate = legacy updateAutomap.
-	Automap::markSeen(*sys_.map, sys_.game->visibility,
-	                  state_ == StateId::Playing || state_ == StateId::Automap);
+	// backToMain zeroes loadMapID (src/Canvas.cpp:1375); the old MapData stays resident (ADR 0035).
+	if (sys_.game->loadMapID != 0) {
+		scene_.drawWorld(renderer, app.window(), cinePose, underDialog, zpp);
+		// The only writer of Game::visibility (ADR 0029). disableRenderActivate is
+		// tied to ST_CAMERA, not to the camera pose (src/Canvas.cpp:1038, :1211).
+		sys_.game->visibility = scene_.visibility();
+		sys_.game->visibility.cinematic = state_ == StateId::Camera;
+		// Seen marks of this frame (ADR 0036); gate = legacy updateAutomap.
+		Automap::markSeen(*sys_.map, sys_.game->visibility,
+		                  state_ == StateId::Playing || state_ == StateId::Automap);
+	}
 
 	// View weapon paints over the world in full canvas space; its legacy
 	// anchors already include the world viewport origin (ADR 0009). The two
@@ -1312,6 +1419,7 @@ void GameContext::render(AppContext& app) {
 	if (state_ == StateId::Dialog && ui != nullptr) {
 		DialogViewModel dlg;
 		if (sys_.dialogs->buildViewModel(dlg)) {
+			dlg.portraitRow = std::clamp(sys_.player->characterChoice - 1, 0, 2);
 			const UiResult r = drawDialog(*ui, dlg);
 			applyUiAction(r.action, r.index);
 		}
@@ -1364,9 +1472,40 @@ void GameContext::render(AppContext& app) {
 		menu_.updateDrag(ui->in());
 		MenuViewModel mv;
 		if (menu_.buildViewModel(mv)) {
-			const UiResult r = drawMenu(*ui, mv);
+			const UiResult r = mv.mainSkin ? drawMainMenu(*ui, mv) : drawMenu(*ui, mv);
 			applyUiAction(r.action, r.index);
 		}
+	}
+
+	// Startup logo (src/Canvas.cpp:487-491): l2.bmp centred on black.
+	if (state_ == StateId::Logo && ui != nullptr) {
+		ui->panel(UiRect{ 0, 0, 480, 320 }, 0xFF000000);
+		ui->image(ui->art().logoL2, 240, 160, Graphics2D::kAnchorHCenter | Graphics2D::kAnchorVCenter);
+	}
+
+	// Intro movie (playIntroMovie, src/IntroSequenceManager.cpp:752-859): opaque 480x320.
+	if (state_ == StateId::IntroMovie && ui != nullptr) {
+		IntroMovieModel im;
+		introMovie_.buildModel(im);
+		const UiResult r = drawIntroMovie(*ui, im);
+		applyUiAction(r.action, r.index);
+	}
+
+	// Character select (drawCharacterSelection, src/IntroSequenceManager.cpp:341-462): opaque 480x320.
+	if (state_ == StateId::CharacterSelect && ui != nullptr) {
+		CharacterSelectModel cm;
+		charSelect_.buildModel(cm);
+		const UiResult r = drawCharacterSelect(*ui, cm);
+		applyUiAction(r.action, r.index);
+	}
+
+	// Prologue (drawStory, src/IntroSequenceManager.cpp:260-323): opaque 480x320,
+	// drawn only while a page is left (:268), like the legacy guard.
+	if (state_ == StateId::Intro && ui != nullptr && !prologue_.done()) {
+		PrologueModel pm;
+		prologue_.buildModel(pm);
+		const UiResult r = drawPrologue(*ui, pm);
+		applyUiAction(r.action, r.index);
 	}
 
 	// Travel map (drawTravelMap, src/TravelMapManager.cpp:146-256): opaque

@@ -46,6 +46,8 @@ struct DialogViewModel {
 	// no title, exactly like the legacy drawTitle early-out.
 	int titleStart = 0;
 	int titleLen = 0;
+	// Hud_Portrait_Small.bmp row = characterChoice - 1 (src/DialogSystem.cpp:291-308).
+	int portraitRow = 0;
 
 	// Scrollbar (numDialogLines > viewLines). Values are already
 	// header-adjusted by the producer.

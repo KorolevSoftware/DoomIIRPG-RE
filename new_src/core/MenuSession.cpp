@@ -41,6 +41,17 @@ constexpr int kVendingPaddingBottom = 3;
 constexpr int kVendingTruncateChars = (kVendingItemWidthPx - 10) / 12;   // 18
 constexpr int kVendingBarX = 350;
 
+// Main-menu geometry (ids < MENU_INGAME), all src/MenuSystem.cpp.
+constexpr int kMainItemWidth = 162;                    // setMenuSettings default (:4173-4178)
+constexpr int kMainItemPadding = 0;                    // (:4178)
+constexpr int kMainTruncateChars = (kMainItemWidth - 10) / 12;   // (:945-951)
+constexpr UiRect kMainRect{ 138, 126, 204, 176 };      // x = (480-204)/2 (:4241-4247); paint forces y/h (:803-806)
+constexpr UiRect kMainClip{ 0, 111, 480, 206 };        // setClipRect(0, 126-15, 480, 176+30) (:804)
+constexpr int kMainInitRectH = 152;                    // 38 << 2 (:4245, :2753)
+constexpr UiRect kDialRect{ 353, 122, 45, 183 };       // x = 138 + 0xd7, y = 137 - 0xf (:2771-2778)
+constexpr int kDialThumbLen = 11;                      // 183 >> 4 (:2780-2783, :2800-2802)
+constexpr int kDialKnobH = 24;                         // Menu_Dial_Knob.bmp
+
 constexpr char kCheckGlyph = '\x87';       // (:934-938)
 constexpr char kEllipsisGlyph = '\x85';    // (:948-951)
 // The same '\x80' is what a weapon with AMMO_NONE prints in its value column
@@ -255,6 +266,15 @@ bool isVendingMenu(int menuId) {
 	return menuId >= kMenuVending && menuId <= kMenuVendingCantBuy;
 }
 
+// The `menu < MENU_INGAME` tests of paint / setMenuSettings (src/MenuSystem.cpp:762-771, :803).
+bool isMainMenu(int menuId) { return menuId < kMenuInGame && menuId != kMenuLevelStats; }
+
+// Main-menu GOTO targets with no rewrite screen yet (deviation FE-D2, front-end.md).
+bool isUnportedMainScreen(int menuId) {
+	return menuId == kMenuMainOptions || menuId == kMenuMainMoreGames || menuId == kMenuComicBook ||
+		menuId == kMenuMainMinigame || menuId == kMenuMainHelp || menuId == kMenuMainAbout;
+}
+
 // fillVendingMachineSnacks' three name sets, menu strings (file 3), by map:
 // 1-3, other, 7-9 (src/MenuSystem.cpp:4100-4164).
 constexpr int kSnackCount = 12;
@@ -327,6 +347,7 @@ void MenuSession::init(const Env& env) {
 }
 
 UiRect MenuSession::listRect() const {
+	if (isMainMenu(menu_)) return kMainRect;
 	UiRect r = geometryFor(menu_).rect;
 	// LoadHelpResource re-wraps an over-long page against a 27 px narrower rect
 	// and leaves menuRect[2] narrowed (:3697), which is what moves the text off
@@ -354,15 +375,15 @@ void MenuSession::begin(int menuId) {
 	helpIndex_ = -1;
 	infoIndex_ = -1;
 	// Legacy clears the stack on every ST_MENU exit (src/Canvas.cpp:1033-1035),
-	// so it is empty on entry; setMenu clears it only for MENU_INGAME (:619-621).
+	// so it is empty on entry; setMenu clears it only for MENU_INGAME / MENU_MAIN (:619-621).
 	clearStack();
 	setMenu(menuId);
 }
 
 void MenuSession::setMenu(int menuId) {
-	// clearStack() for MENU_INGAME (:619-621). MENU_MAIN_BEGIN and
+	// clearStack() for MENU_INGAME and MENU_MAIN (:619-621). MENU_MAIN_BEGIN and
 	// MENU_INGAME_KICKING, the other two ids of that test, are unreachable here.
-	if (menuId == kMenuInGame) clearStack();
+	if (menuId == kMenuInGame || menuId == kMenuMain) clearStack();
 	oldMenu_ = menu_;
 	menu_ = menuId;
 	initMenu(menu_);
@@ -460,6 +481,18 @@ void MenuSession::initMenu(int menuId) {
 			items_[0].def.flags = kItemDisabled;
 			items_[6].def.flags = kItemDisabled;
 		}
+	} else if (menuId == kMenuMain) {                  // (:1256-1272)
+		if (env_.hasSavedState && env_.hasSavedState())
+			addItem(env_.loc->makeId(kTextIngame2, 70), kItemAlignCenter, kActionContinue, 0, kEmptyTextId);
+		addParsedRows(menuId, 0, 2);                   // New Game, Options
+		addParsedRows(menuId, 3, -1);                  // skips row 2 "Other Games" [GEC]
+	} else if (menuId == kMenuMainDifficulty) {        // (:1274-1281)
+		addParsedRows(menuId, 1, -1);                  // title row 0 not shown
+	} else if (menuId == kMenuMainExit) {              // (:1345-1350)
+		setYesNo(106, 0, kActionExit, 0);              // "Exit Game?", No preselected
+	} else if (menuId == kMenuMainConfirmNew) {        // (:1352-1357)
+		type_ = kMenuTypeVCenter;
+		setYesNo(107, 0, kActionGoto, kMenuMainDifficulty);   // "This will erase\n...", No preselected
 	} else {
 		// loadMenuItems(menu, 0, -1) (:2724-2727): the whole span, copied because
 		// initMenu patches flags per screen (:1549-1573).
@@ -482,6 +515,8 @@ void MenuSession::initMenu(int menuId) {
 		}
 	} else if (menuId == kMenuPlayer) {
 		selectedIndex_ = 2;                            // (:1575)
+	} else if (menuId == kMenuMainDifficulty) {
+		selectedIndex_ = 1;                            // (:1276), lands on "Normal"
 	}
 
 	// fillStatus' subset: the rows whose value the rewrite can actually source
@@ -505,6 +540,8 @@ void MenuSession::initMenu(int menuId) {
 			// rewrite does not have (spec §11.2, §15).
 			if (items_[i].def.param == kMenuControls) {
 				disableRow(i, "no arrow-controls screen");
+			} else if (isUnportedMainScreen(items_[i].def.param)) {
+				disableRow(i, "main-menu screen not ported (front-end.md FE-D2)");
 			} else if (env_.menus->type(items_[i].def.param) < 0 &&
 			           !isCodeBuiltScreen(items_[i].def.param)) {
 				// G7 widened this: an id absent from menus.bin is now refused
@@ -1199,6 +1236,7 @@ bool MenuSession::selectable(int i) const {
 int MenuSession::itemHeight(int i) const {
 	if (items_[i].def.action != 0) {
 		if (i == numItems_ - 1) return kItemHeightPx;
+		if (isMainMenu(menu_)) return kItemHeightPx + kMainItemPadding;
 		return kItemHeightPx + (isVendingMenu(menu_) ? kVendingPaddingBottom : kItemPaddingBottom);
 	}
 	if (i == numItems_ - 1) return kFontHeight;
@@ -1226,6 +1264,21 @@ int MenuSession::contentHeight() const {
 // Visible consequence of this choice: the first visible row is always flush
 // with the top of the region except at maximum scroll, where the clamp bites.
 int MenuSession::scrollPixels() const {
+	if (isMainMenu(menu_)) {
+		// getScrollPos' isMainMenu snap (:4927-4945): the first row whose half
+		// height lies past the widget offset is drawn flush with the top.
+		int raw = 0;
+		int maxRaw = 0;
+		mainScroll(raw, maxRaw);
+		int posY = 0;
+		for (int i = 0; i < numItems_; ++i) {
+			if ((items_[i].def.flags & kItemHidden) != 0) continue;
+			const int h = itemHeight(i);
+			if (raw < posY + (h >> 1)) return posY;
+			posY += h;
+		}
+		return raw;
+	}
 	const int maxScroll = contentHeight() - viewPx();
 	if (maxScroll <= 0) return 0;
 	// A touch drag writes the pixel offset directly and leaves scrollIndex
@@ -1241,6 +1294,19 @@ int MenuSession::scrollPixels() const {
 		px += itemHeight(i);
 	}
 	return std::clamp(px, 0, maxScroll);
+}
+
+// The main-menu scroll widget offset (A2 precedent): the index model's pixels,
+// clamped to field_0x40_ - field_0x3c_ with the SetScrollBox content C - 50 and
+// the initMenu-time view 152 (src/MenuSystem.cpp:2800-2802, src/Button.cpp:417-440).
+void MenuSession::mainScroll(int& raw, int& maxRaw) const {
+	maxRaw = std::max(0, contentHeight() - 50 - kMainInitRectH);
+	int px = 0;
+	for (int i = 0; i < scrollIndex_ && i < numItems_; ++i) {
+		if ((items_[i].def.flags & kItemHidden) != 0) continue;
+		px += itemHeight(i);
+	}
+	raw = std::clamp(px, 0, maxRaw);
 }
 
 // DELIBERATE DEVIATION (spec 2026-08-28-menu, DEVIATION section) — the last
@@ -1299,6 +1365,9 @@ void MenuSession::barDragTo(int cursorY, int maxScroll) {
 // field_0x38_, and every later move runs UpdateContent.
 void MenuSession::updateDrag(const UiInput& in) {
 	gestureConsumed_ = false;
+	// shortcut: no touch drag / dial drag on the main menu (deviation FE-D3);
+	// port handleUserMoved's dial branch if wanted.
+	if (isMainMenu(menu_)) return;
 	const int maxScroll = contentHeight() - viewPx();
 
 	if (!in.down) {
@@ -1514,6 +1583,10 @@ void MenuSession::handleAction(Action a) {
 			select(selectedIndex_);
 			break;
 		}
+		if (menu_ == kMenuMain) {                         // (:2939-2942)
+			gotoMenu(kMenuMainExit);
+			break;
+		}
 		[[fallthrough]];
 	case Action::Menu:                                    // ACTION_MENU
 		// Menu 83 returns to the vending terminal instead (:2927-2928, :2947-2948).
@@ -1521,6 +1594,9 @@ void MenuSession::handleAction(Action a) {
 		else back();
 		break;
 	case Action::MenuResume:                              // right soft key (:4787-4789)
+		// No Resume key below MENU_INGAME (:4498-4583), nor on menu 50 after a failed
+		// Continue: there is no game to resume (deviation FE-D1).
+		if (isMainMenu(menu_) || (env_.game != nullptr && env_.game->loadMapID == 0)) break;
 		// Deviation (ADR 0033): legacy returnToGame() leaves the EV_MINIGAME
 		// thread parked forever on the vending menus; endGame(2) resumes it.
 		if (isVendingMenu(menu_) && env_.vending != nullptr) env_.vending->endGame(2);
@@ -1639,6 +1715,19 @@ void MenuSession::select(int i) {
 		break;
 	case kActionBackToMain:                                       // (:3051-3053)
 		if (env_.backToMain) env_.backToMain();
+		break;
+	case kActionNewGame:                                          // (:3072-3080)
+		gotoMenu(env_.hasSavedState && env_.hasSavedState() ? kMenuMainConfirmNew : kMenuMainDifficulty);
+		break;
+	case kActionExit:                                             // (:3082-3084)
+		if (env_.quit) env_.quit();
+		break;
+	case kActionDifficulty:                                       // (:3095-3099)
+		if (env_.game != nullptr) env_.game->setDifficulty(items_[i].def.param);   // 1 / 2 / 4
+		if (env_.startGame) env_.startGame(true);
+		break;
+	case kActionContinue:                                         // (:3180-3182)
+		if (!env_.startGame || !env_.startGame(false)) gotoMenu(kMenuLoadNoSave);  // deviation FE-D1
 		break;
 	case kActionConfirmUse:                                       // (:3188-3197)
 		// saveIndexes(2|4) is replaced by the nav stack (same note as kActionUseItemWeapon).
@@ -1766,11 +1855,11 @@ int MenuSession::popMenu(int& selectedIndex, int& scrollIndex) {
 }
 
 // back() (:591-607). MENU_INGAME_SNIPER has no rewrite counterpart (spec
-// §4.1), and MENU_MAIN_MINIGAME / MENU_COMIC_BOOK are
-// main-menu ids that cannot be reached from ST_MENU. On MENU_INGAME_DEAD the
-// stack is empty and 51 is in neither list, so only the sound remains.
+// §4.1), and MENU_MAIN_MINIGAME / MENU_COMIC_BOOK are refused rows (FE-D2),
+// so they cannot be entered. On MENU_INGAME_DEAD the stack is empty and 51 is
+// in neither list, so only the sound remains.
 void MenuSession::back() {
-	std::fprintf(stderr, "[sound] 1122\n");                // (:577-581)
+	if (menu_ != kMenuMain) std::fprintf(stderr, "[sound] 1122\n");   // (:577-581)
 	if (stackCount_ != 0) {
 		int idx = 0;
 		int scroll = 0;
@@ -1827,6 +1916,12 @@ void MenuSession::composeLabel(int i) {
 	// (:5132-5140). ITEM_DISABLED does not remove it: the legacy info block is
 	// outside that test.
 	row.info = row.action && screenHasInfoButtons(menu_);
+	if (!row.action && (menu_ == kMenuMainExit || menu_ == kMenuMainDifficulty ||
+	                    menu_ == kMenuMainMinigame)) {
+		row.textDy = 8;                                               // (:968-977)
+	} else if (menu_ == kMenuMainConfirmNew && i == 3) {
+		row.textDy = 7;                                               // (:1053-1057)
+	}
 
 	// EMPTY_TEXT without ITEM_DIVIDER draws nothing but keeps its height (:930).
 	if (d.labelId == kEmptyTextId && (d.flags & kItemDivider) == 0) return;
@@ -1851,13 +1946,14 @@ void MenuSession::composeLabel(int i) {
 	}
 	if ((d.flags & kItemNoDehyphenate) == 0) t.dehyphenate();        // (:943-944)
 	const bool vending = isVendingMenu(menu_);
+	const bool mainMenu = isMainMenu(menu_);
 	if (row.action && t.getStringWidth() + 10 >
-	                  (vending ? kVendingItemWidthPx : kItemWidthPx)) {   // (:945-951)
+	                  (mainMenu ? kMainItemWidth : vending ? kVendingItemWidthPx : kItemWidthPx)) {   // (:945-951)
 		// NOTE: the trigger width is measured with the rewrite's 9 px advance
 		// while the original measured 12 px, so this fires later than it did in
 		// the original; the truncation length itself stays the literal 23 (18
-		// on the vending plates).
-		t.setLength(vending ? kVendingTruncateChars : kTruncateChars);
+		// on the vending plates, 12 on the main menu).
+		t.setLength(mainMenu ? kMainTruncateChars : vending ? kVendingTruncateChars : kTruncateChars);
 		t.append(kEllipsisGlyph);
 	}
 	if ((d.flags & kItemDivider) != 0) {                             // (:954-957)
@@ -1919,6 +2015,36 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 		}
 	}
 
+	if (isMainMenu(menu_)) {
+		m.mainSkin = true;
+		m.drawLogo = true;                                // every main list screen (:1263, :1278, :1284, :1348, :1355)
+		m.itemWidth = kMainItemWidth;
+		m.itemPadding = kMainItemPadding;
+		m.rect = kMainRect;
+		m.clip = kMainClip;
+		m.scrollPx = scrollPixels();
+		m.rowHits = true;
+		// isMainMenuScrollBar (:2753-2785); drawScrollbar skips 13/14/16/17/18/19 (:869-879).
+		m.showBar = (menu_ == kMenuMain || menu_ == kMenuMainHelp) && contentPx > kMainInitRectH;
+		if (m.showBar) {
+			int raw = 0;
+			int maxRaw = 0;
+			mainScroll(raw, maxRaw);
+			m.barRect = kDialRect;
+			const int thumb = maxRaw > 0 ? raw * (kDialRect.h - kDialThumbLen) / maxRaw : 0;   // field_0x48_
+			const int centre = thumb + (kDialThumbLen >> 1);
+			m.dialKnobY = kDialRect.y + (centre * 4 / 5 - (kDialKnobH >> 1)) + 16;   // drawScrollbar (:5019-5036)
+		}
+		// Button 11 only on 16 / 4, no button 15 below MENU_INGAME (:4498-4583).
+		if (menu_ == kMenuMainDifficulty || menu_ == kMenuMainHelp) {
+			softLeftText_.setLength(0);
+			if (env_.loc != nullptr) softLeftText_.append(env_.loc->get(kTextIngame2, 80));
+			softLeftText_.dehyphenate();
+			m.softLeft = &softLeftText_;
+		}
+		return true;
+	}
+
 	const bool vending = isVendingMenu(menu_);
 	if (vending) {
 		m.vendingSkin = true;
@@ -1965,10 +2091,12 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 			softLeftText_.dehyphenate();
 			m.softLeft = &softLeftText_;
 		}
-		softRightText_.setLength(0);
-		softRightText_.append(vending ? "Exit" : "Resume");   // ASCII literals in the original
-		softRightText_.dehyphenate();
-		m.softRight = &softRightText_;
+		if (env_.game == nullptr || env_.game->loadMapID != 0) {   // no game to resume (FE-D1)
+			softRightText_.setLength(0);
+			softRightText_.append(vending ? "Exit" : "Resume");   // ASCII literals in the original
+			softRightText_.dehyphenate();
+			m.softRight = &softRightText_;
+		}
 	}
 
 	// The torn page, drawn over everything else while selectedHelpIndex is set

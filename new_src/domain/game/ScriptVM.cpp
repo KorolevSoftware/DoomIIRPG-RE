@@ -312,12 +312,7 @@ void ScriptVM::updateScriptVars() {
 	vars[2] = (short)(env_.player->viewX >> 6);
 	vars[3] = (short)(env_.player->viewY >> 6);
 	vars[8] = env_.player->inventory[24];
-	// characterChoice: marine. Legacy forces {1,2,3} from the intro select
-	// (src/IntroSequenceManager.cpp:599/628/676, marine=1) and re-stamps
-	// scriptStateVars[14] each run (src/Game.cpp:3468); no select UI yet —
-	// hardcode marine so EVT 617 takes the v14==1 branch (hides doorway
-	// walkers 10+9 @IPs 3297/3299, docs/research/2026-08-26-choice-branch.md).
-	vars[14] = 1;
+	vars[14] = static_cast<short>(env_.player->characterChoice);   // src/Game.cpp:3468
 	vars[16] = env_.player->isFamiliar ? 1 : 0;
 	// vars[12] (difficulty) is stamped at load only (src/Game.cpp:3461-3471).
 }
@@ -1707,7 +1702,8 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				std::fprintf(stderr, "[script] START_ARMORREPAIR skipped (no armor repair)\n");
 				break;
 			}
-			std::fprintf(stderr, "[sound] 1073\n");   // characterChoice 1 (:33-35)
+			if (env_.player->characterChoice >= 1 && env_.player->characterChoice <= 3)   // (:33-38)
+				std::fprintf(stderr, "[sound] %d\n", env_.player->characterChoice == 1 ? 1073 : 1072);
 			{
 				std::string text = env_.loc->get(kTextMain, 210);
 				env_.hud->addMessage(text, 0xAA000000, 3);   // :40

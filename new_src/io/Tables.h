@@ -70,6 +70,10 @@ public:
 	std::vector<int8_t> monsterWeakness;
 	std::vector<int32_t> movieEffects;
 	std::vector<uint8_t> monsterSounds;
+	// The intro-movie table camera, Game::loadTableCamera(14, 15)
+	// (src/Game.cpp:511-574, docs/original-code/front-end.md §3.4 R1).
+	std::vector<int16_t> tableCamera;        // table 14: header, keys, tween indices, counts
+	std::vector<uint8_t> tableCameraTweens;  // table 15: tween bytes, channel blocks
 	std::vector<uint16_t> skyPaletteA;
 	std::vector<uint8_t> skyTexelA;
 	std::vector<uint16_t> skyPaletteB;

@@ -154,7 +154,11 @@ UiResult drawHud(Ui& ui, const HudModel& m) {
 			res.action = UiAction::PassTurn;
 		}
 		const bool portraitHeld = ui.isActive(UiId::HudPortrait);
-		ui.face(portraitHeld ? art.playerActive : art.playerFaces, kFaceX, kFaceY,
+		const Texture& faces = m.characterChoice == 2 ? art.playerFacesDoom
+			: m.characterChoice == 3 ? art.playerFacesScientist : art.playerFaces;
+		const Texture& active = m.characterChoice == 2 ? art.playerActiveDoom
+			: m.characterChoice == 3 ? art.playerActiveScientist : art.playerActive;
+		ui.face(portraitHeld ? active : faces, kFaceX, kFaceY,
 			kFaceRowH, m.health, m.maxHealth);
 		ui.image(portraitHeld ? art.playerFrameActive : art.playerFrameNormal,
 			kFrameX, kFrameY, kTopLeft);

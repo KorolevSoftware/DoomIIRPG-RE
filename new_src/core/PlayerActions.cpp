@@ -341,11 +341,13 @@ void PlayerActions::handleAction(Action a) {
 			if (outcome == kWallPush) {
 				// Within 1 tile of a wall: lower the weapon, jolt the view 2
 				// units toward the wall, NO turn consumed (:467-487); while
-				// zoomed the press is swallowed (:468-470). Hero is forced to
-				// characterChoice 1 -> no_use2; the bot bumps with 1111 (:472-480).
+				// zoomed the press is swallowed (:468-470). 1073 for character 1,
+				// 1072 for 2/3; the bot bumps with 1111 (:472-480).
 				if (zoomed) break;
 				Combat& c = env_.game->combat;
-				std::fprintf(stderr, "[sound] %d\n", p.isFamiliar ? 1111 : 1073);
+				if (p.isFamiliar) std::fprintf(stderr, "[sound] 1111\n");
+				else if (p.characterChoice >= 1 && p.characterChoice <= 3)
+					std::fprintf(stderr, "[sound] %d\n", p.characterChoice == 1 ? 1073 : 1072);
 				c.shiftWeapon(true);                                   // :482
 				c.pushedWall = true;                                   // :483-484
 				c.pushedTime = (int)*c.env().gameTime + 500;

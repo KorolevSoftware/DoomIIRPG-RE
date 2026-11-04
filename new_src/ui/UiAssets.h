@@ -34,6 +34,7 @@ public:
 	Texture healthNormal, healthActive;
 	Texture keyNormal, keyActive;
 	Texture playerFaces, playerActive, playerFrameNormal, playerFrameActive;
+	Texture playerFacesDoom, playerActiveDoom, playerFacesScientist, playerActiveScientist;
 	Texture numbers;
 	Texture cockpitOverlay;
 	// Sniper scope mask (src/App.cpp:456) and zoom dial (src/Canvas.cpp:234-235).
@@ -51,6 +52,15 @@ public:
 	Texture menuBackground;
 	Texture menuScrollBar, menuSliderTop, menuSliderMid, menuSliderBottom;
 	Texture menuSoftKey, menuOptionButton;
+	// Main-menu skin (src/Canvas.cpp:1382-1383, src/MenuSystem.cpp:95-138).
+	Texture mainBackground, mainLogo, mainButton, mainButtonOn, mainDial, mainDialKnob;
+	// Startup logo (src/GameStateRunner.cpp:335) and the intro-movie picture
+	// (src/IntroSequenceManager.cpp:774), 720x372.
+	Texture logoL2, prolog;
+	// Character select (setupCharacterSelection, src/IntroSequenceManager.cpp:108-127);
+	// the faces reuse playerFaces / playerFacesDoom / playerFacesScientist.
+	Texture charSelectBG, charSelectTopBar, charSelectStatHeader, charSelectStatBar, charSelectAtlas;
+	Texture majorLegs, majorTorso, rileyLegs, rileyTorso, sargeLegs, sargeTorso;
 	// HUD buff box icons, 30x30 cells stacked vertically (src/Canvas.cpp:172).
 	Texture iconsBuffs;
 	// Vending terminal background and soft keys, also drawn by the vending

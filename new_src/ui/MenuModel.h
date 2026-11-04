@@ -38,6 +38,7 @@ struct MenuRow {
 	                       // items[2].flags = inventory[18] + 4). A row the
 	                       // rewrite merely cannot honour is NOT flagged here:
 	                       // it is drawn normally and refused on activation.
+	int textDy = 0;  // label y nudge: +8 on label rows of 13/16/18, +7 on row 3 of 14 (src/MenuSystem.cpp:968-977, :1053-1057)
 };
 
 // Per-frame view model of a whole menu screen — the original has one paint()
@@ -102,6 +103,12 @@ struct MenuViewModel {
 	bool statsSkin = false;
 	// The confirm screen's quantity arrows (:247-261, rendered only there, :5174-5175).
 	bool showQtyArrows = false;
+	// The main-menu look (ids < MENU_INGAME, src/MenuSystem.cpp:764-1134), drawn
+	// by drawMainMenu; barRect doubles as the dial rect and dialKnobY is the
+	// knob's canvas y (drawScrollbar, :5019-5036).
+	bool mainSkin = false;
+	bool drawLogo = false;
+	int dialKnobY = 0;
 
 	// The torn-page help popup (drawHelpText, src/MenuSystem.cpp:1135-1173).
 	// Non-null = the modal is up: it is drawn over the whole screen and NOTHING

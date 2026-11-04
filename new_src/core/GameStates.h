@@ -9,19 +9,23 @@ namespace newcore {
 // requests for them are logged by the VM.
 enum class StateId : int {
 	Menu        = 1,  // legacy ST_MENU (src/Canvas.h:68; spec 2026-08-28-menu §2.1)
+	IntroMovie  = 2,  // legacy ST_INTRO_MOVIE: prolog.bmp pan + text crawl (front-end.md §9)
 	Playing     = 3,  // legacy ST_PLAYING
 	InterCamera = 4,  // legacy ST_INTER_CAMERA (script lerp show; world renders from player view)
 	Automap     = 6,  // legacy ST_AUTOMAP (src/Canvas.h:73)
 	Dialog      = 8,  // legacy ST_DIALOG (real dialogs, spec GROUP 1)
+	Intro       = 9,  // legacy ST_INTRO: prologue pages (src/Canvas.h:68-93)
 	Loading     = 7,  // legacy ST_LOADING
 	MiniGame    = 12, // legacy ST_MINI_GAME (src/Canvas.h:79; spec 2026-10-29-minigames-layout §4)
 	Dying       = 13, // legacy ST_DYING (stub)
 	Saving      = 16, // legacy ST_SAVING (src/Canvas.h:68-93)
 	Camera      = 18, // legacy ST_CAMERA (scripted cinematic, cutscenes-camera.md §1)
 	TravelMap   = 21, // legacy ST_TRAVELMAP (src/Canvas.h:88)
+	CharacterSelect = 22, // legacy ST_CHARACTER_SELECTION (src/Canvas.h:68-93)
 	Looting     = 23, // legacy ST_LOOTING (src/Canvas.h:90; loot-crouch camera,
 	                  // docs/research/2026-08-25-camera-pitch-loot.md)
 	BotDying    = 25, // legacy ST_BOT_DYING (src/Canvas.h:92; familiar death, ADR 0041 §3)
+	Logo        = 26, // legacy ST_LOGO: l2.bmp on black for 122 frames (src/GameStateRunner.cpp:332-347)
 };
 
 // Discrete input actions (legacy getKeyAction subset,
@@ -49,6 +53,9 @@ enum class Action : int {
 	// No key produces this one either: it is a minigame touch release, whose
 	// button id was latched through MiniGameHost::latchTouch (the ListRow idiom).
 	MiniGameTouch,
+	// Touch-only as well: a front-end screen button release, whose legacy
+	// button id GameContext latched (the MiniGameTouch idiom).
+	ScreenTouch,
 	// DEBUG (removable, minigames): V starts the vending machine, slot 1.
 	DebugVending,
 	// DEBUG (removable, minigames): H starts the map00 hacking puzzle.

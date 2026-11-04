@@ -24,6 +24,10 @@ enum class UiId : int {
 	MenuInfo6, MenuInfo7, MenuInfo8,
 	MenuSoftLeft, MenuSoftRight,
 	AutomapSoftLeft, AutomapSoftRight,
+	// character select buttons 0-4 (src/IntroSequenceManager.cpp:375-460)
+	CharSlot0, CharSlot1, CharSlot2, CharYes, CharBack,
+	// prologue buttons 0-2 (src/IntroSequenceManager.cpp:42-48)
+	StoryBack, StoryMore, StorySkip,
 	Count
 };
 
@@ -49,6 +53,7 @@ enum class UiAction : int {
 	// Dialog Yes/No tap: index = scriptStateVars[4] to set, then the same
 	// FIRE the page-ok icon queues (src/TouchController.cpp:411-421, :283-288).
 	DialogChoice,
+	ScreenTouch,      // index = legacy button id of a front-end screen (char select 0-4, prologue 0-2)
 };
 
 // One navigation edge per frame. Moves a selected index owned by the screen's

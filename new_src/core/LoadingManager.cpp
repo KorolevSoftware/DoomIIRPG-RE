@@ -25,29 +25,42 @@ void LoadingManager::init(const Env& env) {
 	save_.init({ env.game, env.player, env.vm, env.map, env.defs, env.gameTime, env.upTimeMs });
 }
 
-void LoadingManager::boot(bool forceNewGame) {
+void LoadingManager::boot(bool skipFrontEnd) {
 	save_.loadConfig();
-	startGame(forceNewGame || !save_.hasSavedState());
+	if (skipFrontEnd) {
+		env_.game->setDifficulty(1);
+		env_.player->characterChoice = 1;
+		resetForNewGame();
+		startNewGameMap();
+	} else {
+		env_.host->requestState(StateId::Logo);   // App.cpp:119-128 -> ST_LOGO
+	}
 }
 
-void LoadingManager::startGame(bool newGame) {
+bool LoadingManager::startGame(bool newGame) {
 	if (!newGame) {
-		if (loadState(recentLoadType())) return;
-		std::fprintf(stderr, "[save] Continue failed -> new game\n");
+		if (loadState(recentLoadType())) return true;
+		std::fprintf(stderr, "[save] Continue failed\n");
+		return false;
 	}
+	resetForNewGame();
+	env_.host->requestState(StateId::CharacterSelect);   // (src/MenuSystem.cpp:3603)
+	return true;
+}
+
+void LoadingManager::startNewGameMap() { loadMap(1, false, true); }
+
+void LoadingManager::resetForNewGame() {
 	save_.removeState();                                                  // src/MenuSystem.cpp:3587
 	activeLoadType_ = 0;                                                  // :3589-3602
 	isLoaded_ = false;
 	env_.game->loadMapID = 0;
 	lastMapID_ = 0;
 	Player& p = *env_.player;
-	const int bestGrades = p.bestGrades;                                  // legacy reset() leaves it
 	p.reset();
-	p.bestGrades = bestGrades;
 	p.totalDeaths = 0;
 	p.currentLevelDeaths = 0;
 	p.currentGrades = 0;
-	loadMap(1, false, true);   // character select + intro skipped: startupMap 1 (src/IntroSequenceManager.cpp:135)
 }
 
 bool LoadingManager::loadState(int loadType) {
@@ -180,9 +193,9 @@ void LoadingManager::tickSaving() {
 		std::fprintf(stderr, "[save] save FAILED (type 0x%X)\n", type);    // legacy Error(48); deviation SL-D2
 	// clearEvents(1) (:899): nothing queued in the rewrite.
 	if (type & 0x04) {
-		env_.quit();                                   // backToMain stand-in (ADR 0037 §6)
+		env_.backToMain();                             // backToMain(false) (src/Canvas.cpp:879-880)
 	} else if (type & 0x40) {
-		env_.quit();                                   // app->shutdown()
+		env_.quit();                                   // app->shutdown() (src/Canvas.cpp:882-883)
 	} else if (type & 0x08) {
 		enterTravelMap();                              // src/Canvas.cpp:885-886
 	} else if (type & 0x10) {                          // src/Canvas.cpp:888-890

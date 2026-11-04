@@ -743,12 +743,6 @@ void Game::turnEntityIntoWaterSpout(Entity* e) {
 	std::fprintf(stderr, "[combat] water spout sprite=%d\n", sprite);
 }
 
-// ---- Monsters / combat (spec 2026-08-26-combat-stage1 §0.B, §3.2) ----
-
-int Game::difficulty() const {
-	return vm_ != nullptr ? vm_->vars[12] : 2;
-}
-
 // ---- Secrets (docs/original-code/secret-doors.md) ----
 
 // src/Player.cpp:264-276: legacy addXP posts msg 103 (102 for xp<0) with flags 0.

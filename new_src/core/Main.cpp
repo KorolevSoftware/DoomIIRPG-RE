@@ -43,8 +43,8 @@ int main(int argc, char* argv[]) {
 	std::srand((unsigned)std::time(nullptr));
 
 	// Command line: [--newgame] [archive]. The archive is the first non-option
-	// argument; --newgame wipes the save slot (New Game + confirm 14 stand-in,
-	// ADR 0037 §6).
+	// argument; --newgame is a dev shortcut: wipe + start map 1 as Major on
+	// Normal, no menu (ADR 0043 §3).
 	// --backend= and DOOM2RPG_BACKEND chose between gl and sokol until group G8
 	// of spec 2026-09-11-sokol-gfx-backend retired render/gl/; they are still
 	// accepted so old command lines keep working, and are otherwise ignored.
@@ -314,6 +314,7 @@ int main(int argc, char* argv[]) {
 	player.reset();
 
 	Game game;
+	player.setGame(&game);
 	// Entity load happens in Loading phase 1 (GameContext::tickLoading,
 	// src/LoadingManager.cpp:658) — do not duplicate it here.
 
@@ -362,7 +363,8 @@ int main(int argc, char* argv[]) {
 		});
 	dialogs.init({             // Env: ctx, vm, game, loc, hud, font, tables
 		&ctx, &vm, &game, &loc, &hud, &font, &tables });
-	// Golden capture runs never read, write or wipe the user's save.
+	// Golden capture runs never read, write or wipe the user's save, and take the
+	// same front-end bypass as --newgame (ADR 0043 §3).
 	if (std::getenv("DOOM2RPG_CAPTURE_TICKS")) {
 		ctx.loading().save().setDiskEnabled(false);
 		forceNewGame = true;

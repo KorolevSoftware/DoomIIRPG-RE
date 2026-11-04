@@ -194,12 +194,11 @@ UiResult drawDialog(Ui& ui, const DialogViewModel& m) {
 				ui.imageRegion(uiImages, 30, 0, 15, 9, kScrCx + 10, ry + rh, 0);  // corner icon (290)
 			}
 			// Hero portrait from Hud_Portrait_Small.bmp (imgPortraitsSM, 20x60,
-			// height/3 rows; row = characterChoice-1, :291-308). The rewrite has
-			// no character selection, so choice is fixed to the first marine =
-			// row 0 (spec §9).
+			// height/3 rows; row = characterChoice-1 = m.portraitRow, :291-308).
 			const Texture& portraits = art.portraitsSmall;
 			if (portraits.valid() && portraits.height() / 3 > 0) {
-				ui.imageRegion(portraits, 0, 0, portraits.width(), portraits.height() / 3,
+				ui.imageRegion(portraits, 0, m.portraitRow * (portraits.height() / 3),
+					portraits.width(), portraits.height() / 3,
 					rx + 2, ry + 3, 0);
 				textX += portraits.width() + 2;  // text starts after portrait (309-310)
 			} else {

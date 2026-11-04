@@ -684,7 +684,7 @@ bool Combat::playerSeq() {
 			case 11:                    snd = 1101; break;
 			case 12:                    snd = 1009; break;
 			case 13:                    snd = 1114; break;
-			case 14:                    snd = 1136; break; // characterChoice==2/3 -> 1137
+			case 14:                    snd = env_.player->characterChoice == 1 ? 1137 : 1136; break;   // :298
 			case 1:                     snd = 1015; break;
 			}
 			if (snd != -1) std::fprintf(stderr, "[combat] fire sound %d\n", snd);

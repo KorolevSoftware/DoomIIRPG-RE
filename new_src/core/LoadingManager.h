@@ -38,12 +38,14 @@ public:
 		const int64_t* gameTime = nullptr;
 		const int64_t* upTimeMs = nullptr;
 		std::function<void(int menuId)> openMenu;
-		std::function<void()> quit;       // backToMain / shutdown stand-in (ADR 0037 §6)
+		std::function<void()> quit;       // app->shutdown() (Save & Quit, src/Canvas.cpp:882-883)
+		std::function<void()> backToMain; // GameContext::backToMain_ (src/Canvas.cpp:1372-1407)
 	};
 	void init(const Env& env);
 
-	void boot(bool forceNewGame);                          // App.cpp:120 loadConfig + main-menu stand-in (ADR 0037 §6)
-	void startGame(bool newGame);                          // MenuSystem::startGame (src/MenuSystem.cpp:3580-3608)
+	void boot(bool skipFrontEnd);       // App.cpp:119-128 loadConfig, then the front end or the dev/capture bypass (ADR 0043 §3)
+	bool startGame(bool newGame);       // MenuSystem::startGame (src/MenuSystem.cpp:3571-3609); false = no usable save (Continue)
+	void startNewGameMap();             // disposeIntro: loadMap(startupMap = 1, false, true) (src/IntroSequenceManager.cpp:131-136)
 	// LoadingManager::loadState + Game::loadState collapsed (src/LoadingManager.cpp:38-45,
 	// src/Game.cpp:2191-2215, deviation SL-D1). False = no usable player file, nothing changed.
 	bool loadState(int loadType);
@@ -70,6 +72,7 @@ public:
 	int captionId() const { return caption_; }      // loading-box caption (G3)
 
 private:
+	void resetForNewGame();                         // startGame(true) body minus the state change (src/MenuSystem.cpp:3584-3602)
 	void saveState(int saveType, int captionId);   // src/LoadingManager.cpp:47-53
 	void enterTravelMap();                          // TravelMapManager::init var-15 part
 	PlayerState::Header headerAtPlayer(int mapId) const;

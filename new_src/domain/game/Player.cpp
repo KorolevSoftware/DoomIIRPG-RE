@@ -145,15 +145,13 @@ void Player::reset() {
 	numStatusEffectsCopy = 0;
 	for (auto& v : statusEffectsCopy) v = 0;
 	// src/Player.cpp:558-563, after the inventory clear so the credits stick.
-	// shortcut: the difficulty == 2 DEFENSE 0 override is skipped (Player has
-	// no Game access); add it when a difficulty other than 1 becomes selectable.
 	setStatsAccordingToCharacterChoice();
+	if (game_ != nullptr && game_->difficulty() == 2) baseCe.setStat(Enums::STAT_DEFENSE, 0);
 	updateStats();
 	completedLevels = 0;
 	highestMap = 1;
 	moves = 0;
 	currentGrades = 0;
-	bestGrades = 0;
 	chainsawStrengthBonusCount = 0;    // src/Player.cpp:519
 	lastSkipCode = 0;                  // :520
 	gameCompleted = false;             // :572

@@ -34,6 +34,7 @@ struct HudModel {
 	bool slashAmmo = false;
 	// 0..3, folded from inventory slots 19/20 (docs/original-code/ui.md §5).
 	int keysRow = 0;
+	int characterChoice = 1;  // picks the face sheet pair (src/App.cpp:438-449)
 	// Legacy repaint bit 0x4 for the frame's state (ui.md §8): the caller's
 	// gameplay-view gate, carried here instead of wrapping the view call.
 	bool showBottomBar = false;

@@ -5,14 +5,17 @@
 #include <functional>
 #include <vector>
 
+#include "core/CharacterSelectSession.h"
 #include "core/CinematicCamera.h"
 #include "core/Familiar.h"
 #include "core/GameStates.h"
+#include "core/IntroMovieSession.h"
 #include "core/LoadingManager.h"
 #include "core/LootSession.h"
 #include "core/TravelMapSession.h"
 #include "core/MenuSession.h"
 #include "core/PlayerActions.h"
+#include "core/PrologueSession.h"
 #include "core/TargetPractice.h"
 #include "core/ZoomController.h"
 #include "domain/game/Automap.h"
@@ -86,7 +89,7 @@ public:
 	void restartLevel();
 	// Death-effect reset + LoadingManager::loadState. False = no usable player file.
 	bool loadGame(int loadType);
-	// backToMain / shutdown stand-in (ADR 0037 §6); GameLoop stops on it.
+	// ACTION_EXIT / Save & Quit / window close; GameLoop stops on it.
 	bool quitRequested() const { return quitRequested_; }
 
 	// Single mutator, mirrors Canvas::setState (src/Canvas.cpp:1020-1217):
@@ -179,6 +182,8 @@ private:
 	bool inputBlocked() const;
 
 	void unloadMap_();       // per-map runtime teardown before the next map file is read
+	void backToMain_();      // Canvas::backToMain(false) (src/Canvas.cpp:1372-1407)
+	void exitIntroMovie_();  // movie end or any key (src/Canvas.cpp:833-841, src/IntroSequenceManager.cpp:861-878)
 	void tickLoading();      // two-phase ordered tail (spec §5)
 	void tickPlaying();      // legacy playing tick order (spec §6)
 	bool checkDeath_();      // ST_DYING / familiar ST_BOT_DYING entry; true = state left
@@ -248,6 +253,14 @@ private:
 	Text travelLabelText_;
 	Text travelNameText_;
 	Text travelPromptText_;
+
+	// ST_CHARACTER_SELECTION and the button id its ScreenTouch release latched.
+	CharacterSelectSession charSelect_;
+	int screenTouchId_ = -1;
+	// ST_INTRO prologue pages.
+	PrologueSession prologue_;
+	// ST_INTRO_MOVIE pan + crawl.
+	IntroMovieSession introMovie_;
 
 	// ST_AUTOMAP per-frame model, cursor blink and the soft-key labels it borrows.
 	AutomapModel automapModel_;

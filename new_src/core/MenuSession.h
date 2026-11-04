@@ -62,7 +62,10 @@ public:
 		std::function<void()> restartLevel;  // ACTION_RESTARTLEVEL target (GameContext::restartLevel)
 		std::function<void(int saveType)> saveGame;   // canvas->saveState(type, 3, 196)
 		std::function<bool()> loadGame;      // loadState(getRecentLoadType()); false = no usable save
-		std::function<void()> backToMain;    // canvas->backToMain stand-in: quit (ADR 0037 §6)
+		std::function<void()> backToMain;    // Canvas::backToMain(false) (src/Canvas.cpp:1372-1407)
+		std::function<bool(bool newGame)> startGame;   // MenuSystem::startGame; false = Continue found no usable save
+		std::function<bool()> hasSavedState;           // Game::hasSavedState (Continue row, New Game confirm)
+		std::function<void()> quit;                    // ACTION_EXIT: app->shutdown() (src/MenuSystem.cpp:3082-3084)
 		std::function<void()> continueLevelStats;   // MENU_LEVEL_STATS select: loadMap(next, true, false)
 		VendingMachine* vending = nullptr;   // vending menus 83-85: prices, exits
 		std::function<void()> returnToPlayer;   // ACTION_RETURN_TO_PLAYER: familiarReturnsToPlayer(false)
@@ -163,6 +166,7 @@ private:
 	int  itemHeight(int i) const;     // getMenuItemHeight (:4947-4984)
 	int  contentHeight() const;       // sum over the non-hidden rows (:2742-2751)
 	int  scrollPixels() const;        // scrollIndex_ -> pixels (spec §6.3, A2)
+	void mainScroll(int& raw, int& maxRaw) const;   // main-menu widget offset + its clamp (front-end.md §5.3)
 	int  maxScrollIndex() const;      // last index the pixel clamp still moves (types 5/7)
 	int  barThumbLen() const;         // L = V*H/C (SetScrollBox, src/Button.cpp:397-405)
 	void barDragTo(int cursorY, int maxScroll);  // fmScrollButton::Update (:497-534)

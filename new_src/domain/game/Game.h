@@ -218,11 +218,11 @@ public:
 	// Last rendered world frame (ADR 0029); written only by GameContext::render.
 	ViewVisibility visibility;
 
-	// Difficulty source: ScriptVM vars[12], default 2 when no VM is wired
-	// (spec §1 difficulty note).
-	int difficulty() const;
+	int  difficulty() const { return difficulty_; }   // game->difficulty: 1 Normal, 2 Difficult, 4 Nightmare
+	void setDifficulty(int d) { difficulty_ = d; }
 
 private:
+	int difficulty_ = 1;                                // src/Game.cpp:43
 	MapData* map_ = nullptr;
 	const EntityDefs* defs_ = nullptr;     // set in loadEntities
 	ScriptVM* vm_ = nullptr;

@@ -43,6 +43,8 @@ bool Tables::load(const std::vector<uint8_t>& data) {
 	range(11, s, c); ok = ok && loadTable(data, s, c, monsterWeakness);
 	range(12, s, c); ok = ok && loadTable(data, s, c, movieEffects);
 	range(13, s, c); ok = ok && loadTable(data, s, c, monsterSounds);
+	range(14, s, c); ok = ok && loadTable(data, s, c, tableCamera);
+	range(15, s, c); ok = ok && loadTable(data, s, c, tableCameraTweens);
 	range(16, s, c); ok = ok && loadTable(data, s, c, skyPaletteA);
 	range(17, s, c); ok = ok && loadTable(data, s, c, skyTexelA);
 	range(18, s, c); ok = ok && loadTable(data, s, c, skyPaletteB);
