@@ -46,11 +46,17 @@ bool HackingGame::loadAssets(TextureStore& store, const UiAssets::ResourceReader
 	return ok;
 }
 
+// (src/HackingGame.cpp:28-33): 3..5 columns, turns 5..19 / 5..29 / 5..39.
+void HackingGame::playFromMainMenu() {
+	const int rnd = ItemPickup::nextInt() % 3 + 3;
+	begin(0, rnd, ItemPickup::nextInt() % (rnd * 10 - 15) + 5);
+}
+
 void HackingGame::begin(int b1, int b2, int b3) {
 	if (b1 != 0) std::fprintf(stderr, "[hacking] custom puzzle %d not supported\n", b1);
 	columns_ = std::max(3, std::min(b2, 6));
 	const int turns = (b3 == -1) ? 30 : b3;
-	const int iq = host_->env().player->ce.getIQPercent();
+	const int iq = host_->fromMainMenu() ? 0 : host_->env().player->ce.getIQPercent();   // (:64)
 	const int scrambles = (10000 * turns + turns * (100 - iq) * (100 - iq)) / 20000;
 	// shortcut: 0 scrambles would loop forever on a solved board (the legacy
 	// recursion); shipped turns 15..40 always give >= 7.
@@ -285,7 +291,7 @@ void HackingGame::releasePass() {
 void HackingGame::endGame(int n) {
 	done_ = true;
 	std::fprintf(stderr, "[sound] %d\n", n == 1 ? 1043 : 1040);
-	host_->evaluateResults(n);
+	if (!host_->fromMainMenu()) host_->evaluateResults(n);   // (:623-626)
 	host_->finish(n);
 }
 

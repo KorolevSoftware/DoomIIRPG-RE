@@ -18,6 +18,7 @@ enum class StateId : int {
 	Loading     = 7,  // legacy ST_LOADING
 	MiniGame    = 12, // legacy ST_MINI_GAME (src/Canvas.h:79; spec 2026-10-29-minigames-layout §4)
 	Dying       = 13, // legacy ST_DYING (stub)
+	Credits     = 15, // legacy ST_CREDITS: 2:0 crawl on black (src/Canvas.cpp:1161-1165, docs/original-code/front-end.md §12.4)
 	Saving      = 16, // legacy ST_SAVING (src/Canvas.h:68-93)
 	Camera      = 18, // legacy ST_CAMERA (scripted cinematic, cutscenes-camera.md §1)
 	TravelMap   = 21, // legacy ST_TRAVELMAP (src/Canvas.h:88)

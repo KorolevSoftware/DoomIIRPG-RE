@@ -51,6 +51,12 @@ constexpr int kMainInitRectH = 152;                    // 38 << 2 (:4245, :2753)
 constexpr UiRect kDialRect{ 353, 122, 45, 183 };       // x = 138 + 0xd7, y = 137 - 0xf (:2771-2778)
 constexpr int kDialThumbLen = 11;                      // 183 >> 4 (:2780-2783, :2800-2802)
 constexpr int kDialKnobH = 24;                         // Menu_Dial_Knob.bmp
+// The eleven main-menu help leaves (Game Help children + About).
+constexpr UiRect kMainHelpRect{ 85, 0, 300, 320 };     // paint: setMenuDimentions(85, 0, 300, 320) (:807-845)
+constexpr UiRect kMainHelpClip{ 0, 0, 480, 320 };      // setClipRect(screenRect[0], menuRect[1], screenRect[2], menuRect[3]) (:852)
+constexpr int kMainHelpInitRectH = 281;                // setMenuSettings(77, 10, 323, 281), the height initMenu tests (:4248-4264, :2753)
+constexpr UiRect kMainHelpDialRect{ 408, 81, 45, 183 };   // 0x198, 0x51 + Menu_Dial size (:2773-2776)
+constexpr int kMainHelpWrap = 35;                      // wrapText(menu >= MENU_INGAME ? ... : 35) (:3674), a CHARACTER count
 
 constexpr char kCheckGlyph = '\x87';       // (:934-938)
 constexpr char kEllipsisGlyph = '\x85';    // (:948-951)
@@ -233,17 +239,31 @@ int helpResourceFor(int menuId) {
 	case kMenuHelpHacker:     return 8;    // (:1749-1753)
 	case kMenuHelpMatrixSkip: return 9;    // (:1755-1759)
 	case kMenuHelpPowerUp:    return 10;   // (:1761-1765)
+	// The main-menu leaves (:1288-1344, :1466-1486).
+	case kMenuMainGeneral:        return 1;
+	case kMenuMainMove:           return 2;
+	case kMenuMainAttack:         return 3;
+	case kMenuMainSniper:         return 7;
+	case kMenuMainArmorHelp:      return 4;
+	case kMenuMainItemHelp:       return 6;
+	case kMenuMainEffectHelp:     return 5;
+	case kMenuMainHackerHelp:     return 8;
+	case kMenuMainMatrixSkipHelp: return 9;
+	case kMenuMainPowerUpHelp:    return 10;
+	case kMenuMainAbout:          return 11;
 	default:                  return -1;
 	}
 }
 
 // Screens with no menus.bin row that the rewrite builds in code, mirroring their
 // initMenu cases (ADR 0013). G7 added the three confirm screens; G6 adds
-// QUESTLOG 46 (LoadNotebook, :1707-1710) and the ten type-5 HELP leaves. Every
+// QUESTLOG 46 (LoadNotebook, :1707-1710) and the ten type-5 HELP leaves; the
+// main-menu confirms EXIT 13 / CONFIRMNEW 14 (:1345-1357) are SetYESNO-built. Every
 // remaining absent id stays refused by the GOTO gate in initMenu.
 bool isCodeBuiltScreen(int menuId) {
 	return menuId == kMenuLoad || menuId == kMenuRestartLvl || menuId == kMenuSaveQuit ||
-		menuId == kMenuQuestLog || menuId == kMenuItemsConfirm || helpResourceFor(menuId) > 0;
+		menuId == kMenuQuestLog || menuId == kMenuItemsConfirm || helpResourceFor(menuId) > 0 ||
+		menuId == kMenuComicBook || menuId == kMenuMainExit || menuId == kMenuMainConfirmNew;
 }
 
 // The screens whose action rows carry an "i" button, verbatim from the paint
@@ -269,10 +289,14 @@ bool isVendingMenu(int menuId) {
 // The `menu < MENU_INGAME` tests of paint / setMenuSettings (src/MenuSystem.cpp:762-771, :803).
 bool isMainMenu(int menuId) { return menuId < kMenuInGame && menuId != kMenuLevelStats; }
 
-// Main-menu GOTO targets with no rewrite screen yet (deviation FE-D2, front-end.md).
-bool isUnportedMainScreen(int menuId) {
-	return menuId == kMenuMainOptions || menuId == kMenuMainMoreGames || menuId == kMenuComicBook ||
-		menuId == kMenuMainMinigame || menuId == kMenuMainHelp || menuId == kMenuMainAbout;
+bool isMainHelpLeaf(int menuId) { return isMainMenu(menuId) && helpResourceFor(menuId) > 0; }
+
+// Main-menu GOTO targets the rewrite does not open (deviation FE-D2). nullptr = ported.
+const char* unportedMainScreenReason(int menuId) {
+	if (menuId == kMenuMainOptions)
+		return "MENU_MAIN_OPTIONS ships 0 rows; src/ fills it with [GEC] menus (front-end.md FE-D2)";
+	if (menuId == kMenuMainMoreGames) return "Other Games is removed from MENU_MAIN (front-end.md FE-D2)";
+	return nullptr;
 }
 
 // fillVendingMachineSnacks' three name sets, menu strings (file 3), by map:
@@ -347,7 +371,7 @@ void MenuSession::init(const Env& env) {
 }
 
 UiRect MenuSession::listRect() const {
-	if (isMainMenu(menu_)) return kMainRect;
+	if (isMainMenu(menu_)) return isMainHelpLeaf(menu_) ? kMainHelpRect : kMainRect;
 	UiRect r = geometryFor(menu_).rect;
 	// LoadHelpResource re-wraps an over-long page against a 27 px narrower rect
 	// and leaves menuRect[2] narrowed (:3697), which is what moves the text off
@@ -378,6 +402,22 @@ void MenuSession::begin(int menuId) {
 	// so it is empty on entry; setMenu clears it only for MENU_INGAME / MENU_MAIN (:619-621).
 	clearStack();
 	setMenu(menuId);
+}
+
+// The ST_CREDITS BACK/FIRE handler's menu half (src/InputEventController.cpp:398-412).
+// menu_ still holds the screen Credits was opened from, so setMenu keeps its cursor (:1226-1229).
+void MenuSession::returnFromCredits() {
+	helpIndex_ = -1;
+	infoIndex_ = -1;
+	clearStack();                                      // leaving ST_MENU emptied it (src/Canvas.cpp:1033-1035)
+	if (env_.game == nullptr || env_.game->loadMapID == 0) {
+		const int idx = 3 + ((env_.hasSavedState && env_.hasSavedState()) ? 1 : 0);
+		pushMenu(kMenuMain, idx, 0);                   // verbatim quirk: idx 3/4 is "Mini Games" (FE §12.4)
+		setMenu(kMenuMainHelp);
+	} else {
+		pushMenu(kMenuInGame, 7, 0);
+		setMenu(kMenuHelp);
+	}
 }
 
 void MenuSession::setMenu(int menuId) {
@@ -443,6 +483,8 @@ void MenuSession::initMenu(int menuId) {
 	} else if (helpResourceFor(menuId) > 0) {          // (:1663-1705, :1749-1765)
 		type_ = kMenuTypeHelp;
 		loadHelpResource(helpResourceFor(menuId));
+		if (menuId == kMenuMainEffectHelp)             // (:1295-1301); the in-game 44 has none (:1692-1696)
+			addItem(kEmptyTextId, kItemNoSelect, kActionNone, 0, kEmptyTextId);
 	} else if (menuId == kMenuLoad) {                  // (:1714-1719)
 		type_ = kMenuTypeVCenter;
 		scrollIndex_ = 0;
@@ -488,11 +530,17 @@ void MenuSession::initMenu(int menuId) {
 		addParsedRows(menuId, 3, -1);                  // skips row 2 "Other Games" [GEC]
 	} else if (menuId == kMenuMainDifficulty) {        // (:1274-1281)
 		addParsedRows(menuId, 1, -1);                  // title row 0 not shown
+	} else if (menuId == kMenuMainHelp) {              // (:1282-1287)
+		addParsedRows(menuId, 1, -1);                  // row 0 "Back" dropped
+	} else if (menuId == kMenuMainMinigame) {          // (:1275-1281)
+		addParsedRows(menuId, 1, -1);                  // "Back" dropped
 	} else if (menuId == kMenuMainExit) {              // (:1345-1350)
 		setYesNo(106, 0, kActionExit, 0);              // "Exit Game?", No preselected
 	} else if (menuId == kMenuMainConfirmNew) {        // (:1352-1357)
 		type_ = kMenuTypeVCenter;
 		setYesNo(107, 0, kActionGoto, kMenuMainDifficulty);   // "This will erase\n...", No preselected
+	} else if (menuId == kMenuComicBook) {
+		// empty: ComicBookSession owns the screen (:2276-2278)
 	} else {
 		// loadMenuItems(menu, 0, -1) (:2724-2727): the whole span, copied because
 		// initMenu patches flags per screen (:1549-1573).
@@ -517,6 +565,8 @@ void MenuSession::initMenu(int menuId) {
 		selectedIndex_ = 2;                            // (:1575)
 	} else if (menuId == kMenuMainDifficulty) {
 		selectedIndex_ = 1;                            // (:1276), lands on "Normal"
+	} else if (menuId == kMenuMainMinigame) {
+		selectedIndex_ = 1;                            // (:1276); the initMenu tail moves it onto Hacker
 	}
 
 	// fillStatus' subset: the rows whose value the rewrite can actually source
@@ -540,8 +590,8 @@ void MenuSession::initMenu(int menuId) {
 			// rewrite does not have (spec §11.2, §15).
 			if (items_[i].def.param == kMenuControls) {
 				disableRow(i, "no arrow-controls screen");
-			} else if (isUnportedMainScreen(items_[i].def.param)) {
-				disableRow(i, "main-menu screen not ported (front-end.md FE-D2)");
+			} else if (const char* why = unportedMainScreenReason(items_[i].def.param)) {
+				disableRow(i, why);
 			} else if (env_.menus->type(items_[i].def.param) < 0 &&
 			           !isCodeBuiltScreen(items_[i].def.param)) {
 				// G7 widened this: an id absent from menus.bin is now refused
@@ -551,7 +601,9 @@ void MenuSession::initMenu(int menuId) {
 			}
 			break;
 		case kActionChangeState:
-			if (items_[i].def.param != 6) disableRow(i, "no ST_CREDITS state");   // 6 = ST_AUTOMAP (src/Canvas.h:73)
+			// 6 = ST_AUTOMAP, 15 = ST_CREDITS (src/Canvas.h:68-93)
+			if (items_[i].def.param != 6 && items_[i].def.param != 15)
+				disableRow(i, "no rewrite state for this ACTION_CHANGESTATE");
 			break;
 		case kActionShowDetails:
 			// showDetailsMenu() -> MENU_SHOWDETAILS (71), built in code from the
@@ -1064,9 +1116,11 @@ void MenuSession::loadHelpResource(int resource) {
 		std::fprintf(stderr, "[menu] help resource %d has an unresolved argument\n", resource);
 	}
 
-	// menu >= MENU_INGAME, so the budget is ingameScrollWithBarMaxChars = 49 and
-	// never the 35 of the main-menu branch (:3674).
-	helpText_.wrapText(kHelpMaxChars);
+	// menu >= MENU_INGAME: ingameScrollWithBarMaxChars = 49; the main-menu
+	// leaves: 35 (:3674).
+	const bool mainLeaf = isMainMenu(menu_);
+	const int wrap = mainLeaf ? kMainHelpWrap : kHelpMaxChars;
+	helpText_.wrapText(wrap);
 	loadHelpItems(helpText_, 0);
 
 	int h = 0;
@@ -1079,8 +1133,8 @@ void MenuSession::loadHelpResource(int resource) {
 
 	// menuRect[3] is still the setMenuSettings height (256) at this point, NOT
 	// the 241 paint narrows it to (:848); the second half of the original's
-	// condition, `menu >= MENU_INGAME`, is true for all ten leaves.
-	if (kHelpInitRectH < h) {                          // (:3684-3699)
+	// condition, `menu >= MENU_INGAME`, excludes the main-menu leaves.
+	if (!mainLeaf && kHelpInitRectH < h) {             // (:3684-3699)
 		numItems_ = 0;
 		helpText_.setLength(0);
 		if (env_.loc != nullptr) helpText_.append(env_.loc->get(kTextHelp, resource));
@@ -1093,7 +1147,7 @@ void MenuSession::loadHelpResource(int resource) {
 	}
 
 	std::fprintf(stderr, "[menu] help %d: %d lines, wrap %d, rect w %d\n", resource,
-		numItems_, helpNarrowed_ ? listRect().w / kCharSpacing : kHelpMaxChars,
+		numItems_, helpNarrowed_ ? listRect().w / kCharSpacing : wrap,
 		listRect().w);
 }
 
@@ -1264,7 +1318,8 @@ int MenuSession::contentHeight() const {
 // Visible consequence of this choice: the first visible row is always flush
 // with the top of the region except at maximum scroll, where the clamp bites.
 int MenuSession::scrollPixels() const {
-	if (isMainMenu(menu_)) {
+	// Legacy isMainMenu is false for type 5 (:2813): the leaves take the generic path.
+	if (isMainMenu(menu_) && !isMainHelpLeaf(menu_)) {
 		// getScrollPos' isMainMenu snap (:4927-4945): the first row whose half
 		// height lies past the widget offset is drawn flush with the top.
 		int raw = 0;
@@ -1583,8 +1638,8 @@ void MenuSession::handleAction(Action a) {
 			select(selectedIndex_);
 			break;
 		}
-		if (menu_ == kMenuMain) {                         // (:2939-2942)
-			gotoMenu(kMenuMainExit);
+		if (menu_ == kMenuMain) {                         // (:2939-2942), FE-D10
+			if (env_.quit) env_.quit();
 			break;
 		}
 		[[fallthrough]];
@@ -1675,6 +1730,10 @@ void MenuSession::select(int i) {
 	case kActionNone:
 		break;
 	case kActionGoto:
+		if (items_[i].def.param == kMenuMainExit) {
+			if (env_.quit) env_.quit();               // FE-D10: no "Exit Game?" confirm
+			break;
+		}
 		gotoMenu(items_[i].def.param);
 		break;
 	case kActionBack:
@@ -1793,7 +1852,19 @@ void MenuSession::select(int i) {
 		returnToGame();
 		break;
 	case kActionChangeState:                 // ACTION_CHANGESTATE (src/MenuSystem.cpp:3086-3092)
-		if (items_[i].def.param == 6 && env_.host != nullptr) env_.host->requestState(StateId::Automap);
+		if (env_.host == nullptr) break;
+		if (items_[i].def.param == 6) {
+			env_.host->requestState(StateId::Automap);
+		} else if (items_[i].def.param == 15) {
+			if (env_.game != nullptr && env_.game->loadMapID != 0) std::fprintf(stderr, "[sound] 1071\n");   // in-game only
+			env_.host->requestState(StateId::Credits);
+		}
+		break;
+	case kActionMinigame:                    // (src/MenuSystem.cpp:3208-3221)
+		if (items_[i].def.param == 0 || items_[i].def.param == 2 || items_[i].def.param == 4) {
+			std::fprintf(stderr, "[sound] stop\n");   // soundStop()
+			if (env_.playMiniGame) env_.playMiniGame(items_[i].def.param);
+		}
 		break;
 	default:
 		std::fprintf(stderr, "[menu] action %d (param %d) has no rewrite path\n",
@@ -1821,8 +1892,9 @@ void MenuSession::gotoMenu(int menuId) {
 	// for as long as it is up while ST_MENU still swallows the input. No id the
 	// in-game tree can reach produces one (every code-built body appends at
 	// least four rows, every menus.bin row of the tree is non-empty), so this
-	// only fires if the data or a future body changes.
-	if (numItems_ == 0) {
+	// only fires if the data or a future body changes. MENU_COMIC_BOOK is the
+	// one intended 0-row screen: GameContext hands it to ComicBookSession.
+	if (numItems_ == 0 && menuId != kMenuComicBook) {
 		std::fprintf(stderr, "[menu] menu %d produced 0 rows — staying on menu %d\n",
 			menuId, fromMenu);
 		stackCount_ = fromDepth;
@@ -1855,9 +1927,9 @@ int MenuSession::popMenu(int& selectedIndex, int& scrollIndex) {
 }
 
 // back() (:591-607). MENU_INGAME_SNIPER has no rewrite counterpart (spec
-// §4.1), and MENU_MAIN_MINIGAME / MENU_COMIC_BOOK are refused rows (FE-D2),
-// so they cannot be entered. On MENU_INGAME_DEAD the stack is empty and 51 is
-// in neither list, so only the sound remains.
+// §4.1). MENU_MAIN_MINIGAME / MENU_COMIC_BOOK with an empty stack (after a
+// main-menu minigame) go to MENU_MAIN (:608-610). On MENU_INGAME_DEAD the
+// stack is empty and 51 is in neither list, so only the sound remains.
 void MenuSession::back() {
 	if (menu_ != kMenuMain) std::fprintf(stderr, "[sound] 1122\n");   // (:577-581)
 	if (stackCount_ != 0) {
@@ -1880,6 +1952,8 @@ void MenuSession::back() {
 	} else if (menu_ == kMenuInGame || menu_ == kMenuItems || menu_ == kMenuItemsDrinks ||
 	           menu_ == kMenuQuestLog) {
 		returnToGame();
+	} else if (menu_ == kMenuMainMinigame || menu_ == kMenuComicBook) {
+		setMenu(kMenuMain);
 	}
 }
 
@@ -2016,27 +2090,41 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 	}
 
 	if (isMainMenu(menu_)) {
+		const bool leaf = isMainHelpLeaf(menu_);
 		m.mainSkin = true;
-		m.drawLogo = true;                                // every main list screen (:1263, :1278, :1284, :1348, :1355)
+		// Every main list screen (:1263, :1278, :1284, :1348, :1355); the leaves set false (:1288-1344).
+		m.drawLogo = !leaf;
 		m.itemWidth = kMainItemWidth;
 		m.itemPadding = kMainItemPadding;
-		m.rect = kMainRect;
-		m.clip = kMainClip;
+		m.rect = leaf ? kMainHelpRect : kMainRect;
+		m.clip = leaf ? kMainHelpClip : kMainClip;
 		m.scrollPx = scrollPixels();
 		m.rowHits = true;
-		// isMainMenuScrollBar (:2753-2785); drawScrollbar skips 13/14/16/17/18/19 (:869-879).
-		m.showBar = (menu_ == kMenuMain || menu_ == kMenuMainHelp) && contentPx > kMainInitRectH;
-		if (m.showBar) {
-			int raw = 0;
-			int maxRaw = 0;
-			mainScroll(raw, maxRaw);
-			m.barRect = kDialRect;
-			const int thumb = maxRaw > 0 ? raw * (kDialRect.h - kDialThumbLen) / maxRaw : 0;   // field_0x48_
-			const int centre = thumb + (kDialThumbLen >> 1);
-			m.dialKnobY = kDialRect.y + (centre * 4 / 5 - (kDialKnobH >> 1)) + 16;   // drawScrollbar (:5019-5036)
+		if (leaf) {
+			m.showBar = contentPx > kMainHelpInitRectH;   // isMainMenuScrollBar (:2753, :2773-2776)
+			if (m.showBar) {
+				m.barRect = kMainHelpDialRect;
+				const int maxScroll = contentPx - viewPx();   // A2: the knob follows the index model's clamp
+				const int thumb = maxScroll > 0 ? m.scrollPx * (kDialRect.h - kDialThumbLen) / maxScroll : 0;
+				const int centre = thumb + (kDialThumbLen >> 1);
+				m.dialKnobY = kMainHelpDialRect.y + (centre * 4 / 5 - (kDialKnobH >> 1)) + 16;   // (:5019-5036)
+			}
+		} else {
+			// isMainMenuScrollBar (:2753-2785); drawScrollbar skips 13/14/16/17/18/19 (:869-879).
+			m.showBar = (menu_ == kMenuMain || menu_ == kMenuMainHelp) && contentPx > kMainInitRectH;
+			if (m.showBar) {
+				int raw = 0;
+				int maxRaw = 0;
+				mainScroll(raw, maxRaw);
+				m.barRect = kDialRect;
+				const int thumb = maxRaw > 0 ? raw * (kDialRect.h - kDialThumbLen) / maxRaw : 0;   // field_0x48_
+				const int centre = thumb + (kDialThumbLen >> 1);
+				m.dialKnobY = kDialRect.y + (centre * 4 / 5 - (kDialKnobH >> 1)) + 16;   // drawScrollbar (:5019-5036)
+			}
 		}
-		// Button 11 only on 16 / 4, no button 15 below MENU_INGAME (:4498-4583).
-		if (menu_ == kMenuMainDifficulty || menu_ == kMenuMainHelp) {
+		// Button 11 (:4564-4580): 4, 5-12, 16, 18, 20-22; no button 15 below MENU_INGAME (:4498-4583).
+		// G3b relies on kMenuMainMinigame being here.
+		if (menu_ == kMenuMainDifficulty || menu_ == kMenuMainHelp || menu_ == kMenuMainMinigame || leaf) {
 			softLeftText_.setLength(0);
 			if (env_.loc != nullptr) softLeftText_.append(env_.loc->get(kTextIngame2, 80));
 			softLeftText_.dehyphenate();

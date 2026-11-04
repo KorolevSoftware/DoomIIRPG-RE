@@ -587,3 +587,150 @@ FIRE with `loadMapID == 0` pushes `MENU_MAIN` (return index 3, or 4 with a save)
 
 `startGame` calls `soundStop()` (`src/MenuSystem.cpp:3582`), so the title music stops
 before character select. Character select and the prologue play no music.
+
+---------------------------------------------------------------------------------
+## 12. Main-menu sub-screens (research 2026-11-04, `docs/research/2026-11-04-main-menu-subscreens.md`)
+
+`menus.bin` holds rows only for menus 1, 3, 4, 16-19, 26, 27, 29-33, 35, 37, 42, 50, 51, 57,
+62, 65, 67, 70, 72, 73, 75, 79-87 (decoded from the shipped file). Every other id below is
+**built in code** by `initMenu`. Note: `src/MenuSystem.cpp` is ISO-8859 text, so plain
+`grep` treats it as binary and prints nothing. Use `grep -a`.
+
+### 12.1 `MENU_COMIC_BOOK` 89: a menu id that hands control to the `ComicBook` object
+* It is not a canvas state. GOTO 89 runs `gotoMenu` (pushes `MENU_MAIN`, `src/MenuSystem.cpp:2818-2824`),
+  and `initMenu` case 89 is empty (`:2276-2278`), so `numItems = 0` and `type` keeps the
+  previous value. Ownership: `app->comicBook = new ComicBook` (`src/App.cpp:93`).
+* Hooks: `paint` → `comicBook->Draw(g)` + `return` (`src/MenuSystem.cpp:721-724`). The
+  early return means no background, no soft keys and no scrollbar.
+  `handleMenuEvents` → `handleComicBookEvents(key, action)` first, then the normal
+  menu handling continues (`:2834-2836`). `handleUserTouch` → `Touch(x,y,b)` + return
+  (`:4662-4665`). `handleUserMoved` → `TouchMove` (`:4832-4833`).
+* Assets (all present in the `.ipa` under `Payload/Doom2rpg.app/Packages/`, 4-bit BMP):
+  `ComicBook/Cover.bmp`, `ComicBook/page_01..16.bmp` (17 portrait pages, 320×425..437,
+  `imgComicBook[17]`, `src/ComicBook.cpp:267-316`); `ComicBook/frames/iPhone cover.bmp`
+  and `iPhone page 1a,1b,2a,2b,2c,3a,3b,4a,4b,4c,5a,5b,5c,6a,6b,6c,7a,7b,8a,8b,8c,9,10a,10b,10c,
+  11a,11b,12a,12b,13a,13b,14a,14b,15a,15b,15c,16a,16b.bmp` (39 landscape frames, 480×320,
+  `imgiPhoneComicBook[39]`, `:323-440`). `case 13` of the page switch has no `break` and
+  also loads page_14 (`:306-309`). This is harmless.
+* Loading: each `Draw` loads at most one page and one frame (`:103-121`). Until all 17+39
+  are loaded it shows `DrawLoading`: a black clear, then "Loading" with 0-3 dots
+  (`field_0x14c/5 % 4`) at (240,160) anchor 3 (`:216-258`). That takes 39 frames.
+* Mode actually used: `is_iPhoneComic` starts false (`:53`). The portrait mode is
+  switched only through `GetOrientation()`, which is always true (`g_interfaceOrientation = 1`,
+  `:67-76`, `:124-132`). So the port only ever shows the **39 landscape frames**, unrotated,
+  on a white clear (`:137-138`). The current frame `iPhonePage` is drawn at `(endPoint, 0)`. While
+  dragging or sliding, the next frame (wraps 38→0) is drawn at `endPoint+480` and the previous frame (0→38)
+  at `endPoint-480` (`:164-209`). The 17 portrait pages are loaded but never drawn.
+* Paging (touch): `Touch(b=true)` starts a drag. `TouchMove` adds the x delta to `endPoint`
+  and stores it in `midPoint` (`:880-913`). On release (`:775-818`), `endPoint > 240` or `midPoint > 2` selects the
+  previous frame, and `endPoint < -240` or `midPoint < -2` selects the next frame. Otherwise the view snaps back
+  (`endPoint = endPoint*4/5` each frame, `:641-650`). The target wraps in 0..38 (`:836-846`). The slide moves
+  `max(|midPoint|, 8)` px per frame until `|endPoint| >= 480`, then commits (`:584-639`).
+* Keys: `handleComicBookEvents` fakes a touch: press at (SCR_CX,SCR_CY), then for LEFT 64 moves
+  with x+1 each (→ previous frame) or for RIGHT 64 moves with x−1 each (→ next frame), then release.
+  At the end it sets `drawExitButton = false` (`:972-994`).
+  It passes pixel ints to `CAppContainer::userPressed/Moved/Released`, which multiply by
+  480/320 because they expect normalised floats (`src/CAppContainer.cpp:71-89`). The direction is
+  still correct, but `|endPoint|` is already ≥ 480, so the flip commits in one frame with no slide.
+* Exit: (a) touch: a short tap (release ≤ 8 frames after press) toggles a "Done" button
+  at rect (10,10,60,30) (`:35-38`, toggle `:756-758`). It is drawn as a black 1-px border with fill `(v<<8)|(v<<16)|0xFF` with v = 50, or 150 when highlighted, which `fillRect` reads as ARGB, so it is blue RGB(50,50,255) / (150,150,255) (`src/ComicBook.cpp:954-961`, `src/Graphics.cpp:88-101`; corrected 2026-11-04), and the
+  label "Done" sits at the centre with anchor 3 (`:930-970`). Releasing on it plays nothing extra and calls `DeleteImages()` +
+  `menuSystem->back()` (`:744-753`). Touching it plays 1064 `menu_open.wav` (`:734-736`). (b) keys:
+  BACK/MENU fall through to the normal `back()` (`src/MenuSystem.cpp:2921-2955`) without
+  `DeleteImages`. `back()` plays 1122 and pops to `MENU_MAIN`, or returns to MAIN with an empty stack
+  (`:577-581`, `:608-610`). FIRE → `select(0)` plays 1086 and does nothing (no row, action 0).
+* No music is started or stopped.
+
+### 12.2 `MENU_MAIN_HELP` 4 and its leaves
+The main-menu path uses **its own ids** (`src/Menus.h:50-68`). Every leaf is code-built
+(`initMenu`, `src/MenuSystem.cpp:1288-1344`, `:1466-1486`):
+
+| row | main id | in-game id | `LoadHelpResource` |
+|---|---|---|---|
+| How to Play | 9 `MENU_MAIN_GENERAL` | 38 | 1 |
+| How to Move | 10 `MENU_MAIN_MOVE` | 39 | 2 |
+| How to Attack | 11 `MENU_MAIN_ATTACK` | 40 | 3 |
+| Sniper Rifle | 12 `MENU_MAIN_SNIPER` | 41 | 7 |
+| Armor Help | 5 `MENU_MAIN_ARMORHELP` | 43 | 4 |
+| Item Help | 7 `MENU_MAIN_ITEMHELP` | 45 | 6 |
+| Effects List | 6 `MENU_MAIN_EFFECTHELP` | 44 | 5 (+ one trailing blank row, flags 1, `:1300`; the in-game case has none, `:1692-1696`) |
+| Hacker / Matrix Skip / Power-Up | 20 / 21 / 22 | 59 / 60 / 61 | 8 / 9 / 10 |
+| (main root) About | 8 `MENU_MAIN_ABOUT` | none | 11 |
+
+Differences from the in-game leaves:
+* Every main leaf sets `type = 5`, `background = imgMainBG` (logo.bmp) and `drawLogo = false`. The in-game cases
+  set only `type` (`:1663-1765`), and their background is the in-game panel (`:731-759`).
+* Wrap: `wrapText(menu >= MENU_INGAME ? ingameScrollWithBarMaxChars : 35)` (`:3674`). The
+  over-height re-wrap with `menuRect[2] -= 27` applies **only in-game** (`:3685`). Main leaves:
+  35 chars, never re-wrapped.
+* Rect: `setMenuSettings` gives (77,10,323,281) (`:4248-4264`). `paint` then forces
+  **(85, 0, 300, 320)** for these 11 ids and clips to it (`:807-845`, `:852`). Divider width
+  = `300 / CHAR_SPACING` (`:909`).
+* Scrollbar: when the text is taller than 281 px, `initMenu` enables the dial
+  (`isMainMenuScrollBar`) at **(408, 81)** (`0x198, 0x51`, `:2773-2776`). `drawScrollbar` draws
+  `Menu_Dial` + knob (`:5025-5035`). `isMainMenu` stays false for type 5 (`:2813`).
+* Soft keys: left 3:80 "Back" (stack non-empty), drawn as `Switch_Left` for menus < 29; no right
+  key, because type 5 gives `n = -1` (`src/GameStateRunner.cpp:216-235`).
+* Input: FIRE on type 5 → `back()` (`src/MenuSystem.cpp:3004-3011`), the same as BACK/MENU. `back()` plays 1122
+  and pops to `MENU_MAIN_HELP` with the saved cursor (`:591-602`). UP/DOWN scroll the text
+  (`moveDir` type-5 branch, `:405`).
+* `MENU_MAIN_HELP` itself: type 6, 11 rows (Back dropped), `imgMainBG` + logo (`:1282-1287`),
+  same list geometry and dial as `MENU_MAIN` (`:4241-4247`, `:2768-2771`).
+
+### 12.3 `MENU_MAIN_ABOUT` 8
+`LoadHelpResource(11)` (`:1310-1316`). Text 2:11 has no `#` header: "Cust-o-mer ser-vice:|Send email to
+iphonesupport@idsoftware.com.||DOOM II RPG™ © 2010 id Soft-ware LLC, …All Rights Re-ser-ved." It is laid out like
+any main help leaf (12.2). It is opened from `MENU_MAIN`, so BACK/FIRE pop to `MENU_MAIN` with its cursor.
+
+### 12.4 `ST_CREDITS` from Game Help
+* Entry: row #11 → `ACTION_CHANGESTATE` 15. No sound plays, because `loadMapID == 0` (`:3086-3093`). Leaving
+  `ST_MENU` clears the menu stack (`src/Canvas.cpp:1033-1035`). `setState(ST_CREDITS)`:
+  `loadText(2); initScrollingText(2, 0, false, 16, 5, 500)` (`:1161-1165`).
+* Text 2:0: "|Id Software LLC,|a division of ZeniMax Media Inc.||•••• CRE-DITS ••••||Pro-duc-er|KATHERINE A.
+  KANG||…||Thanks for Play-ing!||" (`|` = line break). Wrap `(480-8)/11 = 42` (`src/IntroSequenceManager.cpp:180`).
+  `scrollingTextLines = numLines + 5`, spacing 16, `msPerLine = 500` (`:182-187`).
+* Draw: `drawCredits` → `drawScrollingText` (`:190-204`). `n = 500*((16<<16)>>4)>>16 = 500`. For
+  ST_CREDITS, `scrollingTextEnd = n * lines` **without** the `+ (320/16 - 2)` term (`:211-219`).
+  The background is only `eraseRgn(displayRect)` (black). There is no prolog image, fade, clip band or
+  screen space, because those apply only to EPILOGUE/INTRO_MOVIE (`:229-238`). Text: `drawString(buf, 240,
+  cinRect[3] - off, 16, flags 1)` with `off = (((t<<8)/500) * (16<<8)) >> 16` ≈ t/31.25 → **32 px/s**,
+  `cinRect[3] = viewRect[3] = 250` (`src/Canvas.cpp:113-154`). After `done`, the end position
+  is held, and 0:43 "Con-tin-ue" (dehyphenated) is drawn at (SCR_CX-24 = 216, screenRect[3]-32 = 288),
+  anchor 2 (`:195-203`). No music.
+* Input (`src/InputEventController.cpp:387-414`), not ending the game: **BACK or FIRE at any time**
+  (not gated on `done`). With `loadMapID == 0`: `pushMenu(MENU_MAIN, 3 + hasSavedState())`, then
+  `setMenu(MENU_MAIN_HELP)`. `menu` is still 4, so `initMenu` keeps `selectedIndex`
+  (`src/MenuSystem.cpp:1226-1229`) and the cursor stays on Credits. Quirk: the pushed index 3/4 is the
+  "Mini Games" row of the port's MAIN list (Game Help is 4/5, §5.1), so BACK from Help lands
+  on Mini Games. Exit: `dialogBuffer->dispose()` (`src/Canvas.cpp:1044-1047`).
+
+### 12.5 `MENU_MAIN_MINIGAME` 18 → `playFromMainMenu`
+`ACTION_MINIGAME` calls `soundStop()` and then the game's `playFromMainMenu()` (`src/MenuSystem.cpp:3208-3221`).
+Every game sets `callingThread = nullptr`, so `gamePlayedFromMainMenu = true`. Leaving ST_MENU clears the stack.
+* Hacker p2: `rnd = nextInt()%3 + 3` (3..5 columns); `initGame(nullptr, rnd, nextInt()%(rnd*10-15) + 5)`
+  (`src/HackingGame.cpp:29-34`). IQ is treated as 0, so the scramble count = turns
+  (`(10000*i2 + i2*100*100)/20000`, `:64-65`).
+* Matrix Skip p0: `initGame(nullptr, 0)` (`src/SentryBotGame.cpp:29-31`). IQ 0 gives skip-code range
+  `(20000 + 4*10000)/10000 = 6` (`:53-56`). The board may contain the skip code (`b = true`, `:61-66`). After
+  a win (`stateVars[2]==1`), FIRE/AUTOMAP/BACK → `endGame(0)` (`:130-133`). There is no bot choice; the screen shows
+  0:239 "Hack Successful!" + 0:188 (`:387-395`).
+* Power-Up p4: `initGame(nullptr, 1, 1)`, then `stateVars[1] = stateVars[2] = 0` (`src/VendingMachine.cpp:33-37`). It starts on the
+  **help screen** and skips the buy terminal (in-game it starts at `stateVars[1] = 2`, `:45`). `triesLeft = 4`, never
+  "already hacked" (`:55-56`), IQ 0 (`:150`). A win/loss + FIRE → `endGame` (`:263-305`). Results text uses
+  0:239 / 0:240 "Hack Failed!" (`:426-447`). BACK on the help screen → `endGame(2)` (`:233-244`).
+* Hacking and Sentry go through `setupGlobalData` → help screen first (`src/HackingGame.cpp:36-50`,
+  `src/SentryBotGame.cpp:33-42`).
+* Rewards skipped: there is no `evaluateMiniGameResults`, no `scriptStateVars[7]`, no IQ/tries/hack flags.
+  `endGame` plays 1043/1040, then **1071 Music_Title (loop)**, then `setMenu(MENU_MAIN_MINIGAME)` with an empty
+  stack (`src/HackingGame.cpp:619-636`, `src/SentryBotGame.cpp:806-824`,
+  `src/VendingMachine.cpp:850-864`). BACK on 18 → `MENU_MAIN` (`src/MenuSystem.cpp:608-610`). The Back soft key
+  is forced for menu 18 (`src/GameStateRunner.cpp:231`).
+
+### 12.6 `MENU_MAIN_OPTIONS` 17
+The shipped row is type 8 with **0 items** (decoded). `initMenu` ignores it (`loadMenuItems` is commented
+out, `:1367`) and builds `[GEC]` rows: padding 14, "Options" title, then Sound → -3, Video → -2,
+Input → -1, with `drawLogo = true` (`:1365-1416`). The sub-menus are all `[GEC]`, none original:
+Sound = SFX/Music volume sliders (`:2304-2345`); Video = window mode / VSync / resolution /
+TinyGL / apply (`:2346-2431`); Input = Touch Controls (-4, alpha slider) / Bindings (-5) /
+Controller (-6, vibration, deadzone) (`:2432-2700`). The shipped in-game Options row 35 is
+"Controls" → 62 + "Back" (decoded), but `initMenu` also replaces it with the same `[GEC]` list (`:1365`).

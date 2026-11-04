@@ -14,6 +14,11 @@ class Ui;
 // UiAction::ScreenTouch: every event skips the movie (src/Canvas.cpp:833-841).
 UiResult drawIntroMovie(Ui& ui, const IntroMovieModel& m);
 
+// drawCredits + drawScrollingText for ST_CREDITS (src/IntroSequenceManager.cpp:190-245).
+// A release reports UiAction::Activate: touch falls to key 6 = FIRE
+// (src/TouchController.cpp:336-338 -> :311-313).
+UiResult drawCredits(Ui& ui, const CreditsModel& m);
+
 } // namespace newcore
 
 #endif // NEW_UI_INTROMOVIEVIEW_H

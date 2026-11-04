@@ -84,6 +84,8 @@ public:
 	// Automap (src/AutomapController.cpp:71, :322).
 	Texture automapBackground;   // gameHelpBG.bmp 480x320 (src/Canvas.cpp:171)
 	Texture automapCursor;       // Automap_Cursor.bmp (src/App.cpp:416), 4 px wide frames
+	// Comic viewer, landscape frames only; resident from startup (deviation FE-D8).
+	Texture comicFrames[39];     // ComicBook/frames/*.bmp, 480x320 4-bit (src/ComicBook.cpp:323-440)
 };
 
 // The one BMP -> indexed texture loader (ADR 0033 point 6); each failure logs.

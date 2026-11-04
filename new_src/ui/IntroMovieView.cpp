@@ -50,4 +50,14 @@ UiResult drawIntroMovie(Ui& ui, const IntroMovieModel& m) {
 	return res;
 }
 
+UiResult drawCredits(Ui& ui, const CreditsModel& m) {
+	UiResult res;
+	ui.panel(kScreen, 0xFF000000);                   // eraseRgn(displayRect); no prolog, fade or clip (:229-238)
+	if (m.text != nullptr) ui.label(*m.text, kScrCx, m.textY, Graphics2D::kAnchorHCenter, 16);   // (:243)
+	// (SCR_CX - 24, screenRect[3] - 32), anchor 2 = VCENTER (:195-203, src/Graphics.h:13-19).
+	if (m.continueLabel != nullptr) ui.label(*m.continueLabel, kScrCx - 24, 320 - 32, Graphics2D::kAnchorVCenter);
+	if (ui.in().released) res.action = UiAction::Activate;
+	return res;
+}
+
 } // namespace newcore

@@ -23,7 +23,8 @@ constexpr int kStrHelpTitle = 171, kStrHelpBody = 172;
 constexpr int kStrHint = 173, kStrSkipCode = 174, kStrEnterCode = 175, kStrTapHint = 176;
 constexpr int kStrAccepted = 177, kStrDenied = 178, kStrSelect = 180;
 constexpr int kStrShooting = 181, kStrExploding = 182, kStrShootingInfo = 183, kStrExplodingInfo = 184;
-constexpr int kStrWarning = 186, kStrDefensive = 187, kStrLoggedOut = 188, kStrHackFailed = 240;
+constexpr int kStrWarning = 186, kStrDefensive = 187, kStrLoggedOut = 188;
+constexpr int kStrHackSuccessful = 239, kStrHackFailed = 240;
 
 void compose(const Localization* loc, int index, Text& out) {
 	if (loc != nullptr) out.append(loc->get(kTextMain, index));
@@ -66,19 +67,19 @@ void SentryBotGame::begin(int b1, int, int) {
 	touchCell_ = touchBot_ = -1;
 	lastHighlight_ = -1;
 	std::fprintf(stderr, "[sentrybot] begin botType=%d iq=%d skip=%d solution=%d%d%d%d\n",
-		botType_, host_->env().player->ce.getIQPercent(), skipCode_,
+		botType_, host_->fromMainMenu() ? 0 : host_->env().player->ce.getIQPercent(), skipCode_,
 		solution_[0], solution_[1], solution_[2], solution_[3]);
 }
 
 void SentryBotGame::generate() {
 	Player& p = *host_->env().player;
-	const int iq = p.ce.getIQPercent();
+	const int iq = host_->fromMainMenu() ? 0 : p.ce.getIQPercent();   // (:55)
 	const int n4 = (10000 * 2 + (6 - 2) * (100 - iq) * (100 - iq)) / 10000;
 	do {
 		skipCode_ = ItemPickup::nextInt() % n4 + 1;
 	} while (skipCode_ == p.lastSkipCode);
 	p.lastSkipCode = (uint8_t)skipCode_;
-	const bool allowSkip = iq < 50;
+	const bool allowSkip = host_->fromMainMenu() || iq < 50;   // (:61)
 	// True when every cell the solution walk can visit is the skip code: the
 	// legacy walk (:72) would loop forever.
 	auto orbitAllSkip = [this]() {
@@ -141,7 +142,9 @@ void SentryBotGame::commitTouch() {
 void SentryBotGame::input(int action) {
 	commitTouch();
 	const int64_t now = *host_->env().upTimeMs;
-	if (result_ == kLost && (action == kAutomap || action == kBack || action == kFire)) {
+	// Verbatim (:130-133): a main-menu WIN also ends with endGame(0), i.e. sound 1040.
+	if ((result_ == kLost || (result_ == kWon && host_->fromMainMenu())) &&
+	    (action == kAutomap || action == kBack || action == kFire)) {
 		endGame(0);
 		return;
 	}
@@ -221,7 +224,7 @@ void SentryBotGame::input(int action) {
 		default:
 			break;
 		}
-	} else if (result_ == kWon) {
+	} else if (result_ == kWon && !host_->fromMainMenu()) {   // (:271-272)
 		if (action == kFire) {
 			award();
 			endGame(1);
@@ -266,7 +269,7 @@ void SentryBotGame::award() {
 
 void SentryBotGame::endGame(int n) {
 	std::fprintf(stderr, "[sound] %d\n", n == 1 ? 1043 : 1040);
-	host_->evaluateResults(n);
+	if (!host_->fromMainMenu()) host_->evaluateResults(n);   // (:811-814)
 	host_->finish(n);
 }
 
@@ -365,7 +368,7 @@ UiResult SentryBotGame::draw(Ui& ui) {
 			model_.submit = &submit_;
 			model_.guessY = 249;
 			model_.answerCursor = answerCursor_;
-		} else if (result_ == kWon) {
+		} else if (result_ == kWon && !host_->fromMainMenu()) {
 			model_.screen = SentryBotModel::Screen::Success;
 			if (hl == 3) touchBot_ = 0;        // :424-426
 			else if (hl == 2) touchBot_ = 1;   // :438-440
@@ -395,6 +398,21 @@ UiResult SentryBotGame::draw(Ui& ui) {
 			composeLine(loc, kStrExplodingInfo, explodingBody_);
 			explodingBody_.wrapText(50, '\n');
 			model_.explodingBody = &explodingBody_;
+			model_.guessY = 26;
+			model_.answerCursor = -1;
+		} else if (result_ == kWon) {                 // main-menu win (drawSuccessScreen, :380-395)
+			// Same layout as the botType-0 failure screen: 177 at y 15, 239 at y 71, 188 wrapped 22 at y 139.
+			model_.screen = SentryBotModel::Screen::Failure;
+			composeLine(loc, kStrAccepted, title_);
+			model_.title = &title_;
+			composeLine(loc, kStrHackSuccessful, subtitle_);
+			model_.subtitle = &subtitle_;
+			model_.warning = false;
+			message_.setLength(0);
+			compose(loc, kStrLoggedOut, message_);
+			message_.wrapText(22, '\n');
+			model_.message = &message_;
+			model_.messageY = 139;
 			model_.guessY = 26;
 			model_.answerCursor = -1;
 		} else {

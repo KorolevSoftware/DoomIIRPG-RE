@@ -7,6 +7,8 @@
 
 #include "core/CharacterSelectSession.h"
 #include "core/CinematicCamera.h"
+#include "core/ComicBookSession.h"
+#include "core/CreditsSession.h"
 #include "core/Familiar.h"
 #include "core/GameStates.h"
 #include "core/IntroMovieSession.h"
@@ -261,6 +263,10 @@ private:
 	PrologueSession prologue_;
 	// ST_INTRO_MOVIE pan + crawl.
 	IntroMovieSession introMovie_;
+	// ST_CREDITS crawl.
+	CreditsSession credits_;
+	// Comic viewer behind menu id 89 (legacy app->comicBook, src/App.cpp:93).
+	ComicBookSession comic_;
 
 	// ST_AUTOMAP per-frame model, cursor blink and the soft-key labels it borrows.
 	AutomapModel automapModel_;

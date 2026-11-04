@@ -1,5 +1,6 @@
 #include "minigames/common/MiniGameHost.h"
 
+#include <cstdio>
 #include <string>
 
 #include "domain/game/Enums.h"
@@ -7,6 +8,7 @@
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
 #include "io/Localization.h"
+#include "io/MenuData.h"
 #include "ui/Hud.h"
 
 namespace newcore {
@@ -33,10 +35,30 @@ bool MiniGameHost::start(int type, int b1, int b2, int b3, ScriptThread* t) {
 	default: return false;   // unknown type
 	}
 	callingThread_ = t;
+	fromMainMenu_ = false;
 	active_ = g;
 	touchButton_ = -1;
 	env_.host->requestState(StateId::MiniGame);
 	g->begin(b1, b2, b3);
+	return true;
+}
+
+bool MiniGameHost::playFromMainMenu(int type) {
+	MiniGame* g = nullptr;
+	switch (type) {
+	case kVending: g = &vending_; break;
+	case kHacking: g = &hacking_; break;
+	case kSentryBot: g = &sentry_; break;
+	default: return false;   // unknown type
+	}
+	callingThread_ = nullptr;
+	active_ = g;
+	touchButton_ = -1;
+	fromMainMenu_ = true;
+	env_.host->requestState(StateId::MiniGame);
+	if (g == &vending_) vending_.playFromMainMenu();
+	else if (g == &hacking_) hacking_.playFromMainMenu();
+	else sentry_.playFromMainMenu();
 	return true;
 }
 
@@ -51,6 +73,15 @@ UiResult MiniGameHost::draw(Ui& ui) {
 }
 
 void MiniGameHost::finish(int result) {
+	// (src/HackingGame.cpp:631-634, src/SentryBotGame.cpp:820-823, src/VendingMachine.cpp:859-862)
+	if (fromMainMenu_) {          // no scriptStateVars[7], no thread, no ST_PLAYING
+		fromMainMenu_ = false;
+		active_ = nullptr;
+		callingThread_ = nullptr;
+		std::fprintf(stderr, "[sound] 1071\n");        // Music_Title, looped
+		env_.openMenu(kMenuMainMinigame);              // setMenu(18) with an empty stack
+		return;
+	}
 	// Cleared before resuming: the resumed script may start another minigame.
 	ScriptThread* t = callingThread_;
 	callingThread_ = nullptr;

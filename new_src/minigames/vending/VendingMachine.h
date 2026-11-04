@@ -14,8 +14,8 @@ namespace newcore {
 class MiniGameHost;
 class TextureStore;
 
-// The vending machine minigame session (src/VendingMachine.cpp), world
-// branch only: no playFromMainMenu, no forceWin (ADR 0033 point 7).
+// The vending machine minigame session (src/VendingMachine.cpp); no forceWin
+// (ADR 0033 point 7).
 class VendingMachine : public MiniGame {
 public:
 	void init(MiniGameHost* host) { host_ = host; }
@@ -24,6 +24,7 @@ public:
 	// initGame(loadMapID, (loadMapID-1)*2 + b1) (src/ScriptThread.cpp:1306,
 	// src/VendingMachine.cpp:39-116). b2/b3 are unused (scripts pass -1).
 	void begin(int b1, int b2, int b3) override;
+	void playFromMainMenu();                   // ACTION_MINIGAME, no thread (:33-37)
 	void handleAction(Action a) override;      // handleInput (:172-187)
 	void handleTouch(int buttonId) override;   // touchEnd (:879-895)
 	UiResult draw(Ui& ui) override;            // updateGame (:393-419)
@@ -52,6 +53,7 @@ private:
 	// ((W - 97) / 4) + 1 at W = 480 (:66-73).
 	static constexpr int kWidthOfContainingBox = (480 - 97) / 4 + 1;
 
+	void initGame(int map, int machine);       // (:39-116)
 	bool machineCanBeHacked() const;           // (:132-134)
 	void randomizeGame();                      // (:136-170)
 	int numbersCorrect() const;                // (:829-837)

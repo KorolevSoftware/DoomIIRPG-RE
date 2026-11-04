@@ -8,7 +8,8 @@ Facts: `docs/original-code/front-end.md` (cited below as **FE §n**), raw report
 Scope, in the user's priority: the main menu with its real rows and skin, the character
 select, the prologue; then the logo; the intro movie last (research-gated, G6b).
 **Deferred** (rows stay visible and refuse on select, deviation FE-D2): Options body,
-Other Games, Comic Book, Mini Games, Game Help, About, Credits.
+Other Games, Comic Book, Mini Games, Game Help, About, Credits. **2026-11-04:** all but
+Options are specified in `main-menu-subscreens.md` (ADR 0044); FE-D2 now covers Options only.
 
 ---------------------------------------------------------------------------------
 ## 0. The flow after this spec
@@ -662,11 +663,15 @@ before the delta.
 | Id | What | Why |
 |---|---|---|
 | FE-D1 | Continue with an unreadable save opens `MENU_INGAME_LOADNOSAVE` (50) instead of legacy `Error()` | same as SL-D2 for in-game Load (ADR 0037 §5); the screen uses the in-game skin |
-| FE-D2 | Options, Other Games (unreachable anyway), Comic Book, Mini Games, Game Help, About rows refuse on select | out of scope; shipped Options has 0 rows (FE §5.1) |
+| FE-D2 | Options (17) refuses on select ("ships 0 rows; src/ fills it with [GEC] menus"); Other Games is unreachable. Game Help/About (G1), Credits (G2), Mini Games (G3), Comic Book (G4) are ported by `main-menu-subscreens.md`, each group deleting its refusal | shipped row 17 has 0 items and every `src/` Options sub-menu is `[GEC]` (FE §12.6), so there is nothing original to port (ADR 0044 §5) |
 | FE-D3 | No touch drag / dial drag on main screens | key, wheel and click cover the 7-8 rows |
 | FE-D4 | Prologue draws the current page slice, legacy always page 0 | identical output for the shipped text |
 | FE-D5 | Char-select button outline colour black | legacy uses `Graphics::curColor`, not traceable statically (`src/Graphics.cpp:236-241`) — **unverified** |
 | FE-D6 | World pass skipped while `loadMapID == 0` | legacy has no map there at all |
+| FE-D7 | Comic Book LEFT/RIGHT slide at 8 px/frame (`max(|midPoint|, 8)`) | legacy flips in one frame only because pixel ints reach the normalised-float `userMoved` (`src/CAppContainer.cpp:71-89`, `src/ComicBook.cpp:972-994`); spec `main-menu-subscreens.md` §5.5 |
+| FE-D8 | Comic frames resident from startup (39 × 480×320 R8 = 5.99 MB), no "Loading" screen, 17 portrait pages never loaded | the loading screen only amortised the iPhone decode; portrait mode is dead (FE §12.1); ADR 0044 §4 |
+| FE-D9 | Credits crawl clock = `upTimeMs` | legacy `gameTime`; same choice as the G6b intro crawl |
+| FE-D10 | main-menu Exit / Backspace quit immediately, no Exit Game? confirm | user decision 2026-11-04 |
 | (port) | Main-menu labels centre on x 219, not on the 204-px plate | verbatim `menuItem_width` 162 (`src/MenuSystem.cpp:961-966`) |
 
 ---------------------------------------------------------------------------------

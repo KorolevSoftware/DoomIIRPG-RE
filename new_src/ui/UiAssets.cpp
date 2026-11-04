@@ -158,6 +158,23 @@ bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	ok &= loadUiTexture(store, read, "Automap_Cursor.bmp", automapCursor);
 	// Frame layout of the cursor sheet is unverified (AM open question).
 	std::fprintf(stderr, "[automap] cursor %dx%d\n", automapCursor.width(), automapCursor.height());
+	// Index = legacy imgiPhoneComicBook slot (src/ComicBook.cpp:323-440).
+	static const char* const kComicFrames[39] = {
+		"iPhone cover",
+		"iPhone page 1a", "iPhone page 1b", "iPhone page 2a", "iPhone page 2b", "iPhone page 2c",
+		"iPhone page 3a", "iPhone page 3b", "iPhone page 4a", "iPhone page 4b", "iPhone page 4c",
+		"iPhone page 5a", "iPhone page 5b", "iPhone page 5c", "iPhone page 6a", "iPhone page 6b",
+		"iPhone page 6c", "iPhone page 7a", "iPhone page 7b", "iPhone page 8a", "iPhone page 8b",
+		"iPhone page 8c", "iPhone page 9", "iPhone page 10a", "iPhone page 10b", "iPhone page 10c",
+		"iPhone page 11a", "iPhone page 11b", "iPhone page 12a", "iPhone page 12b", "iPhone page 13a",
+		"iPhone page 13b", "iPhone page 14a", "iPhone page 14b", "iPhone page 15a", "iPhone page 15b",
+		"iPhone page 15c", "iPhone page 16a", "iPhone page 16b",
+	};
+	for (int i = 0; i < 39; ++i) {
+		char name[64];
+		std::snprintf(name, sizeof(name), "ComicBook/frames/%s.bmp", kComicFrames[i]);
+		ok &= loadUiTexture(store, read, name, comicFrames[i]);
+	}
 	return ok;
 }
 

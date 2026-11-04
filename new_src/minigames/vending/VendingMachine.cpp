@@ -39,6 +39,8 @@ constexpr int kStrTapToContinue = 208;
 constexpr int kStrWrongCode = 209;      // "Wrong code!|Tries left: "
 constexpr int kStrHackIqBonus = 236;    // "Hack Successful!|+%01 to I.Q."
 constexpr int kStrHackIqMax = 237;
+constexpr int kStrHackSuccessful = 239; // main-menu win
+constexpr int kStrHackFailedMain = 240; // main-menu loss
 
 // fmButton-style exclusive containment of drawMainScreen's press checks
 // (:516-519, :535-538, :576-579).
@@ -53,17 +55,28 @@ bool VendingMachine::loadAssets(TextureStore& store, const UiAssets::ResourceRea
 }
 
 void VendingMachine::begin(int b1, int /*b2*/, int /*b3*/) {
+	const int loadMapID = host_->env().game->loadMapID;
+	initGame(loadMapID, (loadMapID - 1) * 2 + b1);
+}
+
+void VendingMachine::playFromMainMenu() {           // (src/VendingMachine.cpp:33-37)
+	initGame(1, 1);
+	screen_ = kScreenHelp;                           // stateVars[1] = 0: help first, no buy terminal
+	result_ = 0;
+}
+
+void VendingMachine::initGame(int map, int machine) {
 	const MiniGameHost::Env& e = host_->env();
-	const int loadMapID = e.game->loadMapID;
 	screen_ = kScreenTerminal;
 	result_ = 0;
 	chevronClock_ = *e.upTimeMs;
 	host_->help().reset();
 	machineJustHacked_ = false;
-	currentMapNumber_ = std::max(std::min(loadMapID, 9), 1);
-	currentMachineNumber_ = std::max(std::min((loadMapID - 1) * 2 + b1, 18), 1);
-	triesLeft_ = e.player->getVendingMachineTriesLeft(currentMachineNumber_);
-	machineHasBeenHacked_ = e.player->vendingMachineIsHacked(currentMachineNumber_);
+	currentMapNumber_ = std::max(std::min(map, 9), 1);
+	currentMachineNumber_ = std::max(std::min(machine, 18), 1);
+	// (:55-56)
+	triesLeft_ = host_->fromMainMenu() ? 4 : e.player->getVendingMachineTriesLeft(currentMachineNumber_);
+	machineHasBeenHacked_ = !host_->fromMainMenu() && e.player->vendingMachineIsHacked(currentMachineNumber_);
 	correctSum_ = 0;
 	if (machineCanBeHacked()) randomizeGame();
 	mainTerminalCursor_ = 0;
@@ -92,7 +105,7 @@ void VendingMachine::randomizeGame() {
 		maximums_[j] = 9;
 		chevronAnimationOffset_[j] = 0;
 	}
-	const int n = host_->env().player->ce.getIQPercent();
+	const int n = host_->fromMainMenu() ? 0 : host_->env().player->ce.getIQPercent();   // (:150)
 	int k;
 	if (n >= 80) k = 3;
 	else if (n >= 50) k = 2;
@@ -202,7 +215,10 @@ void VendingMachine::handleInputForHelpScreen(Action a) {
 	switch (a) {
 	case Action::Automap: endGame(2); break;
 	case Action::Menu:
-	case Action::BackKey: screen_ = kScreenTerminal; break;
+	case Action::BackKey:                            // (:231-241)
+		if (host_->fromMainMenu()) endGame(2);
+		else screen_ = kScreenTerminal;
+		break;
 	case Action::Use: screen_ = kScreenGame; break;
 	case Action::Forward: host_->help().scroll(-1); break;
 	case Action::Back: host_->help().scroll(1); break;
@@ -219,7 +235,8 @@ void VendingMachine::handleInputForGame(Action a) {
 	if (result_ == 2) {
 		if (a == Action::Use) {
 			if (triesLeft_ == 0) {
-				screen_ = kScreenTerminal;
+				if (host_->fromMainMenu()) endGame(result_);
+				else screen_ = kScreenTerminal;
 			} else {
 				gameCursor_ = 0;
 				for (int i = 0; i < 4; ++i) {
@@ -238,10 +255,14 @@ void VendingMachine::handleInputForGame(Action a) {
 		}
 	} else if (result_ == 1) {
 		if (a == Action::Use) {
-			screen_ = kScreenTerminal;
-			machineJustHacked_ = true;
-			machineHasBeenHacked_ = true;
-			player->setVendingMachineHack(currentMachineNumber_);
+			if (host_->fromMainMenu()) {
+				endGame(result_);
+			} else {
+				screen_ = kScreenTerminal;
+				machineJustHacked_ = true;
+				machineHasBeenHacked_ = true;
+				player->setVendingMachineHack(currentMachineNumber_);
+			}
 		} else if (a == Action::Menu) {
 			endGame(result_);   // without persisting the hack bit (:311-313)
 		}
@@ -261,10 +282,11 @@ void VendingMachine::handleInputForGame(Action a) {
 				std::fprintf(stderr, "[sound] 1043\n");
 				result_ = 1;
 				machineHasBeenHacked_ = true;
-				iqBonusAwarded_ = player->modifyStat(Enums::STAT_IQ, 2);   // MINIGAME_IQ_BONUS
+				if (!host_->fromMainMenu())
+					iqBonusAwarded_ = player->modifyStat(Enums::STAT_IQ, 2);   // MINIGAME_IQ_BONUS
 			} else {
 				std::fprintf(stderr, "[sound] 1040\n");
-				player->removeOneVendingMachineTry(currentMachineNumber_);
+				if (!host_->fromMainMenu()) player->removeOneVendingMachineTry(currentMachineNumber_);
 				result_ = 2;
 			}
 			std::fprintf(stderr, "[vending] submit %d%d%d%d -> %s, tries=%d\n",
@@ -427,11 +449,13 @@ void VendingMachine::buildGame(Ui& ui) {
 	model_.backLabel = &backLabel_;
 }
 
-// drawGameResults' text (:421-458), world branch.
+// drawGameResults' text (:421-458).
 void VendingMachine::buildGameResult() {
 	resultText_.setLength(0);
 	if (machineHasBeenHacked_) {
-		if (iqBonusAwarded_ > 0) {
+		if (host_->fromMainMenu()) {
+			compose(kTextMain, kStrHackSuccessful, resultText_);
+		} else if (iqBonusAwarded_ > 0) {
 			const Localization* loc = host_->env().loc;
 			std::string s = loc != nullptr ? loc->get(kTextMain, kStrHackIqBonus) : std::string();
 			const std::string arg = std::to_string(iqBonusAwarded_);
@@ -444,7 +468,7 @@ void VendingMachine::buildGameResult() {
 		compose(kTextMain, kStrWrongCode, resultText_);
 		resultText_.append(triesLeft_);
 	} else {
-		compose(kTextMain, kStrHackFailed, resultText_);
+		compose(kTextMain, host_->fromMainMenu() ? kStrHackFailedMain : kStrHackFailed, resultText_);
 	}
 	resultText_.wrapText(20, '\n');
 }

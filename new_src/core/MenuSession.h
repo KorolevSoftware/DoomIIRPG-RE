@@ -69,10 +69,13 @@ public:
 		std::function<void()> continueLevelStats;   // MENU_LEVEL_STATS select: loadMap(next, true, false)
 		VendingMachine* vending = nullptr;   // vending menus 83-85: prices, exits
 		std::function<void()> returnToPlayer;   // ACTION_RETURN_TO_PLAYER: familiarReturnsToPlayer(false)
+		std::function<void(int type)> playMiniGame;   // ACTION_MINIGAME -> MiniGameHost::playFromMainMenu
 	};
 	void init(const Env& env);
 
 	void begin(int menuId = kMenuInGame);  // ST_MENU entry hook (setMenu(menuId))
+	void returnFromCredits();              // ST_MENU entry after ST_CREDITS
+	int menuId() const { return menu_; }
 	void handleAction(Action a);      // port of handleMenuEvents (src/MenuSystem.cpp:2826-2969)
 	void setSelectedIndex(int i);     // mouse latch (:4787-4792)
 	// Info-button latch (:4802-4805). Separate from the selection on purpose:

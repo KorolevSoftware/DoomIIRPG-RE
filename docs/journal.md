@@ -1958,3 +1958,11 @@ G2a: statusEffects[54]/buffs[30] и пять помощников дословн
 - G1–G6b: сложность на Game (в конфиге, var 12), var 14 = characterChoice, защита 0 на Difficult, лица HUD/портреты по герою; экраны главного меню 3/13/14/16 и настоящий backToMain; оформление (логотип, плашки, диск); выбор героя (state 22); вступление (state 9); логотип (26) и ролик (2) по таблицам 14/15.
 - Ревью G1–G5: FAIL (после неудачного Continue кнопка Resume на экране 50 вела в игру без карты) → исправлено; звуки голоса по герою.
 - Не проверено на экране; не перенесены Options/Comic Book/Mini Games/Game Help/About/Credits.
+
+## 2026-11-04 — пункты главного меню
+- Исследование docs/original-code/front-end.md §12, docs/research/2026-11-04-main-menu-subscreens.md (кнопка Done в комиксе синяя — исправлено в §12.1).
+- Спека docs/architecture/main-menu-subscreens.md, ADR 0044; отклонения FE-D7 (плавное листание стрелками), FE-D8 (кадры комикса в памяти всё время), FE-D9 (часы титров upTimeMs).
+- G1 Game Help + About, G2 Credits (StateId 15, CreditsSession), G3a/G3b мини-игры из меню 18 (MiniGameHost::playFromMainMenu, без записи в мир), G4a/G4b Comic Book (ComicBookSession/View). Ревью G1–G3 PASS, G4 PASS. Golden ALL IDENTICAL.
+- Options остаётся отключённым (в оригинале 0 пунктов); в PLAN.md пункт «вернуться позже».
+- Exit в главном меню отклонялся (13 не было в isCodeBuiltScreen) → по решению пользователя Exit и Backspace сразу закрывают игру (FE-D10).
+- Проверено на экране пользователем: всё работает.

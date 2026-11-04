@@ -58,14 +58,20 @@ public:
 	// EV_MINIGAME. False = type not implemented: nothing changed, the VM must
 	// not park the thread. True = state is MiniGame and the game has begun.
 	bool start(int type, int b1, int b2, int b3, ScriptThread* t);
+	// ACTION_MINIGAME (src/MenuSystem.cpp:3208-3221): the game's playFromMainMenu with no thread.
+	// False = unknown type, nothing changed.
+	bool playFromMainMenu(int type);
+	// Legacy gamePlayedFromMainMenu. An explicit flag, not `thread == nullptr`:
+	// the debug keys also start games without a thread and expect the world tail.
+	bool fromMainMenu() const { return fromMainMenu_; }
 
 	void latchTouch(int buttonId) { touchButton_ = buttonId; }
 	void handleAction(Action a);
 	UiResult draw(Ui& ui);
 
 	// The shared endGame tail (src/VendingMachine.cpp:850-864,
-	// src/HackingGame.cpp:619-636, src/SentryBotGame.cpp:806-824), world
-	// branch only. Legacy order: the resumed script sees ST_PLAYING.
+	// src/HackingGame.cpp:619-636, src/SentryBotGame.cpp:806-824). Main-menu
+	// games return to menu 18; world games: the resumed script sees ST_PLAYING.
 	void finish(int result);
 	// evaluateMiniGameResults (src/MiniGameManager.cpp:235-248): a win grants
 	// +2 IQ with a HUD message. Vending does not call it (ADR 0033).
@@ -83,6 +89,7 @@ private:
 	ScriptThread* callingThread_ = nullptr;
 	MiniGame* active_ = nullptr;
 	int touchButton_ = -1;
+	bool fromMainMenu_ = false;
 	MiniGameAssets assets_;
 	MiniGameHelp help_;
 	VendingMachine vending_;

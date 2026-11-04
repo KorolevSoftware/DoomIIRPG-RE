@@ -14,8 +14,8 @@ namespace newcore {
 class MiniGameHost;
 class TextureStore;
 
-// The sentry bot "Matrix Skip" session (src/SentryBotGame.cpp), world branch
-// only: no playFromMainMenu, no forceWin, no wasTouched (ADR 0033 point 7).
+// The sentry bot "Matrix Skip" session (src/SentryBotGame.cpp): no forceWin,
+// no wasTouched (ADR 0033 point 7).
 class SentryBotGame : public MiniGame {
 public:
 	void init(MiniGameHost* host) { host_ = host; }
@@ -23,6 +23,7 @@ public:
 
 	// EV_MINIGAME type 0: b1 = botType (src/ScriptThread.cpp:1290-1303); b2/b3 unused.
 	void begin(int b1, int b2, int b3) override;   // initGame (:44-120)
+	void playFromMainMenu() { begin(0, -1, -1); }   // (:29-31)
 	void handleAction(Action a) override;           // -> input(legacy id)
 	void handleTouch(int buttonId) override;        // touchEnd (:839-892)
 	UiResult draw(Ui& ui) override;                 // updateGame (:296-321)
@@ -37,7 +38,7 @@ private:
 	void input(int action);       // handleInput (:127-294)
 	void commitTouch();           // ADR 0038: apply draw-time selections in the tick
 	void award();                 // awardSentryBot stub (ADR 0040)
-	void endGame(int n);          // :806-824 world branch
+	void endGame(int n);          // :806-824
 
 	MiniGameHost* host_ = nullptr;
 	SentryBotAssets assets_;

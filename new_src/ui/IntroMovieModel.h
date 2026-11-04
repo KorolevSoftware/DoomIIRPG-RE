@@ -16,6 +16,14 @@ struct IntroMovieModel {
 	int blackAlpha = 0;          // fade-in overlay over the whole screen, 0 = none
 };
 
+// Per-frame model of ST_CREDITS (docs/original-code/front-end.md §12.4).
+// Built by CreditsSession::buildModel; texts are borrowed for THIS frame.
+struct CreditsModel {
+	const Text* text = nullptr;            // 2:0 wrapped at 42
+	int textY = 250;                       // cinRect[3] - offset
+	const Text* continueLabel = nullptr;   // 0:43 dehyphenated; non-null once scrollingTextDone
+};
+
 } // namespace newcore
 
 #endif // NEW_UI_INTROMOVIEMODEL_H

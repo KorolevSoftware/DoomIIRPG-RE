@@ -12,8 +12,7 @@ namespace newcore {
 class MiniGameHost;
 class TextureStore;
 
-// The hacking minigame session (src/HackingGame.cpp), world branch only:
-// no playFromMainMenu, no forceWin (ADR 0033 point 7).
+// The hacking minigame session (src/HackingGame.cpp); no forceWin (ADR 0033 point 7).
 class HackingGame : public MiniGame {
 public:
 	void init(MiniGameHost* host) { host_ = host; }
@@ -22,6 +21,7 @@ public:
 	// EV_MINIGAME type 2: b1 = custom flag, b2 = columns, b3 = turns (-1 = 30)
 	// (src/ScriptThread.cpp:1314-1347, src/HackingGame.cpp:53-100).
 	void begin(int b1, int b2, int b3) override;
+	void playFromMainMenu();                   // ACTION_MINIGAME, no thread (:28-33)
 	void handleAction(Action a) override;      // handleInput (:182-301)
 	void handleTouch(int buttonId) override;   // touchEnd (:661-688) + release pass (ADR 0038)
 	UiResult draw(Ui& ui) override;            // updateGame (:346-357)

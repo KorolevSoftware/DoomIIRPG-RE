@@ -10,8 +10,11 @@ namespace newcore {
 enum MenuId : int {
 	kMenuLevelStats    = 1,
 	kMenuMain          = 3, kMenuMainHelp = 4, kMenuMainAbout = 8,
+	kMenuMainArmorHelp = 5, kMenuMainEffectHelp = 6, kMenuMainItemHelp = 7,
+	kMenuMainGeneral   = 9, kMenuMainMove = 10, kMenuMainAttack = 11, kMenuMainSniper = 12,
 	kMenuMainExit      = 13, kMenuMainConfirmNew = 14, kMenuMainDifficulty = 16,
 	kMenuMainOptions   = 17, kMenuMainMinigame = 18, kMenuMainMoreGames = 19,
+	kMenuMainHackerHelp = 20, kMenuMainMatrixSkipHelp = 21, kMenuMainPowerUpHelp = 22,
 	kMenuInGame        = 29,
 	kMenuStatus        = 30, kMenuPlayer = 31, kMenuLevel = 32, kMenuGrades = 33,
 	kMenuOptions       = 35,

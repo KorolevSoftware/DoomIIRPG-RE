@@ -78,6 +78,7 @@ void GameContext::init(const Init& sys) {
 	menuEnv.continueLevelStats = [this] { loading_.loadMap(loading_.nextMap(), true, false); };
 	menuEnv.vending = &minigames_.vending();
 	menuEnv.returnToPlayer = [this] { familiar_.returnsToPlayer(false); };
+	menuEnv.playMiniGame = [this](int type) { minigames_.playFromMainMenu(type); };
 	menu_.init(menuEnv);
 	Targeting::Env tgtEnv;
 	tgtEnv.game = sys_.game;
@@ -211,6 +212,7 @@ void GameContext::init(const Init& sys) {
 	movieEnv.upTimeMs = &upTimeMs;
 	movieEnv.exit = [this] { exitIntroMovie_(); };
 	introMovie_.init(movieEnv);
+	credits_.init({ sys_.loc, &upTimeMs });
 	if (sys_.tables) {
 		sys_.game->lerps.setSinTable(&sys_.tables->sinTable);   // parabola lerp arc (SpriteLerps.h)
 	}
@@ -305,7 +307,8 @@ void GameContext::enterState_(StateId s) {
 		// menu system is set to nextMenuId_ with a fresh stack. The legacy
 		// pausePlayer() has no rewrite counterpart (no pause flag).
 		pendingActions_.clear();
-		menu_.begin(nextMenuId_);
+		if (oldState == StateId::Credits) menu_.returnFromCredits();
+		else menu_.begin(nextMenuId_);
 		nextMenuId_ = kMenuInGame;
 		break;
 	case StateId::MiniGame:
@@ -329,6 +332,10 @@ void GameContext::enterState_(StateId s) {
 	case StateId::IntroMovie:
 		pendingActions_.clear();                       // numEvents = 0 (src/GameStateRunner.cpp:343-347)
 		introMovie_.begin();
+		break;
+	case StateId::Credits:
+		pendingActions_.clear();
+		credits_.begin();
 		break;
 	case StateId::TravelMap:
 		// setState zeroes stateVars, then travelMapManager.init (src/Canvas.cpp:1062-1063).
@@ -404,7 +411,16 @@ void GameContext::tick() {
 		// (src/InputEventController.cpp:314-316). Deliberately BEFORE the
 		// blocked-drop check: the legacy ST_MENU dispatch happens before it, and
 		// a script lockout must not freeze an open menu (spec §2.4).
-		if (state_ == StateId::Menu) { menu_.handleAction(a); continue; }
+		if (state_ == StateId::Menu) {
+			if (menu_.menuId() == kMenuComicBook) {
+				comic_.handleAction(a);                // handleComicBookEvents first (src/MenuSystem.cpp:2834-2836)
+				// FIRE/arrows also fall through in legacy; with 0 rows they do nothing.
+				if (a == Action::BackKey || a == Action::Menu) menu_.handleAction(a);   // -> back()
+			} else {
+				menu_.handleAction(a);
+			}
+			continue;
+		}
 		// ST_MINI_GAME dispatch also precedes the block test
 		// (src/InputEventController.cpp:334-349 vs :449).
 		if (state_ == StateId::MiniGame) { minigames_.handleAction(a); continue; }
@@ -430,6 +446,14 @@ void GameContext::tick() {
 		// port (src/Canvas.cpp:833-841, src/CAppContainer.cpp:186-188).
 		if (state_ == StateId::IntroMovie) {
 			exitIntroMovie_();
+			continue;
+		}
+		// ST_CREDITS (not ending the game): BACK or FIRE at any time (src/InputEventController.cpp:387-414).
+		if (state_ == StateId::Credits) {
+			if (a == Action::BackKey || a == Action::Use) {
+				if (sys_.game->loadMapID != 0) std::fprintf(stderr, "[sound] stop\n");   // in-game branch only (:408)
+				setState(StateId::Menu);
+			}
 			continue;
 		}
 		// ST_AUTOMAP runs the playing handler unchanged (src/InputEventController.cpp:354-356).
@@ -563,6 +587,9 @@ void GameContext::tick() {
 		break;
 	case StateId::IntroMovie:
 		introMovie_.tick();
+		break;
+	case StateId::Credits:
+		// Excluded from the update chain (src/Canvas.cpp:827); the crawl clock is read while drawing.
 		break;
 	}
 
@@ -1466,14 +1493,21 @@ void GameContext::render(AppContext& app) {
 	// covered. The HUD bars and the view weapon are already excluded by
 	// `gameplayView`, which does not list Menu.
 	if (state_ == StateId::Menu && ui != nullptr) {
-		// Touch drag scrolling, before the model is built: it sets both the
-		// frame's scroll offset and whether the rows take hits at all
-		// (src/MenuSystem.cpp:4869-4913).
-		menu_.updateDrag(ui->in());
-		MenuViewModel mv;
-		if (menu_.buildViewModel(mv)) {
-			const UiResult r = mv.mainSkin ? drawMainMenu(*ui, mv) : drawMenu(*ui, mv);
+		if (menu_.menuId() == kMenuComicBook) {
+			// paint hands the frame to comicBook->Draw and returns: no menu
+			// background, soft keys or scrollbar (src/MenuSystem.cpp:721-724).
+			const UiResult r = comic_.draw(*ui);
 			applyUiAction(r.action, r.index);
+		} else {
+			// Touch drag scrolling, before the model is built: it sets both the
+			// frame's scroll offset and whether the rows take hits at all
+			// (src/MenuSystem.cpp:4869-4913).
+			menu_.updateDrag(ui->in());
+			MenuViewModel mv;
+			if (menu_.buildViewModel(mv)) {
+				const UiResult r = mv.mainSkin ? drawMainMenu(*ui, mv) : drawMenu(*ui, mv);
+				applyUiAction(r.action, r.index);
+			}
 		}
 	}
 
@@ -1489,6 +1523,13 @@ void GameContext::render(AppContext& app) {
 		introMovie_.buildModel(im);
 		const UiResult r = drawIntroMovie(*ui, im);
 		applyUiAction(r.action, r.index);
+	}
+
+	// Credits (drawCredits, src/IntroSequenceManager.cpp:190-245): opaque 480x320.
+	if (state_ == StateId::Credits && ui != nullptr) {
+		CreditsModel cm;
+		credits_.buildModel(cm);
+		applyUiAction(drawCredits(*ui, cm).action, -1);
 	}
 
 	// Character select (drawCharacterSelection, src/IntroSequenceManager.cpp:341-462): opaque 480x320.
