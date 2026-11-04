@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #include "core/Familiar.h"
+#include "core/Sound.h"
 #include "core/TargetPractice.h"
 #include "core/ZoomController.h"
 #include "domain/game/Automap.h"
@@ -298,7 +299,7 @@ void PlayerActions::handleAction(Action a) {
 			DoorSystem::DoorUseResult dr = env_.game->doors.useDoorFacing(
 				*env_.map, p.viewX, p.viewY, p.viewStepX, p.viewStepY, p.isFamiliar);
 			if (dr == DoorSystem::DoorUseResult::BotRefused) {
-				std::fprintf(stderr, "[sound] 1111\n");    // :455-458, no turn
+				Sound::instance().playSound(1111, 0, 3);   // :455-458, no turn
 				if (env_.loc != nullptr) env_.hud->addMessage(env_.loc->get(kTextMain, 193), 0xAA000000, 2);
 				consumed = true;
 			} else if (dr == DoorSystem::DoorUseResult::Opened) {
@@ -350,9 +351,9 @@ void PlayerActions::handleAction(Action a) {
 				// 1072 for 2/3; the bot bumps with 1111 (:472-480).
 				if (zoomed) break;
 				Combat& c = env_.game->combat;
-				if (p.isFamiliar) std::fprintf(stderr, "[sound] 1111\n");
+				if (p.isFamiliar) Sound::instance().playSound(1111, 0, 3);
 				else if (p.characterChoice >= 1 && p.characterChoice <= 3)
-					std::fprintf(stderr, "[sound] %d\n", p.characterChoice == 1 ? 1073 : 1072);
+					Sound::instance().playSound(p.characterChoice == 1 ? 1073 : 1072, 0, 3);
 				c.shiftWeapon(true);                                   // :482
 				c.pushedWall = true;                                   // :483-484
 				c.pushedTime = (int)*c.env().gameTime + 500;

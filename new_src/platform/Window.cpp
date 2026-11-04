@@ -36,7 +36,8 @@ bool Window::initialize(const char* title, GraphicsApi api) {
 	if (initialized_) return true;
 	api_ = api;
 
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) < 0) {
+	// Audio is not here: AudioOutput::open inits it and its failure is non-fatal.
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) < 0) {
 		std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
 		return false;
 	}

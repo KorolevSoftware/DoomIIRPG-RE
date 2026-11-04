@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "core/Sound.h"
 #include "domain/game/ItemPickup.h"
 #include "domain/game/Player.h"
 #include "io/Localization.h"
@@ -205,7 +206,7 @@ void HackingGame::handleAction(Action a) {
 	} else if (screen_ == kScreenGame) {
 		if (result_ == kPlaying) {
 			if (a == Action::TurnLeft || a == Action::TurnRight) {
-				std::fprintf(stderr, "[sound] 1027\n");
+				Sound::instance().soundClick();
 				attemptToMove(a == Action::TurnLeft ? selCol_ - 1 : selCol_ + 1);
 			} else if (a == Action::Automap || a == Action::BackKey) {
 				screen_ = kScreenHelp;
@@ -290,7 +291,7 @@ void HackingGame::releasePass() {
 
 void HackingGame::endGame(int n) {
 	done_ = true;
-	std::fprintf(stderr, "[sound] %d\n", n == 1 ? 1043 : 1040);
+	Sound::instance().playSound(n == 1 ? 1043 : 1040, 0, 3);
 	if (!host_->fromMainMenu()) host_->evaluateResults(n);   // (:623-626)
 	host_->finish(n);
 }
@@ -336,10 +337,11 @@ UiResult HackingGame::draw(Ui& ui) {
 	model_.buttons[1] = kButtonBack;
 	model_.buttonCount = 2;
 
-	// fmButton::SetHighlighted plays sound 1027 on the highlight edge
-	// (src/Button.cpp:145-155).
+	// fmButton::SetHighlighted plays sound 1027 on the highlight edge unless it
+	// is already playing (src/Button.cpp:145-155).
 	const int hl = highlightedButtonId(model_.buttons, model_.buttonCount, in);
-	if (hl != -1 && hl != lastHighlight_) std::fprintf(stderr, "[sound] 1027\n");
+	Sound& snd = Sound::instance();
+	if (hl != -1 && hl != lastHighlight_ && !snd.isSoundPlaying(1027)) snd.playSound(1027, 0, 5);
 	lastHighlight_ = hl;
 
 	if (screen_ == kScreenHelp) {
@@ -405,7 +407,7 @@ UiResult HackingGame::draw(Ui& ui) {
 				model_.hoverColumn = i;
 				if (i != touchedColumn_) {
 					touchedColumn_ = i;
-					std::fprintf(stderr, "[sound] 1027\n");   // soundClick
+					Sound::instance().soundClick();
 				}
 			} else if (columnRect(i).contains(oldX_, oldY_)) {
 				touchedColumn_ = -1;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "core/Sound.h"
 #include "io/Localization.h"
 #include "io/Tables.h"
 
@@ -62,7 +63,9 @@ void IntroMovieSession::begin() {
 	crawl_.setLength(0);
 	crawl_.append(env_.loc->get(kTextMain, kStrCrawl));
 	crawl_.wrapText(kCrawlWrap);                     // soft hyphens break and dehyphenate (src/Text.cpp:756-827)
-	std::fprintf(stderr, "[sound] 1068\n");          // Music_General, looped (:780)
+	// Music_General, looped (:780). The original re-requests it every frame;
+	// priority 6 makes repeats no-ops, so one call at begin is equivalent.
+	Sound::instance().playSound(1068, 1, 6);
 }
 
 int IntroMovieSession::keyMs(int k) const {

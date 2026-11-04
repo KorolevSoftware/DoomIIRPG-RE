@@ -1,10 +1,10 @@
 #include "core/Familiar.h"
 
-#include <cstdio>
 #include <string>
 
 #include "core/CinematicCamera.h"
 #include "core/PlayerActions.h"
+#include "core/Sound.h"
 #include "domain/game/DialogSystem.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
@@ -101,7 +101,7 @@ void Familiar::setFamiliar(int type) {
 	p.clearOutFamiliarsStatusEffects();
 	p.swapStatusEffects();
 	showHelp(type == 1 || type == 3 ? 12 : 13, false);
-	std::fprintf(stderr, "[sound] 1108\n");
+	Sound::instance().playSound(1108, 0, 3);
 }
 
 // stopScreenSmack and loadPlayerFog are not ported (ADR 0041 §6).
@@ -140,7 +140,7 @@ int Familiar::unsetFamiliar(bool intoBody) {
 }
 
 void Familiar::returnsToPlayer(bool intoBody) {
-	std::fprintf(stderr, "[sound] 1112\n");
+	Sound::instance().playSound(1112, 0, 3);
 	unsetFamiliar(intoBody);
 	env_.player->stealFamiliarsInventory();
 }
@@ -168,7 +168,7 @@ void Familiar::dying(bool selfDestruct) {
 	if (selfDestruct) {
 		env_.game->combat.curAttacker = nullptr;
 	} else {
-		std::fprintf(stderr, "[sound] 1109\n");
+		Sound::instance().playSound(1109, 0, 3);
 		env_.hud->startShake(*env_.upTimeMs, 350, 10);   // startShake(350, 5, 500)
 	}
 	selfDestructed_ = selfDestruct;
@@ -189,7 +189,7 @@ void Familiar::tickDying() {
 	const int t = static_cast<int>(now - deathTime_);
 	if (selfDestructed_) {
 		if (t >= 1500) {
-			std::fprintf(stderr, "[sound] 1032\n");
+			Sound::instance().playSound(1032, 0, 3);
 			env_.host->requestState(StateId::Playing);
 			died();
 		} else if (!shakeStarted_ && t >= 750) {

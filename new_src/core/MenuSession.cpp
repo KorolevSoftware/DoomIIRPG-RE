@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "core/Sound.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
@@ -1491,6 +1492,7 @@ void MenuSession::moveDir(int n) {
 	// offset from the item model (:463-546), so a drag offset does not survive
 	// one: the key model takes the scroll back.
 	hasDragScroll_ = false;
+	const int px0 = scrollPixels();
 
 	if (type_ == kMenuTypeHelp || type_ == kMenuTypeNotebook) {
 		if (n < 0 && scrollIndex_ > 0) {
@@ -1567,6 +1569,13 @@ void MenuSession::moveDir(int n) {
 			++scrollIndex_;
 		}
 	}
+
+	// [GEC] scrollbar sync tail (:463-546); the sound sits in its non-help
+	// branch only (:539-541), so help/notebook paging stays silent.
+	if (!isMainMenu(menu_) && menu_ != kMenuComicBook && contentHeight() - viewPx() > 0 &&
+	    scrollPixels() != px0) {
+		Sound::instance().playSound(1065, 0, 5);
+	}
 }
 
 void MenuSession::scrollPageUp() {                       // (:349-363)
@@ -1623,6 +1632,12 @@ void MenuSession::handleAction(Action a) {
 			setMenu(menu_);
 		}
 		return;
+	}
+	// scrollUp/Down/PageUp/PageDown click first (:311-357); block-text rows
+	// (ITEM_BLOCK_TEXT 0x100) shift their text silently instead.
+	if ((a == Action::Forward || a == Action::Back || a == Action::TurnLeft || a == Action::TurnRight) &&
+	    numItems_ > 0 && (items_[selectedIndex_].def.flags & 0x100) == 0) {
+		Sound::instance().soundClick();
 	}
 	switch (a) {
 	case Action::Forward:    moveDir(-1); break;          // ACTION_UP -> scrollUp (:322-330)
@@ -1717,7 +1732,7 @@ void MenuSession::select(int i) {
 			items_[i].disabledReason != nullptr ? items_[i].disabledReason : "?");
 		return;
 	}
-	if (menu_ == kMenuVendingConfirm) std::fprintf(stderr, "[sound] 1125\n");   // (:2983-2985)
+	if (menu_ == kMenuVendingConfirm) Sound::instance().playSound(1125, 0, 3);   // (:2983-2985)
 	if (menu_ == kMenuLevelStats) {                                  // (:2996-3000); endingGame not ported
 		if (env_.continueLevelStats) env_.continueLevelStats();
 		return;
@@ -1726,6 +1741,7 @@ void MenuSession::select(int i) {
 		back();
 		return;
 	}
+	Sound::instance().playSound(1086, 0, 5);                          // pistol (:3013)
 	switch (items_[i].def.action) {
 	case kActionNone:
 		break;
@@ -1856,13 +1872,13 @@ void MenuSession::select(int i) {
 		if (items_[i].def.param == 6) {
 			env_.host->requestState(StateId::Automap);
 		} else if (items_[i].def.param == 15) {
-			if (env_.game != nullptr && env_.game->loadMapID != 0) std::fprintf(stderr, "[sound] 1071\n");   // in-game only
+			if (env_.game != nullptr && env_.game->loadMapID != 0) Sound::instance().playSound(1071, 1, 3);   // in-game only
 			env_.host->requestState(StateId::Credits);
 		}
 		break;
 	case kActionMinigame:                    // (src/MenuSystem.cpp:3208-3221)
 		if (items_[i].def.param == 0 || items_[i].def.param == 2 || items_[i].def.param == 4) {
-			std::fprintf(stderr, "[sound] stop\n");   // soundStop()
+			Sound::instance().soundStop();
 			if (env_.playMiniGame) env_.playMiniGame(items_[i].def.param);
 		}
 		break;
@@ -1931,7 +1947,9 @@ int MenuSession::popMenu(int& selectedIndex, int& scrollIndex) {
 // main-menu minigame) go to MENU_MAIN (:608-610). On MENU_INGAME_DEAD the
 // stack is empty and 51 is in neither list, so only the sound remains.
 void MenuSession::back() {
-	if (menu_ != kMenuMain) std::fprintf(stderr, "[sound] 1122\n");   // (:577-581)
+	if (menu_ != kMenuMain && !Sound::instance().isSoundPlaying(1122)) {   // (:577-581)
+		Sound::instance().playSound(1122, 0, 5);
+	}
 	if (stackCount_ != 0) {
 		int idx = 0;
 		int scroll = 0;

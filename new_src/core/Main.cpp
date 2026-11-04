@@ -323,6 +323,7 @@ int main(int argc, char* argv[]) {
 	// (spec §2).
 	ScriptVM vm;
 	GameContext ctx;
+	game.host = &ctx;
 	player.setClock(&ctx.upTimeMs);  // advanceTurn's turnTime stamp (src/Player.cpp:87)
 	DialogSystem dialogs;
 	vm.init({                  // Env: map, defs, game, player, loc, tables, hud, ctx, dialogs, gameTime

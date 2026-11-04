@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "core/Sound.h"
 #include "domain/game/DialogSystem.h"
 #include "domain/game/Game.h"
 #include "domain/game/ItemPickup.h"
@@ -199,13 +200,13 @@ void SentryBotGame::input(int action) {
 			if (playerCursor_ > -1) {
 				playerCursor_ = (playerCursor_ + 15) % 16;
 				cursorMoveTime_ = now;
-				std::fprintf(stderr, "[sound] 1027\n");
+				Sound::instance().soundClick();
 			}
 			break;
 		case kRight:
 			playerCursor_ = (playerCursor_ + 1) % 16;
 			cursorMoveTime_ = now;
-			std::fprintf(stderr, "[sound] 1027\n");
+			Sound::instance().soundClick();
 			break;
 		case kPassTurn:
 		case kMatrixLeft:
@@ -268,7 +269,7 @@ void SentryBotGame::award() {
 }
 
 void SentryBotGame::endGame(int n) {
-	std::fprintf(stderr, "[sound] %d\n", n == 1 ? 1043 : 1040);
+	Sound::instance().playSound(n == 1 ? 1043 : 1040, 0, 3);
 	if (!host_->fromMainMenu()) host_->evaluateResults(n);   // (:811-814)
 	host_->finish(n);
 }
@@ -299,10 +300,11 @@ UiResult SentryBotGame::draw(Ui& ui) {
 	model_.buttons[3] = MiniGameButton{ 3, UiRect{ 8, 142 - bh / 2, bw, bh } };
 	model_.buttonCount = 4;
 
-	// fmButton::SetHighlighted plays sound 1027 on the highlight edge
-	// (src/Button.cpp:145-155).
+	// fmButton::SetHighlighted plays sound 1027 on the highlight edge unless it
+	// is already playing (src/Button.cpp:145-155).
 	const int hl = highlightedButtonId(model_.buttons, model_.buttonCount, in);
-	if (hl != -1 && hl != lastHighlight_) std::fprintf(stderr, "[sound] 1027\n");
+	Sound& snd = Sound::instance();
+	if (hl != -1 && hl != lastHighlight_ && !snd.isSoundPlaying(1027)) snd.playSound(1027, 0, 5);
 	lastHighlight_ = hl;
 
 	// Render mode 1 = 25 % alpha, the highlight mode 0 opaque (:685-701,
@@ -334,7 +336,7 @@ UiResult SentryBotGame::draw(Ui& ui) {
 					if (UiRect{ n3 - 84, n4 + 6, 42, 42 }.contains(curX_, curY_)) {
 						model_.pressedCell = i;
 						const int shown = touchCell_ != -1 ? touchCell_ : playerCursor_;
-						if (i != shown) std::fprintf(stderr, "[sound] 1027\n");   // soundClick (:512)
+						if (i != shown) Sound::instance().soundClick();   // (:512)
 						touchCell_ = i;
 						break;
 					}

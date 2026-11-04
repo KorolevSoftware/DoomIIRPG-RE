@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-30_
+_Last updated: 2026-11-04_
 
 ## Controls (2026-08-29, aligned with `src/Input.cpp:80-95`)
 
@@ -20,6 +20,7 @@ _Last updated: 2026-10-30_
 | K | debug: grant keycards + drinks 0..10 + holy-water pistol/50 water + 1000 credits (inventory[24]), restore health to max and armor to 200 (ours, removable; switches to the pistol if not owned) |
 | B | sentry bot: discard a held bot / return a deployed bot (legacy AVK_BOTDISCARD) |
 | F3 | debug: toggle the coordinate overlay (moved from B) |
+| F7 / Shift+F7 | debug: play the pistol sound / toggle Music_General (ours, removable) |
 | F5 | debug: give the next bot weapon 3..6 (ours, removable) |
 | J / Shift+J | debug: start the sentry-bot minigame, botType 0 / 1, no script thread (ours, removable) |
 | Z / X | zoom in / out while the sniper scope is up (legacy next/prev weapon keys) |
@@ -37,6 +38,8 @@ Known deviation (2026-10-29): in a cinematic ANY queued action skips it (`new_sr
 legacy skips only on PASSTURN/AUTOMAP/FIRE/key 18 (`src/InputEventController.cpp:417`). Fix later with an action whitelist.
 
 ## Working on
+
+- **ЗВУК (2026-11-04).** Спека docs/architecture/sound.md, ADR 0046. G1–G9 ревью PASS, golden ALL IDENTICAL, проверено на слух пользователем: всё звучит. Трасса вызовов: `D2R_SOUNDLOG=1`. Отладочные клавиши F7 / Shift+F7. Без аудиоустройства игра идёт молча. Не портировано: звуки систем, которых нет (gib, ракеты, VIOS, шаги боссов), ползунки Options (отдельный пункт).
 
 - **ОПКОДЫ СКРИПТОВ (2026-10-29).** Все опкоды оригинала имеют case в ScriptVM; функции смерти и MONSTERFLAGOP портированы; мост и зеркало на map00 проверены на экране. Заглушки (без подсистем): ремонт брони, беговая дорожка, частицы, воскрешение монстров, бросок выпавшего предмета (выдаётся сразу).
 

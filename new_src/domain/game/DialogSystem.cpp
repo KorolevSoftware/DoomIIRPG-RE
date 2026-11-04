@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/GameContext.h"
+#include "core/Sound.h"
 #include "domain/game/Game.h"
 #include "domain/game/ScriptVM.h"
 #include "io/Localization.h"
@@ -166,7 +167,7 @@ void DialogSystem::prepareDialog(Text& text, int style, int flags) {
 	style_ = style;
 	// dialogItem reset (:710): loot popups arrive with spec GROUP 3.
 
-	if (style == 2) std::fprintf(stderr, "[dialog] sound 1027\n");  // (715-717)
+	if (style == 2) Sound::instance().playSound(1027, 0, 3);  // (715-717)
 }
 
 void DialogSystem::closeDialog(bool skip) {

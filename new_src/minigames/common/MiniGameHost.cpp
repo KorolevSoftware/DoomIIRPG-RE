@@ -1,8 +1,8 @@
 #include "minigames/common/MiniGameHost.h"
 
-#include <cstdio>
 #include <string>
 
+#include "core/Sound.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
@@ -78,7 +78,7 @@ void MiniGameHost::finish(int result) {
 		fromMainMenu_ = false;
 		active_ = nullptr;
 		callingThread_ = nullptr;
-		std::fprintf(stderr, "[sound] 1071\n");        // Music_Title, looped
+		Sound::instance().playSound(1071, Sound::kFlagLoop, 3);   // Music_Title
 		env_.openMenu(kMenuMainMinigame);              // setMenu(18) with an empty stack
 		return;
 	}

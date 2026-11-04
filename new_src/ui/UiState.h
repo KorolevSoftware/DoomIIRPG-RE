@@ -19,6 +19,9 @@ public:
 	// "released outside" are indistinguishable and the *_Active sheet
 	// highlight (docs/original-code/ui.md §1) has nothing to key off.
 	UiId activeId = UiId::None;
+	// Widget latched on this frame's press edge; keys the press sound
+	// (fmButton highlight sound, src/Button.cpp:145-158).
+	UiId pressedId = UiId::None;
 
 	// --- per-region scroll offsets, indexed by UiId ---
 	int scroll(UiId id) const;

@@ -6,6 +6,7 @@
 #include <cstdlib>
 
 #include "core/AppContext.h"
+#include "core/Sound.h"
 #include "domain/game/Automap.h"
 #include "domain/game/DialogSystem.h"
 #include "domain/game/Enums.h"
@@ -282,7 +283,7 @@ void GameContext::enterState_(StateId s) {
 		++sys_.player->totalDeaths;
 		{
 			const int cc = sys_.player->characterChoice;
-			if (cc >= 1 && cc <= 3) std::fprintf(stderr, "[sound] %d\n", cc == 1 ? 1092 : cc == 2 ? 1091 : 1090);
+			if (cc >= 1 && cc <= 3) Sound::instance().playSound(cc == 1 ? 1092 : cc == 2 ? 1091 : 1090, 0, 3);
 		}
 		sys_.hud->startShake(upTimeMs, 350, 10);   // startShake(350, 5, 500): intensity 2*5 (:729)
 		sys_.player->ce.setStat(Enums::STAT_HEALTH, 0);
@@ -452,7 +453,7 @@ void GameContext::tick() {
 		// ST_CREDITS (not ending the game): BACK or FIRE at any time (src/InputEventController.cpp:387-414).
 		if (state_ == StateId::Credits) {
 			if (a == Action::BackKey || a == Action::Use) {
-				if (sys_.game->loadMapID != 0) std::fprintf(stderr, "[sound] stop\n");   // in-game branch only (:408)
+				if (sys_.game->loadMapID != 0) Sound::instance().soundStop();   // in-game branch only (:408)
 				setState(StateId::Menu);
 			}
 			continue;
@@ -593,6 +594,11 @@ void GameContext::tick() {
 		// Excluded from the update chain (src/Canvas.cpp:827); the crawl clock is read while drawing.
 		break;
 	}
+	// Idle-only pass for the other states that render the world (sound.md §5.4 callers).
+	if (state_ == StateId::Dialog || state_ == StateId::Camera || state_ == StateId::Dying ||
+	    state_ == StateId::BotDying || state_ == StateId::Looting) {
+		sys_.game->monsters.renderActivate(sys_.game->visibility, false);
+	}
 
 	// Screen shake randomize/expire, every state incl. Playing (legacy
 	// updateView block, src/MovementController.cpp:381-388).
@@ -625,6 +631,10 @@ void GameContext::tickLoading() {
 	if (framesRendered_ == frameAtStateEntry_) return;     // the box must be presented before the load
 
 	// phase 1 (src/LoadingManager.cpp:617-744)
+	Sound& snd = Sound::instance();
+	const bool savedAllow = snd.allowSounds;               // mute init-map effects (:619-621)
+	snd.inInitMap = true;
+	snd.allowSounds = false;
 	unloadMap_();
 	if (!sys_.loadMapFile || !sys_.loadMapFile(sys_.game->loadMapID))
 		std::fprintf(stderr, "[load] map %d FAILED to load\n", sys_.game->loadMapID);
@@ -655,6 +665,9 @@ void GameContext::tickLoading() {
 	if (state_ == StateId::Loading) setState(StateId::Playing);
 	pauseGameTime = false;
 	blockInputTime = gameTime + 200;
+	snd.allowSounds = savedAllow;                          // (:721)
+	snd.inInitMap = false;
+	sys_.game->monsters.armIdleSounds(upTimeMs);           // (:734-736)
 	std::fprintf(stderr, "[load] -> %s (blockInput 200ms)\n",
 		state_ == StateId::Camera ? "ST_CAMERA (kept)" : "ST_PLAYING");
 	loading_.onLoadFinished();
@@ -697,13 +710,13 @@ void GameContext::backToMain_() {
 	sys_.player->reset();                                // (:1376)
 	sys_.hud->clearScreenEffects();                      // render->endFade (:1380)
 	pauseGameTime = true;                                // as at boot
-	std::fprintf(stderr, "[sound] 1071\n");              // Music_Title (:1404)
+	Sound::instance().playSound(1071, 1, 3);             // Music_Title (:1404)
 	nextMenuId_ = kMenuMain;
 	setState(StateId::Menu);                             // setMenu(MENU_MAIN) (:1405, src/MenuSystem.cpp:645-649)
 }
 
 void GameContext::exitIntroMovie_() {
-	std::fprintf(stderr, "[sound] stop\n");              // soundStop (src/IntroSequenceManager.cpp:872)
+	Sound::instance().soundStop();                       // (src/IntroSequenceManager.cpp:872)
 	loading_.save().hasSeenIntro = true;
 	loading_.save().saveConfig();
 	backToMain_();
@@ -779,7 +792,7 @@ void GameContext::tickPlaying() {
 	sys_.game->combat.shotsFired = false;
 	// Sight wake of the last rendered frame, seen with shotsFired == false
 	// like the legacy render pass (ADR 0029, src/Render.cpp:2351, :1576-1583).
-	sys_.game->monsters.renderActivate(sys_.game->visibility);
+	sys_.game->monsters.renderActivate(sys_.game->visibility, true);
 	const bool inCombat = c.active;               // ST_COMBAT for the whole tick
 	if (c.active) {
 		// monsterLerp + the lerp tick already ran in the globals section in
@@ -945,7 +958,7 @@ void GameContext::tickAutomap() {
 	sys_.game->doors.snapAll();                               // src/Game.cpp:1153
 	// Sight wake of the last rendered frame (ADR 0029); the original's automap
 	// updateView renders too (src/AutomapController.cpp:23-24).
-	sys_.game->monsters.renderActivate(sys_.game->visibility);
+	sys_.game->monsters.renderActivate(sys_.game->visibility, true);
 	Player& p = *sys_.player;
 	const bool moved = p.viewX != p.destX || p.viewY != p.destY;
 	const bool turned = p.viewAngle != p.destAngle;
@@ -1031,6 +1044,29 @@ void setSoftKeyText(Text& out, const std::string& s) {
 	out.setLength(0);
 	out.append(s);
 	out.dehyphenate();
+}
+
+// fmButton soundResID per widget (sound.md §5.7); -1 = silent.
+// hudBlocked: Hud::handleUserTouch returns before SetHighlighted (src/Hud.cpp:1238-1239).
+int pressSound(UiId id, bool hudBlocked) {
+	const int i = (int)id;
+	if (i >= (int)UiId::HudSwitchLeft && i <= (int)UiId::HudWeaponSel14 && hudBlocked) return -1;
+	if (i >= (int)UiId::HudSwitchLeft && i <= (int)UiId::HudSoftRight && id != UiId::HudSoftCenter)
+		return 1121;   // HUD buttons 0-6, src/Hud.cpp:67-85
+	if (i >= (int)UiId::HudWeaponSel0 && i <= (int)UiId::HudWeaponSel14) return 1027;   // src/Hud.cpp:90
+	if (i >= (int)UiId::DialogBody && i <= (int)UiId::DialogChoiceRight) return 1027;   // src/Canvas.cpp:327-348
+	if (i >= (int)UiId::MenuRow0 && i <= (int)UiId::MenuInfo8) return 1027;   // src/MenuSystem.cpp:173-256
+	if (id == UiId::MenuSoftLeft || id == UiId::MenuSoftRight) return 1122;   // src/MenuSystem.cpp:193,219
+	if (id == UiId::AutomapSoftLeft || id == UiId::AutomapSoftRight) return 1027;   // buttons 19/20, src/Canvas.cpp:355-357
+	if (i >= (int)UiId::CharSlot0 && i <= (int)UiId::StorySkip) return 1027;   // src/IntroSequenceManager.cpp:37-47
+	return -1;
+}
+
+// SetHighlighted plays on the rising edge unless already playing (src/Button.cpp:145-158).
+void playPressSound(UiId id, bool hudBlocked) {
+	const int snd = pressSound(id, hudBlocked);
+	Sound& S = Sound::instance();
+	if (snd != -1 && !S.isSoundPlaying(snd)) S.playSound(snd, 0, 5);
 }
 
 } // namespace
@@ -1324,6 +1360,7 @@ void GameContext::render(AppContext& app) {
 		// tied to ST_CAMERA, not to the camera pose (src/Canvas.cpp:1038, :1211).
 		sys_.game->visibility = scene_.visibility();
 		sys_.game->visibility.cinematic = state_ == StateId::Camera;
+		sys_.game->visibility.timeMs = upTimeMs;           // app->time inside the render (src/Render.cpp:3772)
 		// Seen marks of this frame (ADR 0036); gate = legacy updateAutomap.
 		Automap::markSeen(*sys_.map, sys_.game->visibility,
 		                  state_ == StateId::Playing || state_ == StateId::Automap);
@@ -1630,7 +1667,10 @@ void GameContext::render(AppContext& app) {
 		applyUiAction(r.action, r.index);
 	}
 
-	if (ui != nullptr) ui->endFrame();
+	if (ui != nullptr) {
+		playPressSound(ui->state().pressedId, blockInputTime != 0);
+		ui->endFrame();
+	}
 
 	renderer.endFrame(app.window());
 	++framesRendered_;

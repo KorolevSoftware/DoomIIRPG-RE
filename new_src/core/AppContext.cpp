@@ -1,6 +1,7 @@
 #include "core/AppContext.h"
 
 #include "core/GameLoop.h"
+#include "core/Sound.h"
 #include "io/ZipArchive.h"
 #include "platform/FileSystem.h"
 #include "platform/InputSystem.h"
@@ -57,6 +58,9 @@ bool AppContext::initialize(const char* dataArchive) {
 }
 
 bool AppContext::startup() {
+	Sound::instance().startup([this](const std::string& name, std::vector<uint8_t>& out) {
+		return readResource("sounds2/" + name, out);
+	});
 	return true;
 }
 
@@ -69,6 +73,7 @@ bool AppContext::run() {
 }
 
 void AppContext::shutdown() {
+	Sound::instance().shutdown();
 	archive_.reset();
 	input_.reset();
 	// The renderer -- and with it the TextureStore -- deliberately outlives

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "core/Sound.h"
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
 #include "domain/game/Enums.h"
@@ -300,7 +301,7 @@ bool Combat::monsterSeq() {
 			totalDamage += damage;
 			totalArmorDamage += crArmorDamage;
 		}
-		int snd;                                                 // :512-522, no audio backend
+		int snd;                                                 // :512-522
 		if (attackerWeaponId == 17 && (crFlags & Enums::CR_HITMASK) == 0) {
 			snd = 1100;
 		} else if (attackerWeaponId == 28) {
@@ -308,8 +309,8 @@ bool Combat::monsterSeq() {
 		} else {
 			snd = monsterSound(def->eSubType, def->parm, soundType);
 		}
-		std::fprintf(stderr, "[sound] %d\n", snd);
-		--animLoopCount;                                         // :524-527
+		Sound::instance().playSound(snd, 0, 4);
+		--animLoopCount;                                        // :524-527
 		animTime = shotHold;
 		animStartTime = gt;
 		animEndTime = animStartTime + animTime;
@@ -420,9 +421,10 @@ void Combat::explodeOnPlayer() {
 }
 
 void Combat::playerPainEvent(Entity* src, bool fromMonster) {
-	// src/Player.cpp:624-650; the characterChoice voice split is absent.
+	// src/Player.cpp:624-650
 	if (src == nullptr) env_.hud->setDamageDir(3);
-	std::fprintf(stderr, "[sound] %d\n", env_.player->isFamiliar ? 1111 : 1093);
+	Sound::instance().playSound(env_.player->isFamiliar ? 1111                      // :631-640
+		: env_.player->characterChoice == 1 ? 1094 : 1093, 0, 3);
 	env_.hud->setDamageCount(1);
 	// startShake(500, 2, 150) -> intensity 2*2; the monster case
 	// startShake(0, 0, 150) only vibrates.
@@ -459,15 +461,45 @@ void Combat::playerPain(int n, Entity* src, bool showMsg) {
 	// is detected by the caller (ADR 0028 decision 4).
 }
 
-int Combat::monsterSound(int sub, int parm, int soundType) const {
-	// src/Game.cpp:3771-3845 for MSOUND_ATTACK1/2: rand stays 0 and the
-	// death-sound overrides do not apply.
-	if (sub == Enums::MONSTER_PINKY && parm == 0) return 1082;  // :3779-3786
-	// Mastermind parm 1 attack types jump to the table read (:3810-3812).
-	const size_t idx = (size_t)(sub * Enums::MSOUND_TYPES + soundType);
-	if (env_.tables == nullptr || idx >= env_.tables->monsterSounds.size()) return 0;
-	const int id = env_.tables->monsterSounds[idx];              // :3826-3830
-	return id != Enums::MSOUND_NONE ? id + 1000 : id;
+// Game::getMonsterSound (src/Game.cpp:3771-3845).
+int Combat::monsterSound(int sub, int parm, int soundType) {
+	const int rnd = soundType == Enums::MSOUND_ALERT1 ? (int)(nextByte() % 3) : 0;   // :3776-3778
+	int id = 0;
+	bool table = false;
+	if (sub == Enums::MONSTER_PINKY && parm == 0) {             // :3780-3800 small pinky
+		switch (soundType) {
+		case Enums::MSOUND_ALERT1: case Enums::MSOUND_ALERT2: case Enums::MSOUND_ALERT3: id = 1085; break;
+		case Enums::MSOUND_ATTACK1: case Enums::MSOUND_ATTACK2: id = 1082; break;
+		case Enums::MSOUND_IDLE: id = 1026; break;
+		case Enums::MSOUND_PAIN: id = 1084; break;
+		case Enums::MSOUND_DEATH: id = 1083; break;
+		}
+	} else if (sub == Enums::BOSS_MASTERMIND && parm == 1) {    // :3804-3824
+		switch (soundType) {
+		case Enums::MSOUND_ALERT1: case Enums::MSOUND_ALERT2: case Enums::MSOUND_ALERT3: id = 1116; break;
+		case Enums::MSOUND_ATTACK1: case Enums::MSOUND_ATTACK2: table = true; break;   // goto table read
+		case Enums::MSOUND_IDLE: id = 1024; break;
+		case Enums::MSOUND_PAIN: id = 1025; break;
+		case Enums::MSOUND_DEATH: id = 1115; break;
+		}
+	} else {
+		table = true;
+	}
+	if (table) {                                                 // :3826-3831
+		const size_t idx = (size_t)(sub * Enums::MSOUND_TYPES + soundType + rnd);
+		id = Enums::MSOUND_NONE;                                 // rewrite guard for a bad index
+		if (env_.tables != nullptr && idx < env_.tables->monsterSounds.size()) {
+			id = env_.tables->monsterSounds[idx];
+			if (id != Enums::MSOUND_NONE) id += 1000;
+		}
+	}
+	if (sub == Enums::MONSTER_IMP && soundType == Enums::MSOUND_DEATH) {
+		id = std::rand() % 2 + 1050;                             // :3836-3838
+	}
+	if (sub == Enums::MONSTER_ZOMBIE && soundType == Enums::MSOUND_DEATH) {
+		id = std::rand() % 3 + 1139;                             // :3840-3842
+	}
+	return id;
 }
 
 void Combat::radiusHurtEntities(int tx, int ty, int knock, int dmg, Entity* attacker, Entity* skip) {
@@ -673,7 +705,7 @@ bool Combat::playerSeq() {
 			}
 			damage = dmg;                                        // :258
 		}
-		{   // per-weapon fire sound (:260-308): ids logged, no audio backend
+		{   // per-weapon shot sound (:260-308)
 			int snd = -1;
 			switch (attackerWeaponId) {
 			case 3: case 5: case 9: snd = 1086; break;
@@ -687,7 +719,7 @@ bool Combat::playerSeq() {
 			case 14:                    snd = env_.player->characterChoice == 1 ? 1137 : 1136; break;   // :298
 			case 1:                     snd = 1015; break;
 			}
-			if (snd != -1) std::fprintf(stderr, "[combat] fire sound %d\n", snd);
+			if (snd != -1) Sound::instance().playSound(snd, 0, 4);
 		}
 		totalDamage += damage;                                   // :309
 		totalArmorDamage += crArmorDamage;                       // :310
@@ -989,7 +1021,7 @@ void Combat::updateProjectile() {
 			const int y = m->pos[4];
 			const int z = m->pos[5];
 			if (attackerWeaponProj == 7) {                              // :1329-1340
-				std::fprintf(stderr, "[sound] 1034\n");
+				Sound::instance().playSound(1034, 0, 4);
 				// antifire buffs[9] fog branch (:1331-1337): buffs absent.
 				missileAnim = Enums::TILENUM_FIRE_BALL;
 				renderMode = 4;

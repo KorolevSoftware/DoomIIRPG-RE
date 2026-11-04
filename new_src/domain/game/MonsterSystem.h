@@ -1,6 +1,8 @@
 #ifndef NEW_DOMAIN_GAME_MONSTERSYSTEM_H
 #define NEW_DOMAIN_GAME_MONSTERSYSTEM_H
 
+#include <cstdint>
+
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
 
@@ -16,6 +18,7 @@ class MonsterAI;
 class Player;
 class ScriptVM;
 class SpriteLerps;
+class StateHost;
 class TraceSystem;
 class EntityDefs;
 struct EntityDef;
@@ -46,6 +49,7 @@ public:
 		MonsterAI* ai = nullptr;             // per-monster decisions (ADR 0028)
 		const Player* player = nullptr;      // health check of onMonsterAttackDone
 		const GameSprites* sprites = nullptr; // activePropogators gate of renderActivate
+		const StateHost* host = nullptr;     // ST_PLAYING gate of the alert sound (src/Game.cpp:804)
 	};
 
 	// Wiring + per-level reset (called from Game::loadEntities).
@@ -77,14 +81,18 @@ public:
 
 	// Faithful ring moves (src/Game.cpp:752-808, :825-855). activate ports:
 	// runStaticFunc fires SCR_MONSTER_ACTIVATE on MFLAG_TRIGGERONACTIVATE,
-	// rangeCheck gates at tileDistSq(4), alertSound logs (no audio),
-	// b4 unused like legacy.
+	// rangeCheck gates at tileDistSq(4), alertSound plays MSOUND_ALERT1 in
+	// ST_PLAYING only, b4 unused like legacy.
 	void activate(Entity* e, bool runStaticFunc, bool rangeCheck, bool alertSound, bool b4);
 	void deactivate(Entity* e);
 
-	// Sight wake (src/Render.cpp:1576-1583), run on the next tick over the
-	// sprites the last world frame drew (ADR 0029); empties the list.
-	void renderActivate(ViewVisibility& vis);
+	// Per leaf: idle sounds (Render::addSprite hook, src/Render.cpp:850-861),
+	// then the sight wake if `wake` (src/Render.cpp:1576-1583), run on the
+	// next tick over the sprites the last world frame drew (ADR 0029);
+	// empties the sprite list.
+	void renderActivate(ViewVisibility& vis, bool wake);
+	// Per-subtype idle timers armed at map load (src/LoadingManager.cpp:734-736).
+	void armIdleSounds(int64_t now);
 
 	// Pending-attack queue (ADR 0028).
 	void attack(Entity* e);          // Entity::attack     src/Entity.cpp:1160-1167 (LIFO push)
@@ -125,12 +133,17 @@ public:
 	// visual/flag subset: death-frame overlay (spriteInfo bits 8-14 = 0x7000),
 	// reposition to the tile center at ground+32, corpse info bits
 	// (kInfoCorpse|kInfoActive|kInfoDirty), def swap to find(ET_CORPSE, subtype,
-	// parm), relink at the new tile. The inactiveMonsters ring, death sound
-	// and name refresh are not ported yet.
-	void corpsifyMonster(Entity* e, int x, int y);
+	// parm), relink at the new tile, optional MSOUND_DEATH. The
+	// inactiveMonsters ring and name refresh are not ported yet.
+	void corpsifyMonster(Entity* e, int x, int y, bool deathSound);
 
 private:
+	void idleHook(int sprite, int64_t now);
+	// Render::handleMonsterIdleSounds (src/Render.cpp:3769-3778).
+	void idleSound(Entity* e, int64_t now);
+
 	Env env_;
+	int64_t idleTime_[18] = {};          // Render::monsterIdleTime, per eSubType
 
 	static constexpr int kMaxMonsters = 80;
 	EntityMonster entityMonsters_[kMaxMonsters];

@@ -34,7 +34,7 @@ Topic files (created on demand):
 | `target-practice.md` | Target practice (map00 shooting range): EV_START_TARGETPRACTICE 84, strip to rifle+8 bullets, head/body/leg zones 30/20/10, score>120 → +1 accuracy, score bar, input/exit, target sprite frames |
 | `front-end.md` | Boot → `ST_LOGO` (l2.bmp) → `ST_INTRO_MOVIE` (prolog pan + crawl) → `MENU_MAIN` rows/skin/dial → confirm 14 → difficulty 16 (1/2/4) → `startGame` → `ST_CHARACTER_SELECTION` layout/input/stats → `ST_INTRO` prologue → `loadMap(1)`; `backToMain`, Save & Quit, sounds |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
-| `audio.md` | sound/music |
+| `sound.md` | Sound engine: resID->sounds2/*.wav table, WAV loader, 10 OpenAL slots, `playSound` flags/priority/stealing, stop/fade (dead), sfx/music volume 0..100 + config persistence, no suspend handling |
 | `app.md` | App lifecycle, game states, input mapping |
 
 Raw investigation reports go to [`../research/`](../research/).

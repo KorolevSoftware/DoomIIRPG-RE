@@ -263,8 +263,8 @@ public:
 	// 500n + 100((n−1)^3 + (n−1)) (src/Player.cpp:360-362).
 	int calcLevelXP(int n) const;
 	// Subset: level++, nextLevelXP, baseCe MAX_HEALTH +10 clamp 999, health
-	// refill (src/Player.cpp:283-307,:342). modifyStat DEF/STR/ACC/AGI bumps
-	// are deferred and logged.
+	// refill, then outside ST_MENU soundStop + 1070 (src/Player.cpp:283-307,
+	// :342,:348-351). modifyStat bumps and the help dialog are deferred.
 	void addLevel();
 
 	// Fire-pipeline entry (src/Player.cpp:754-799): guard chain then

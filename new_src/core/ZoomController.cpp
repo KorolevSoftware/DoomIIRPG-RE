@@ -1,10 +1,10 @@
 #include "core/ZoomController.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <string>
 
 #include "core/PlayerActions.h"
+#include "core/Sound.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
@@ -117,7 +117,7 @@ bool ZoomController::handle(Action a) {
 			++z.zoomTurn;
 			z.zoomDestFOV = std::max(190 + ((-55 * z.zoomCurFOVPercent) >> 7), 102);
 			z.zoomTime = *env_.upTimeMs + 360;
-			std::fprintf(stderr, "[sound] 1113\n");
+			Sound::instance().playSound(1113, 0, 5);
 		}
 		break;
 	case Action::PrevWeapon:
@@ -126,7 +126,7 @@ bool ZoomController::handle(Action a) {
 			++z.zoomTurn;
 			z.zoomDestFOV = 190 + ((-55 * z.zoomCurFOVPercent) >> 7);
 			z.zoomTime = *env_.upTimeMs + 360;
-			std::fprintf(stderr, "[sound] 1113\n");
+			Sound::instance().playSound(1113, 0, 5);
 		}
 		++z.zoomTurn;                            // src/ZoomController.cpp:150, unconditional
 		break;

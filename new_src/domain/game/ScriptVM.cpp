@@ -4,6 +4,7 @@
 #include <string>
 
 #include "core/GameContext.h"
+#include "core/Sound.h"
 #include "domain/game/Automap.h"
 #include "domain/game/DialogSystem.h"
 #include "domain/game/Entity.h"
@@ -595,10 +596,10 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				}
 			} else if (act == 2) {
 				env_.game->setLineLocked(ent, true);
-				if (interactive) std::fprintf(stderr, "[script] sound 1065\n");
+				if (interactive) Sound::instance().playSound(1065, 0, 3);   // src/ScriptThread.cpp:768
 			} else {
 				env_.game->setLineLocked(ent, false);
-				if (interactive) std::fprintf(stderr, "[script] sound 1065\n");
+				if (interactive) Sound::instance().playSound(1065, 0, 3);   // src/ScriptThread.cpp:774
 			}
 			break;
 		}
@@ -637,7 +638,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 						// are expected (legacy quirk, kept verbatim), then
 						// removeEntity re-hides the sprite and unlinks — net
 						// effect: the monster VANISHES (no visible corpse).
-						env_.game->monsters.corpsifyMonster(ent, ent->linkIndex % 32, ent->linkIndex / 32);
+						env_.game->monsters.corpsifyMonster(ent, ent->linkIndex % 32, ent->linkIndex / 32, false);
 						env_.game->db.removeEntity(ent);
 						ent->info |= Entity::kInfoDirty;               // :839
 						std::fprintf(stderr, "[script] HIDE sprite=%d corpsify+remove\n", sprite);
@@ -977,14 +978,22 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 
 		case Enums::EV_PLAYSOUND: {
 			int id = readUByte(t);
-			readUByte(t);                 // vol/priority nibbles
-			std::fprintf(stderr, "[script] PLAYSOUND id=%d\n", id + 1000);
+			int args = readUByte(t);      // flags << 4 | priority; id 255 -> 1255 is a no-op
+			Sound& s = Sound::instance();
+			if (s.inInitMap && s.areSoundsAllowed) {           // src/ScriptThread.cpp:1083-1088
+				const bool saved = s.allowSounds;
+				s.allowSounds = true;
+				s.playSound(id + 1000, args >> 4, args & 0xF);
+				s.allowSounds = saved;
+			} else {
+				s.playSound(id + 1000, args >> 4, args & 0xF);  // :1090
+			}
 			break;
 		}
 
 		case Enums::EV_STOPSOUND: {
 			int id = readUByte(t);
-			std::fprintf(stderr, "[script] STOPSOUND id=%d\n", id + 1000);
+			Sound::instance().stopSound(id + 1000);            // src/ScriptThread.cpp:1958
 			break;
 		}
 
@@ -1121,7 +1130,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				std::fprintf(stderr, "[script] MAKE_CORPSE sprite=%d skipped (no monster entity)\n", sprite);
 				break;
 			}
-			env_.game->monsters.corpsifyMonster(ent, (dstX << 6) + 32, (dstY << 6) + 32); // pixel tile-centers
+			env_.game->monsters.corpsifyMonster(ent, (dstX << 6) + 32, (dstY << 6) + 32, true); // pixel tile-centers
 			std::fprintf(stderr, "[script] MAKE_CORPSE sprite=%d -> corpse @ tile %d,%d\n",
 				sprite, dstX, dstY);
 			break;
@@ -1703,7 +1712,7 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 				break;
 			}
 			if (env_.player->characterChoice >= 1 && env_.player->characterChoice <= 3)   // (:33-38)
-				std::fprintf(stderr, "[sound] %d\n", env_.player->characterChoice == 1 ? 1073 : 1072);
+				Sound::instance().playSound(env_.player->characterChoice == 1 ? 1073 : 1072, 0, 3);
 			{
 				std::string text = env_.loc->get(kTextMain, 210);
 				env_.hud->addMessage(text, 0xAA000000, 3);   // :40

@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <string>
 
+#include "core/GameStates.h"
+#include "core/Sound.h"
 #include "domain/game/Combat.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
@@ -108,22 +110,32 @@ void MonsterSystem::activate(Entity* e, bool runStaticFunc, bool rangeCheck, boo
 		if (env_.vm) env_.vm->executeStaticFunc(Enums::SCR_MONSTER_ACTIVATE);   // :800-802
 		monster->flags &= ~Enums::MFLAG_TRIGGERONACTIVATE;
 	}
-	if (alertSound) {                          // :804-807 MSOUND_ALERT1, no audio backend
-		std::fprintf(stderr, "[monster] alert sound sub=%d parm=%d\n",
-			e->def ? e->def->eSubType : -1, e->def ? e->def->parm : -1);
+	if (alertSound && e->def != nullptr && env_.host != nullptr &&
+	    env_.host->state() == StateId::Playing && !env_.combat->active) {   // :804-807, ST_COMBAT excluded
+		Sound::instance().playSound(
+			env_.combat->monsterSound(e->def->eSubType, e->def->parm, Enums::MSOUND_ALERT1), 0, 3);
 	}
 	std::fprintf(stderr, "[monster] activate sprite=%d\n", sprite);
 }
 
-// Port of the renderSpriteObject sight wake (src/Render.cpp:1576-1583) over
-// the sprites the last world frame drew. The gates are re-read per sprite
-// like legacy: activate() may run SCR_MONSTER_ACTIVATE and start lerps.
-// noclip and disableAI are always 0 in the rewrite.
+// renderBSP per-leaf order (src/Render.cpp:1752-1761) over the sprites the
+// last world frame drew: the addSprite idle hook for the whole leaf, then the
+// renderSpriteObject sight wake (src/Render.cpp:1576-1583). The wake gates are
+// re-read per sprite like legacy: activate() may run SCR_MONSTER_ACTIVATE and
+// start lerps. noclip and disableAI are always 0 in the rewrite.
 // The trace is 2D (spec deviation D3, src/Game.cpp:277-283 has a Z check).
-void MonsterSystem::renderActivate(ViewVisibility& vis) {
-	if (vis.valid && !vis.cinematic) {         // disableRenderActivate in ST_CAMERA
-		for (int s : vis.drawnSprites) {
-			if (env_.sprites->activePropogators() != 0 || env_.lerps->animatingEffects() != 0) break;
+void MonsterSystem::renderActivate(ViewVisibility& vis, bool wake) {
+	if (!vis.valid) return;
+	const bool wakeOk = wake && !vis.cinematic;  // disableRenderActivate in ST_CAMERA
+	const size_t numLeaves = vis.leafStart.size();
+	for (size_t li = 0; li < numLeaves; ++li) {
+		const size_t first = (size_t)vis.leafStart[li];
+		const size_t last = li + 1 < numLeaves ? (size_t)vis.leafStart[li + 1] : vis.drawnSprites.size();
+		for (size_t k = first; k < last; ++k) idleHook(vis.drawnSprites[k], vis.timeMs);
+		if (!wakeOk) continue;
+		for (size_t k = first; k < last; ++k) {
+			const int s = vis.drawnSprites[k];
+			if (env_.sprites->activePropogators() != 0 || env_.lerps->animatingEffects() != 0) continue;
 			Entity* e = env_.db->findEntityBySprite(s);
 			if (e == nullptr || e->monster == nullptr) continue;
 			if ((e->info & (Entity::kInfoCorpse | Entity::kInfoOnActiveList | Entity::kInfoHidden)) != 0) continue;
@@ -139,6 +151,34 @@ void MonsterSystem::renderActivate(ViewVisibility& vis) {
 		}
 	}
 	vis.drawnSprites.clear();
+	vis.leafStart.clear();
+}
+
+// Render::addSprite arms before the idle hook (src/Render.cpp:829-861).
+void MonsterSystem::idleHook(int s, int64_t now) {
+	const int info = env_.map->mapSpriteInfo[s];
+	const int tile = info & 0xFF;
+	if ((info & (0x10000 | 0x10000000 | 0x400000)) != 0) return;
+	if (tile == 240 || tile == 245 || tile == 246 || tile == 247) return;
+	if ((info & 0xF000000) != 0) return;
+	Entity* e = env_.db->findEntityBySprite(s);
+	if (e == nullptr || (e->info & (Entity::kInfoCorpse | Entity::kInfoHidden)) != 0) return;
+	if (e->def != nullptr && e->def->eType == Enums::ET_MONSTER) idleSound(e, now);
+}
+
+void MonsterSystem::armIdleSounds(int64_t now) {
+	for (int64_t& t : idleTime_) t = (env_.combat->nextByte() % 10) * 1000 + now + 12000;   // src/LoadingManager.cpp:735-737
+}
+
+// The timer re-arms even when the monster is out of earshot (src/Render.cpp:3776).
+void MonsterSystem::idleSound(Entity* e, int64_t now) {
+	const int sub = e->def->eSubType;
+	if (sub < 0 || sub >= 18 || idleTime_[sub] == 0 || idleTime_[sub] > now) return;
+	if (env_.trace->distFrom(e, env_.player->viewX, env_.player->viewY) < env_.combat->tileDistSq(4)) {
+		Sound::instance().playSound(
+			env_.combat->monsterSound(sub, (int8_t)e->def->parm, Enums::MSOUND_IDLE), 0, 1);
+	}
+	idleTime_[sub] = (env_.combat->nextByte() % 10) * 1000 + now + 6000;
 }
 
 // Faithful port of Game::deactivate (src/Game.cpp:825-855).
@@ -367,9 +407,8 @@ bool MonsterSystem::painMonster(Entity* e, int dmg, int attackerWeaponId) {
 	}
 	m->ce.setStat(Enums::STAT_HEALTH, n2);                     // :344
 	if (n2 > 0) {
-		// MSOUND_PAIN (:347-348) logged — no audio backend.
-		std::fprintf(stderr, "[monster] pain sound sub=%d parm=%d hp=%d\n",
-			e->def->eSubType, e->def->parm, n2);
+		Sound::instance().playSound(
+			env_.combat->monsterSound(e->def->eSubType, e->def->parm, Enums::MSOUND_PAIN), 0, 3);   // :347-348
 		env_.map->mapSpriteInfo[sprite] =
 			(env_.map->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x6000;    // :350-353 MANIM_PAIN
 		m->frameTime = env_.lerps->clockMs() + 250;    // nowMs() = the SpriteLerps clock (deviation D-6)
@@ -409,6 +448,9 @@ void MonsterSystem::diedMonster(Entity* e, bool giveXP) {
 	// (:491-495): deferred (absent on the map00 route).
 	deactivate(e);                                             // :485
 	undoAttack(e);                                             // :486
+	// SND-D11: a future monsterEffects/poof port (:478-495) must go above this call (std::rand order).
+	Sound::instance().playSound(
+		env_.combat->monsterSound(e->def->eSubType, e->def->parm, Enums::MSOUND_DEATH), 0, 5);   // :403-406, b2 = true (:496)
 	if (giveXP) awardKillXP(*m);                               // :496 (+ :407-413)
 	const EntityDef* corpseDef =
 		env_.defs->find(Enums::ET_CORPSE, e->def ? e->def->eSubType : 0,
@@ -437,7 +479,7 @@ void MonsterSystem::awardKillXP(const EntityMonster& m) {
 // see MonsterSystem.h for the elided parts. Callers guarantee a
 // monster-family entity (legacy requires entity->monster != nullptr,
 // src/ScriptThread.cpp:1618-1620).
-void MonsterSystem::corpsifyMonster(Entity* e, int x, int y) {
+void MonsterSystem::corpsifyMonster(Entity* e, int x, int y, bool deathSound) {
 	if (!e || !e->isMonster() || !env_.map || !env_.defs) return;
 	int s = e->getSprite();
 	if (s < 0 || s >= env_.map->numSprites) return;
@@ -475,8 +517,12 @@ void MonsterSystem::corpsifyMonster(Entity* e, int x, int y) {
 		                e->def ? e->def->parm : -1);
 	if (corpseDef != nullptr) e->def = corpseDef;
 
-	// Relink at the new tile (:2264-2265). checkMonsterDeath sound omitted.
+	// Relink at the new tile (:2264-2265).
 	env_.db->linkEntity(e, x >> 6, y >> 6);
+	if (deathSound && e->def != nullptr) {     // checkMonsterDeath(false, b) (:2266, src/Entity.cpp:403-406)
+		Sound::instance().playSound(
+			env_.combat->monsterSound(e->def->eSubType, e->def->parm, Enums::MSOUND_DEATH), 0, 5);
+	}
 	// TEMP [dbg] corpsify audit (remove after user confirms): exactly ONE
 	// solid blocker (this linked corpse) must remain on the tile.
 	std::fprintf(stderr,

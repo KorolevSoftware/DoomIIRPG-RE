@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "core/Sound.h"
 #include "domain/game/Enums.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapBits.h"
@@ -29,7 +30,7 @@ void Game::loadEntities(MapData& map, const EntityDefs& defs) {
 	trace.init({ &db, &map });                     // peer subsystem wiring (spec §P2-GA)
 	doors.init({ &db, &map, vm_, &trace, player_ });   // peer subsystem wiring (spec §P2-GB)
 	monsters.init({ &db, &map, &defs, vm_, &combat, &trace, &monstersTurn,
-	                &facingDirty, &lerps, &ai, player_, &sprites });    // spec §P2-GC
+	                &facingDirty, &lerps, &ai, player_, &sprites, host });   // spec §P2-GC
 	ai.init({ &db, &map, &trace, &combat, &monsters, player_, &lerps, &doors,
 	          &visibility });                                           // ADR 0028
 	lerps.init({ &db, &map, vm_, &ai, &facingDirty, player_, &trace });   // peer subsystem wiring (spec §P2-GD)
@@ -666,8 +667,8 @@ void Game::executeEntityFunc(Entity* e) {                   // src/Game.cpp:3523
 
 // ET_ATTACK_INTERACTIVE arm of Entity::pain (src/Entity.cpp:371-391). Props
 // have no health: the hit destroys them here, and Combat's stage-1 tail then
-// calls entityDied for the message/XP. Particles (:375,:381,:384) and sound
-// 1038 (:376) have no subsystem yet.
+// calls entityDied for the message/XP. Particles (:375,:381,:384) have no
+// subsystem yet.
 bool Game::painProp(Entity* e) {
 	const int sprite = e->getSprite();
 	if (map_ == nullptr || sprite < 0 || sprite >= map_->numSprites) return false;
@@ -676,6 +677,7 @@ bool Game::painProp(Entity* e) {
 		// Broken frame 1 in the frame byte; the entity survives but stops
 		// blocking, so the player can walk through the wreck.
 		map_->mapSpriteInfo[sprite] = (map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x100;
+		Sound::instance().playSound(1038, 0, 3);              // :376
 		db.unlinkEntity(e);                                   // :377
 		std::fprintf(stderr, "[combat] barricade broken sprite=%d\n", sprite);
 	} else {
@@ -761,7 +763,7 @@ void Game::awardSecret(bool pushWall) {
 	if (hud_ != nullptr && loc_ != nullptr)
 		hud_->addMessage(loc_->get(kTextMain, 119), 0xAA000000, 0);   // "Found Secret!" :3476
 	++mapSecretsFound;                                                 // :3477
-	std::fprintf(stderr, "[sound] %d\n", pushWall ? 1103 : 1020);      // :3479-3484
+	Sound::instance().playSound(pushWall ? 1103 : 1020, 0, 3);         // :3479-3484
 	const int bit = 1 << (loadMapID - 1);
 	if (player_ != nullptr && map_ != nullptr && mapSecretsFound == map_->totalSecrets &&
 	    (player_->foundSecretsLevels & bit) == 0) {                    // :3486
@@ -772,7 +774,7 @@ void Game::awardSecret(bool pushWall) {
 		composeArgs(text, a, 1);
 		std::fprintf(stderr, "[help] achievement (deferred dialog): %s\n", text.c_str());
 		addXPMessage(10);
-		std::fprintf(stderr, "[sound] 1020\n");
+		Sound::instance().playSound(1020, 0, 3);                       // src/Player.cpp:1988
 		player_->foundSecretsLevels |= bit;                            // :3488
 	} else {
 		addXPMessage(5);                                               // :3490

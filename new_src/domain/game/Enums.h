@@ -283,7 +283,9 @@ static constexpr int TILENUM_SPRITEWALL_NOCLIP_B = 168;
 static constexpr int FIRSTBOSS = 12;
 static constexpr int LASTBOSS = 16;
 
-// Monster subtypes with special AI branches (src/Enums.h:63-76).
+// Monster subtypes with special AI/sound branches (src/Enums.h:61-76).
+static constexpr int MONSTER_ZOMBIE = 0;
+static constexpr int MONSTER_IMP = 3;
 static constexpr int MONSTER_PINKY = 5;
 static constexpr int MONSTER_ARCH_VILE = 10;
 static constexpr int BOSS_PINKY = 13;
@@ -307,8 +309,14 @@ static constexpr int WP_MONSTER_CHARGE = 18;
 
 // Monster sound slots, row = eSubType * MSOUND_TYPES (src/Enums.h:85-95).
 static constexpr int MSOUND_NONE = 255;
+static constexpr int MSOUND_ALERT1 = 0;
+static constexpr int MSOUND_ALERT2 = 1;
+static constexpr int MSOUND_ALERT3 = 2;
 static constexpr int MSOUND_ATTACK1 = 3;
 static constexpr int MSOUND_ATTACK2 = 4;
+static constexpr int MSOUND_IDLE = 5;
+static constexpr int MSOUND_PAIN = 6;
+static constexpr int MSOUND_DEATH = 7;
 static constexpr int MSOUND_TYPES = 8;
 
 // Any-hit mask of crFlags: hit | crit | far-shot | 0x1000 (src/Enums.h:977).

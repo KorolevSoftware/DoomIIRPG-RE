@@ -1353,6 +1353,7 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 	vis_.valid = false;
 	vis_.cinematic = false;
 	vis_.drawnSprites.clear();
+	vis_.leafStart.clear();
 	vis_.seenLines.clear();
 	std::memset(vis_.tiles, 0, sizeof(vis_.tiles));
 	if (!initialized_ || map.numNodes == 0) return;
@@ -1412,6 +1413,7 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 	}
 	for (int k = (int)legacyLeaves_.size() - 1; k >= 0; --k) { // renderBSP order, src/Render.cpp:1752
 		const int leaf = legacyLeaves_[k];
+		vis_.leafStart.push_back((int)vis_.drawnSprites.size());
 		for (int i = 0; i < map.numSprites; ++i)
 			if (spriteLeaf_[i] == leaf && !(map.mapSpriteInfo[i] & 0x10000)) vis_.drawnSprites.push_back(i);
 		for (size_t p = 0; p + 1 < legacySplitPairs_.size(); p += 2)

@@ -7,6 +7,7 @@
 
 #include "core/AppContext.h"
 #include "core/GameContext.h"
+#include "core/Sound.h"
 #include "core/UiInputCollector.h"
 #include "platform/InputSystem.h"
 #include "platform/Window.h"
@@ -79,6 +80,18 @@ bool GameLoop::run(AppContext& context) {
 		// nothing is taken away from it; B is the bot-discard key.
 		if (ev.key.keysym.scancode == SDL_SCANCODE_F3 && ev.key.repeat == 0) {
 			ctx.debugToggleCoords();
+		}
+		// DEBUG (rewrite-only, removable, SND-D8): F7 plays the pistol shot,
+		// Shift+F7 toggles the looped general music. F7 is not in the reference keymap.
+		if (ev.key.keysym.scancode == SDL_SCANCODE_F7 && ev.key.repeat == 0) {
+			Sound& snd = Sound::instance();
+			if ((ev.key.keysym.mod & KMOD_SHIFT) == 0) {
+				snd.playSound(1086, 0, 3);
+			} else if (snd.isSoundPlaying(1068)) {
+				snd.stopSound(1068);
+			} else {
+				snd.playSound(1068, 1, 3);
+			}
 		}
 		// DEBUG (rewrite-only): F12 dumps the letterboxed canvas of the frame
 		// being presented, so the two backends can be diffed (spec §8.2).

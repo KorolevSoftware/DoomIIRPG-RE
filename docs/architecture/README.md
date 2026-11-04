@@ -30,6 +30,7 @@ Namespace for everything: `newcore`._
 | `ComicBookSession.h/.cpp` | **(planned, ADR 0044 / spec `main-menu-subscreens.md` G4a)** the viewer behind menu id 89: 39 landscape frames, drag / slide / snap-back, Done button, LEFT/RIGHT slide (FE-D7); routed by `GameContext` while `menu_.menuId() == 89`. |
 | `PrologueSession.h/.cpp` | **(planned, ADR 0043 / spec `front-end.md` G5)** `ST_INTRO` (9): 2:12 composed with the character's name, 45-char wrap, 13-line pages, Back/More/Skip/Continue cursor, `done()` → `LoadingManager::startNewGameMap`. |
 | `Familiar.h/.cpp` | **(planned, ADR 0041 / spec `familiar.md` G5-G11)** sentry-bot control behaviour (state lives on `Player`): deploy (`attemptToDeploy`/`setFamiliar` via `PlayerActions::attemptMove`), `unsetFamiliar`/`returnsToPlayer` (B key, menu row 33, `EV_FORCE_BOT_RETURN`, walking into the body, monster-at-body latch consumed at tick end), self-destruct dialog, `ST_BOT_DYING` (`StateId::BotDying = 25`) entry/tick, `died` (corpse + thrown remains + explosion via `Combat::radiusHurtEntities`). |
+| `Sound.h/.cpp` | **(planned, ADR 0046 / spec `sound.md` G1)** port of `src/Sound.cpp` semantics as the process-wide service `Sound::instance()`: 145-entry resID table (1000..1144), 10 channels (resID + priority), `playSound(id, flags, prio)` with loop/stop-all flags, priority stealing and priority-6 no-restart, first-slot `stopSound`/`isSoundPlaying`, `soundStop`, music 1067..1071 on `musicVolume`, 0..100 volumes (default 80, 0 = off), `allowSounds`/`allowMusics`/`areSoundsAllowed`/`inInitMap`, lazy PCM cache; started/stopped by `AppContext`. |
 
 ### domain/game/
 | File | Responsibility |
@@ -93,6 +94,7 @@ Namespace for everything: `newcore`._
 |---|---|
 | `FileSystem` | Base/save paths via SDL_GetBasePath, archive search, whole-file read, atomic write. **(planned, spec `save-load.md` G1)** `readFile` size cap + `ftell` guard, `fileExists`, `removeFile`. |
 | `InputSystem` | SDL event pump → single callback (:5-15); action-mapping pipeline is future work. |
+| `AudioOutput` | **(planned, ADR 0046 / spec `sound.md` G1)** SDL audio callback device (S16 stereo 44100 Hz, own `SDL_InitSubSystem(SDL_INIT_AUDIO)`, failure = silent) + 10-voice mixer with linear gain; `decodeWav` via `SDL_LoadWAV_RW` + `SDL_AudioCVT`. All methods lock the device. |
 | `Window` | SDL2 window + GL 3.3 core context (Apple) / compatibility (:42-50); letterbox viewport (:159-169); canvas fixed 480x320 (:25-26). **(planned, ADR 0012, G1)** `screenToCanvas` (:171-176, no callers) replaced by `windowToDrawable`; the canvas half of the inverse lives in `RenderBackend`. |
 
 ### render/
@@ -247,6 +249,7 @@ first, then door use.
 
 - CMake 3.22, target `DoomIIRPG`, C++17, sources via **GLOB_RECURSE** (reconfigure on add/remove).
 - Link: SDL2, ZLIB, OpenGL (+ Apple OpenGL.framework). No GLEW/GLAD.
+- Audio: SDL2's audio device only (ADR 0046) — no OpenAL / SDL_mixer.
 - All shaders are inline string literals (World3D.cpp:57-95, SpriteBatch.cpp:9-59) and stay **inside the backend** after the split (ADR 0020).
 - **(spec `specs/2026-09-02-render-backend-split.md`)** four targets: `dr_render_core` (interfaces + neutral helpers), `dr_render_gl`, `dr_render_sdl`, `DoomIIRPG` (glob filtered with `list(FILTER ... EXCLUDE REGEX "/render/(api|gl|sdl)/")`); backend chosen at startup by `--backend=gl|sdl`.
 - **(planned, ADR 0024 / spec `specs/2026-09-11-sokol-gfx-backend.md`)** `dr_render_sdl` is deleted and `dr_render_sokol` joins (glob filter becomes `"/render/(api|gl|sokol)/"`; note `*.mm` is not in the GLOB patterns and must be listed explicitly). New vendored trees `third_party_libs/sokol` (header) and `third_party_libs/sokol-tools-bin` (`sokol_shaders.cmake` + `bin/**`, which must stay next to each other) — **bump both commits together**, each carries a `VERSION.txt`. Shaders are compiled at build time by `sokol_shader()` into `${CMAKE_CURRENT_BINARY_DIR}/compile_shaders/`; **no generated code ever lands in `new_src/`**, and a host without an shdc binary fails at configure time on purpose. The GL context request rises to **4.1 core on every platform** (shdc's lowest desktop target is `glsl410`; macOS caps at exactly 4.1), the compatibility-profile branch and `SDL_GL_DEPTH_SIZE` go away. Apple also links `Metal` + `QuartzCore`.
@@ -313,6 +316,7 @@ _See [adr/](adr/):_
 - [0043 — Front end: main menu in `MenuSession`, character select and prologue as peer sessions, real `backToMain`, capture runs bypass the front end](adr/0043-front-end-flow-and-capture-bypass.md) (2026-11-03; supersedes 0037 §6)
 - [0044 — Main-menu sub-screens: help leaves in `MenuSession`, Credits as a peer session, explicit main-menu minigame flag, Comic Book as a delegate of menu id 89](adr/0044-main-menu-subscreens.md) (2026-11-04; extends 0043)
 - [0045 — HUD bar buttons: retained state in `core/HudButtons`, touch-only `QuestLog` / `HudNextWeapon`, direct overlay selection](adr/0045-hud-bar-buttons-state-and-touch-only-actions.md) (2026-11-04; retires ui-layer D3)
+- [0046 — Sound: own SDL mixer under the legacy channel rules, `Sound::instance()` service, lazy PCM cache](adr/0046-sound-sdl-mixer-singleton-service.md) (2026-11-04)
 
 ## Specs
 
@@ -347,3 +351,4 @@ _See [adr/](adr/):_
 - [2026-11-02 — Familiar (sentry-bot control): state + save, drop-entity pool, discard/pick-up, deploy/return, tint/bob, bot HUD, return triggers + menu row, bot combat + view weapon, splash damage, bot death/self-destruct (G1-G11)](familiar.md)
 - [2026-11-03 — Front end: difficulty/character plumbing, main menu screens + skin, real backToMain, character select, prologue, logo; intro movie research-gated (G1-G6b)](front-end.md)
 - [2026-11-04 — Main-menu sub-screens: Game Help + About, Credits, Mini Games from the menu, Comic Book; Options stays refused (G1-G4b)](main-menu-subscreens.md)
+- [2026-11-04 — Sound: SDL mixer + `Sound` service, config volumes, call-site wiring by area (G1-G9)](sound.md)

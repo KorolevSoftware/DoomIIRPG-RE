@@ -1,8 +1,8 @@
 #include "core/LootSession.h"
 
 #include <algorithm>
-#include <cstdio>
 
+#include "core/Sound.h"
 #include "domain/game/Player.h"
 #include "domain/world/MapData.h"
 #include "io/Localization.h"
@@ -70,9 +70,13 @@ void LootSession::tick() {
 		}
 		return;
 	}
+	// Sound 1055 once per session on any expiry (field_0xac5_ latch :62-65).
+	if (!lootSettleSfx_) {
+		lootSettleSfx_ = true;
+		Sound::instance().playSound(1055, 0, 3);
+	}
 	if (lootCrouch_) {
-		// Crouch settled -> DWELL (:66-71): hold the end pose every tick and
-		// play sound 1055 once per session (field_0xac5_ latch :62-65). The
+		// Crouch settled -> DWELL (:66-71): hold the end pose every tick. The
 		// clock is NOT restarted; close() (input) starts stand-up.
 		int h0 = env_.map->heightAt(lootDestX_, lootDestY_);
 		int h1 = env_.map->heightAt(lootDestX_ + lootStepX_ * 64, lootDestY_ + lootStepY_ * 64);
@@ -80,10 +84,6 @@ void LootSession::tick() {
 		p.viewY = lootDestY_ + 48 * lootStepY_;
 		p.viewZ = std::max(h0, h1) + 26;
 		p.viewPitch = std::max(lootDestPitch_ - 64, -64);
-		if (!lootSettleSfx_) {
-			lootSettleSfx_ = true;
-			std::fprintf(stderr, "[loot] sound 1055\n");
-		}
 	} else {
 		// Stand-up expiry: snap home and close the session (:74-80); the turn
 		// is consumed only now.

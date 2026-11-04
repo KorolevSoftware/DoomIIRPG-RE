@@ -86,6 +86,7 @@ void Ui::init(const Env& env) {
 void Ui::beginFrame(const UiInput& in) {
 	in_ = in;
 	clipDepth_ = 0;
+	state().pressedId = UiId::None;
 }
 
 void Ui::endFrame() {
@@ -136,7 +137,7 @@ bool Ui::hover(const UiRect& r) const {
 bool Ui::hitTest(UiId id, const UiRect& r) {
 	UiState& st = state();
 	const bool inside = hover(r);
-	if (in_.pressed && inside && st.activeId == UiId::None) st.activeId = id;
+	if (in_.pressed && inside && st.activeId == UiId::None) st.activeId = st.pressedId = id;
 	bool fired = false;
 	if (in_.released && st.activeId == id) {
 		fired = inside;

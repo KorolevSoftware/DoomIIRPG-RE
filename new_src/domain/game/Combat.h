@@ -156,6 +156,9 @@ public:
 	// because the raw array is off by one: tileDistances[0] means ONE tile.
 	int tileDistSq(int tiles) const;
 	uint32_t nextByte();                      // src/App.cpp:506-512
+	// Game::getMonsterSound (src/Game.cpp:3771-3845). MSOUND_ALERT1 rolls
+	// nextByte, imp/zombie MSOUND_DEATH roll std::rand; 255 = silence.
+	int monsterSound(int sub, int parm, int soundType);
 
 	// Accessors for the CombatEntity stat-math trio (they replace legacy's
 	// app singleton reaches into app->combat / app->game / weapons table).
@@ -201,9 +204,6 @@ private:
 	                                  int duration, int renderMode);
 	// Game::isInFront (src/Game.cpp:3583-3594): tile (tx,ty) within ±90° of the view.
 	bool isInFront(int tx, int ty) const;
-	// Game::getMonsterSound (src/Game.cpp:3771-3845) for the attack types
-	// (MSOUND_ATTACK1/2) only, which never roll.
-	int monsterSound(int sub, int parm, int soundType) const;
 	// Ingame name of an entity's def (legacy Entity::name, def->name | 0x400).
 	std::string entityName(const Entity* e) const;
 

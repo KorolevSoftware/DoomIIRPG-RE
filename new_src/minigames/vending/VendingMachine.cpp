@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "core/Sound.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Game.h"
 #include "domain/game/ItemPickup.h"
@@ -279,13 +280,13 @@ void VendingMachine::handleInputForGame(Action a) {
 			updateHighLowState();
 			--triesLeft_;
 			if (numbersCorrect() == 4) {
-				std::fprintf(stderr, "[sound] 1043\n");
+				Sound::instance().playSound(1043, 0, 3);
 				result_ = 1;
 				machineHasBeenHacked_ = true;
 				if (!host_->fromMainMenu())
 					iqBonusAwarded_ = player->modifyStat(Enums::STAT_IQ, 2);   // MINIGAME_IQ_BONUS
 			} else {
-				std::fprintf(stderr, "[sound] 1040\n");
+				Sound::instance().playSound(1040, 0, 3);
 				if (!host_->fromMainMenu()) player->removeOneVendingMachineTry(currentMachineNumber_);
 				result_ = 2;
 			}
@@ -294,22 +295,22 @@ void VendingMachine::handleInputForGame(Action a) {
 				sliderPositions_[3], result_ == 1 ? "won" : "wrong", triesLeft_);
 		}
 	} else if (a == Action::Forward) {
-		std::fprintf(stderr, "[sound] 1027\n");
+		Sound::instance().soundClick();
 		if (sliderPositions_[gameCursor2_] < 9) {
 			++sliderPositions_[gameCursor2_];
 			playersGuess_[gameCursor2_] = sliderPositions_[gameCursor2_];
 		}
 	} else if (a == Action::Back) {
-		std::fprintf(stderr, "[sound] 1027\n");
+		Sound::instance().soundClick();
 		if (sliderPositions_[gameCursor2_] > 0) {
 			--sliderPositions_[gameCursor2_];
 			playersGuess_[gameCursor2_] = sliderPositions_[gameCursor2_];
 		}
 	} else if (a == Action::TurnLeft) {
-		std::fprintf(stderr, "[sound] 1027\n");
+		Sound::instance().soundClick();
 		gameCursor2_ = (gameCursor2_ + 3) % 4;
 	} else if (a == Action::TurnRight) {
-		std::fprintf(stderr, "[sound] 1027\n");
+		Sound::instance().soundClick();
 		gameCursor2_ = (gameCursor2_ + 1) % 4;
 	}
 }
@@ -378,10 +379,12 @@ UiResult VendingMachine::draw(Ui& ui) {
 	case kScreenHelp: buildHelp(); break;
 	}
 	// fmButton::SetHighlighted plays the button's sound 1027 on the edge into
-	// highlighted (src/Button.cpp:145-159); the soft-key pseudo button has none.
+	// highlighted unless it is already playing (src/Button.cpp:145-159); the
+	// soft-key pseudo button has none.
 	const int hl = highlightedButtonId(model_.buttons, model_.buttonCount, ui.in());
-	if (hl != -1 && hl != kTerminalExit && hl != lastHighlight_) {
-		std::fprintf(stderr, "[sound] 1027\n");
+	Sound& snd = Sound::instance();
+	if (hl != -1 && hl != kTerminalExit && hl != lastHighlight_ && !snd.isSoundPlaying(1027)) {
+		snd.playSound(1027, 0, 5);
 	}
 	lastHighlight_ = hl;
 	return drawVending(ui, model_, assets_);
@@ -552,7 +555,7 @@ void VendingMachine::buildTerminal(Ui& ui) {
 	model_.softkeyLabelY = 297;
 
 	if (oldCursor != mainTerminalCursor_ && mainTerminalCursor_ != -1) {
-		std::fprintf(stderr, "[sound] 1027\n");   // MenuSystem::soundClick (src/MenuSystem.cpp:5874-5876)
+		Sound::instance().soundClick();
 	}
 
 	model_.buttons[0] = kButtonBack;

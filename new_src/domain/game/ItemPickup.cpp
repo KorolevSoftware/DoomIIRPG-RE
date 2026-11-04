@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "core/Sound.h"
 #include "domain/game/Entity.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
@@ -62,7 +63,7 @@ bool ItemPickup::touchedItem(Entity* e) {
 	const bool dropped = env_.db != nullptr && env_.db->isDropped(e);
 	if (!grantItem(e->def, e->getSprite(), dropped ? e->param : -1)) return false;
 	if (env_.db != nullptr) env_.db->removeEntity(e);          // :276
-	// TODO sound 1054 (src/Entity.cpp:277) — no audio subsystem in new_src.
+	Sound::instance().playSound(1054, 0, 4);                   // :277
 	return true;                                               // :278
 }
 
@@ -71,7 +72,7 @@ bool ItemPickup::touchedItem(Entity* e) {
 // the pickup touched() would run on it. Upgrade with the drop-entity pool.
 bool ItemPickup::touchedDrop(const EntityDef* def, int qty) {
 	if (!grantItem(def, -1, qty)) return false;
-	std::fprintf(stderr, "[sound] 1054\n");                    // :277
+	Sound::instance().playSound(1054, 0, 4);                   // :277
 	if (env_.vm != nullptr) {                                  // :125-126
 		env_.vm->vars[11] = def->tileIndex;
 		env_.vm->executeStaticFunc(Enums::SCR_ITEM_PICKUP);

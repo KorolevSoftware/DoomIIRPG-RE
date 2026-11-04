@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "core/Sound.h"
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapData.h"
@@ -198,6 +199,10 @@ void CinematicCamera::skipCinematicNow() {
 	// keys, fast-forward the parked threads with the huge-timestamp analog,
 	// immediate state restore. Subtitles/particles have no rewrite
 	// counterpart yet; the closing fade-in is the caller's (GameContext::tickCamera).
+	Sound& snd = Sound::instance();
+	const bool savedAllow = snd.allowSounds;      // (:2510-2512)
+	snd.allowSounds = false;
+	snd.soundStop();
 	const MapData::MayaCamera& cam = env_.map->mayaCameras[cameraCamIdx_];
 	maya_.snap(cam.numKeys - 1);   // Snap the remaining keys' end pose
 	activeCameraKey_ = -1;
@@ -207,6 +212,7 @@ void CinematicCamera::skipCinematicNow() {
 	skipping_ = true;
 	flushParkedThreads(true);
 	skipping_ = false;
+	snd.allowSounds = savedAllow;                 // (:2534)
 }
 
 void CinematicCamera::flushParkedThreads(bool force) {

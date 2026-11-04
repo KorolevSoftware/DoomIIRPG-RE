@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "core/Sound.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
@@ -38,6 +39,7 @@ void LoadingManager::boot(bool skipFrontEnd) {
 }
 
 bool LoadingManager::startGame(bool newGame) {
+	Sound::instance().soundStop();                       // src/MenuSystem.cpp:3583
 	if (!newGame) {
 		if (loadState(recentLoadType())) return true;
 		std::fprintf(stderr, "[save] Continue failed\n");
@@ -136,7 +138,7 @@ void LoadingManager::loadMap(int mapId, bool skipSave, bool newGame) {
 		env_.player->currentLevelDeaths = 0;                              // :59-66
 	lastMapID_ = env_.game->loadMapID;                                    // :67-68
 	env_.game->loadMapID = mapId;
-	std::fprintf(stderr, "[sound] stop\n");                               // :69 soundStop
+	Sound::instance().soundStop();                                        // :69
 	tmNewGame_ = newGame;                                                 // :70-71
 	std::fprintf(stderr, "[map] loadMap %d (last %d)\n", mapId, lastMapID_);
 	if (!skipSave && activeLoadType_ == 0 && lastMapID_ >= 1 && lastMapID_ <= 10) {
@@ -199,7 +201,7 @@ void LoadingManager::tickSaving() {
 	} else if (type & 0x08) {
 		enterTravelMap();                              // src/Canvas.cpp:885-886
 	} else if (type & 0x10) {                          // src/Canvas.cpp:888-890
-		std::fprintf(stderr, "[sound] 1069\n");        // Music_Level_End
+		Sound::instance().playSound(1069, 1, 3);       // Music_Level_End
 		env_.openMenu(kMenuLevelStats);
 	} else {
 		if (type & 0x100) std::fprintf(stderr, "[save] MENU_END_FINALQUIT not ported\n");

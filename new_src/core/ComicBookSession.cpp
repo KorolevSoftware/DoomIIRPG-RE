@@ -2,9 +2,9 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cstdio>
 #include <cstdlib>
 
+#include "core/Sound.h"
 #include "ui/ComicBookModel.h"
 #include "ui/ComicBookView.h"
 #include "ui/Ui.h"
@@ -83,7 +83,7 @@ bool ComicBookSession::buttonTouch(int x, int y) {
 }
 
 void ComicBookSession::touch(int x, int y, bool press) {
-	if (buttonTouch(x, y)) std::fprintf(stderr, "[sound] 1064\n");   // menu_open.wav (:734-736)
+	if (buttonTouch(x, y) && !Sound::instance().isSoundPlaying(1064)) Sound::instance().playSound(1064, 0, 5);   // menu_open.wav (:734-736)
 	if (press) {
 		pressFrames_ = 0;
 	} else {

@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "core/Sound.h"
 #include "domain/game/Combat.h"
 #include "domain/game/Entity.h"
 #include "domain/game/EntityMonster.h"
@@ -582,7 +583,7 @@ UseResult Player::useItem(int n) {
 	case 23: return UseResult::UsedNoTurn;   // :945-947, no sound/consume/turn
 	default: return UseResult::Refused;      // 13, 18-21, 24, 25 (:948)
 	}
-	std::fprintf(stderr, "[sound] 1124\n");  // :952
+	Sound::instance().playSound(1124, 0, 3);  // :952
 	if (consume) --inventory[n];             // :953-955
 	return turn ? UseResult::Used : UseResult::UsedNoTurn;
 }
@@ -712,7 +713,7 @@ bool Player::addStatusEffect(int n, int amount, int turns) {   // src/Player.cpp
 	if (isFamiliar) return false;                           // :1565-1567
 	if (n == Enums::STATUS_EFFECT_FIRE) {                   // :1568-1573
 		if (buffs[Enums::BUFF_ANTIFIRE] > 0) return false;
-		std::fprintf(stderr, "[sound] 1034\n");
+		Sound::instance().playSound(1034, 0, 3);
 	}
 	const int count = statusEffects[36 + n] + 1;
 	if (count > 3 || ((n == 12 || n == 9) && count > 1)) {
@@ -802,8 +803,8 @@ int Player::calcLevelXP(int n) const {
 }
 
 void Player::addLevel() {
-	// src/Player.cpp:283-307,:342 subset. Presentation (msgs 104-110), the
-	// level-up sound/dialog and the modifyStat DEF/STR/ACC/AGI bumps are
+	// src/Player.cpp:283-307,:342,:348-351 subset. Presentation (msgs 104-110),
+	// the level-up help dialog and the modifyStat DEF/STR/ACC/AGI bumps are
 	// deferred.
 	level++;
 	nextLevelXP = calcLevelXP(level);                          // :288-289
@@ -812,6 +813,10 @@ void Player::addLevel() {
 	if (stat + n > 999) n = 999 - stat;                        // :299-301
 	if (n != 0) baseCe.setStat(Enums::STAT_MAX_HEALTH, stat + n);   // :302-303
 	ce.setStat(Enums::STAT_HEALTH, ce.getStat(Enums::STAT_MAX_HEALTH)); // :342 refill
+	if (game_ == nullptr || game_->host == nullptr || game_->host->state() != StateId::Menu) {   // :348-351
+		Sound::instance().soundStop();
+		Sound::instance().playSound(1070, 0, 5);
+	}
 	std::fprintf(stderr, "[player] level %d (stat bumps deferred)\n", level);
 }
 

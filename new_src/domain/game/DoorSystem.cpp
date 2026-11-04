@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "core/Sound.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/Enums.h"
 #include "domain/game/Player.h"
@@ -145,6 +146,8 @@ bool DoorSystem::performDoorEvent(int n, Entity* door, int n2, ScriptThread* own
 	if (n == 0 && family) {
 		env_.map->mapSpriteInfo[sprite] = (env_.map->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x100;
 	}
+
+	Sound::instance().playSound(n == 1 ? 1028 : 1030, 0, 3);   // src/Game.cpp:1137,1144
 
 	// Snap modes (src/Game.cpp:1153-1155): n2 == 0 finishes the animation
 	// immediately (quiet-bit EV_DOOROP / entity-state callers); the

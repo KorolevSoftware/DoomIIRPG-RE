@@ -6,6 +6,7 @@
 #include <iterator>
 #include <string>
 
+#include "core/GameStates.h"
 #include "domain/game/Combat.h"
 #include "domain/game/CorpseLoot.h"
 #include "domain/game/DoorSystem.h"
@@ -175,6 +176,7 @@ public:
 	bool skipDialog = false;        // set by DialogSystem::closeDialog(skip) around the thread resume
 	bool abortMove = false;
 	int spawnParam = -1;            // -1 = use the map header spawn
+	const StateHost* host = nullptr; // canvas->state reader, set in core/Main.cpp
 	int loadMapID = 0;              // canvas->loadMapID, 1..10 (src/LoadingManager.cpp:67-68); 0 until the boot loadMap
 	int totalLevelTime = 0;         // ms on this map before curLevelTime (src/Game.cpp:1585-1587)
 	int64_t curLevelTime = 0;       // gameTime at load / last fold (src/LoadingManager.cpp:663)

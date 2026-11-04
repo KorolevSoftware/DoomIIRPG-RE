@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdio>
 
+#include "core/Sound.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
 #include "io/DataReader.h"
@@ -148,9 +149,10 @@ bool SaveGame::writeConfig(bool empty) {
 	DataWriter w;
 	w.writeInt(kConfigVersion);
 	w.writeByte(static_cast<uint8_t>(empty ? 1 : env_.game->difficulty()));
-	w.writeBool(true);                                   // allowSounds
-	w.writeByte(100);                                    // soundFxVolume
-	w.writeByte(100);                                    // musicVolume
+	const Sound& snd = Sound::instance();
+	w.writeBool(snd.allowSounds);                        // :1922-1924
+	w.writeByte(static_cast<uint8_t>(snd.soundFxVolume()));
+	w.writeByte(static_cast<uint8_t>(snd.musicVolume()));
 	w.writeBool(false);                                  // vibrateEnabled
 	w.writeBool(true);                                   // enableHelp
 	w.writeInt(0);                                       // defaultLanguage
@@ -184,7 +186,10 @@ bool SaveGame::loadConfig() {
 		return false;
 	}
 	const int difficulty = r.readByte();                  // src/Game.cpp:1984
-	r.skip(1 + 1 + 1 + 1 + 1 + 4);                       // allowSounds .. defaultLanguage
+	const bool savedAllow = r.readBool();                // :1985-1988
+	const int fxVolume = r.readByte();
+	const int musicVolume = r.readByte();
+	r.skip(1 + 1 + 4);                                   // vibrateEnabled .. defaultLanguage
 	const int currentLevelDeaths = r.readInt();
 	const int totalDeaths = r.readInt();
 	r.skip(4 + 4 + 4 + 1 + (5 + 10) * 4);                // animFrames .. menu indexes
@@ -203,6 +208,9 @@ bool SaveGame::loadConfig() {
 	const bool difficultyOk = difficulty == 1 || difficulty == 2 || difficulty == 4;
 	if (!difficultyOk) std::fprintf(stderr, "[save] config difficulty %d invalid -> 1\n", difficulty);
 	env_.game->setDifficulty(difficultyOk ? difficulty : 1);
+	Sound& snd = Sound::instance();
+	snd.areSoundsAllowed = savedAllow;                    // updateVolume below recomputes allowSounds (:2050)
+	snd.setVolumes(fxVolume, musicVolume);               // clamps 0..100
 	Player& p = *env_.player;
 	p.currentLevelDeaths = currentLevelDeaths;
 	p.totalDeaths = totalDeaths;

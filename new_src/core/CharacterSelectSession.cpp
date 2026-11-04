@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "core/Sound.h"
 #include "domain/game/Game.h"
 #include "domain/game/Player.h"
 #include "io/Localization.h"
@@ -50,7 +51,7 @@ void CharacterSelectSession::step(int dir) {
 	for (int i = 0; i < 3; ++i) {
 		if (kSlotChoice[i] == highlighted_) {
 			highlighted_ = kSlotChoice[(i + (dir > 0 ? 1 : 2)) % 3];
-			std::fprintf(stderr, "[sound] 1027\n");   // soundClick
+			Sound::instance().soundClick();           // (:646,655)
 			return;
 		}
 	}
@@ -64,7 +65,7 @@ void CharacterSelectSession::handleAction(Action a) {
 			step(-1);
 		} else if (a == Action::Use) {
 			confirm_ = true;
-			std::fprintf(stderr, "[sound] 1086\n");
+			Sound::instance().playSound(1086, 0, 5);  // (:662)
 		} else if (a == Action::Menu) {
 			if (env_.backToMain) env_.backToMain();
 		}
@@ -72,15 +73,15 @@ void CharacterSelectSession::handleAction(Action a) {
 	}
 	if (a == Action::TurnLeft || a == Action::TurnRight) {
 		onYes_ = !onYes_;
-		std::fprintf(stderr, "[sound] 1027\n");
+		Sound::instance().soundClick();               // (:672)
 	} else if (a == Action::Use) {
-		std::fprintf(stderr, "[sound] 1086\n");
 		if (onYes_) choose();
 		else if (env_.backToMain) env_.backToMain();
+		Sound::instance().playSound(1086, 0, 5);      // after the choice (:675-685)
 	} else if (a == Action::Menu) {
 		confirm_ = false;
 		onYes_ = true;
-		std::fprintf(stderr, "[sound] 1122\n");
+		Sound::instance().playSound(1122, 0, 5);      // (:691)
 	}
 }
 
