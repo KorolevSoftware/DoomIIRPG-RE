@@ -46,8 +46,9 @@ public:
 	// 290 when a dialog runs inside it: underDialog). Falls back to the flat
 	// fill when the world is not initialized. zoomPose != nullptr => sniper zoom
 	// yaw/pitch/fov replace the player's (src/MovementController.cpp:541).
+	// cameraState: canvas in ST_CAMERA, suppresses the lootable-corpse halo.
 	void drawWorld(RenderBackend& renderer, Window& window, const MayaPose* cinePose,
-		bool underDialog, const ZoomPose* zoomPose);
+		bool underDialog, const ZoomPose* zoomPose, bool cameraState);
 
 	// The camera actually used this frame (the view weapon derives its
 	// magnification from it).
@@ -65,6 +66,7 @@ private:
 	std::vector<int> spriteSortBias_;
 	std::vector<uint8_t> spriteCharClass_;
 	std::vector<uint8_t> spriteHasEntity_; // 1 = bound to an entity (legacy S_ENT != -1)
+	std::vector<uint8_t> spriteHalo_;      // 0 = no halo, else halo scale numerator (18 or 17), /16
 };
 
 } // namespace newcore

@@ -1357,7 +1357,7 @@ void GameContext::render(AppContext& app) {
 	const ZoomPose* zpp = (cinePose == nullptr && zoom_.renderPose(zp)) ? &zp : nullptr;
 	// backToMain zeroes loadMapID (src/Canvas.cpp:1375); the old MapData stays resident (ADR 0035).
 	if (sys_.game->loadMapID != 0) {
-		scene_.drawWorld(renderer, app.window(), cinePose, underDialog, zpp);
+		scene_.drawWorld(renderer, app.window(), cinePose, underDialog, zpp, state_ == StateId::Camera);
 		// The only writer of Game::visibility (ADR 0029). disableRenderActivate is
 		// tied to ST_CAMERA, not to the camera pose (src/Canvas.cpp:1038, :1211).
 		sys_.game->visibility = scene_.visibility();

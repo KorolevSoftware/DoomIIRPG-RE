@@ -16,6 +16,17 @@ namespace newcore {
 
 namespace {
 
+// RENDER_FLAG_PULSATE silhouette grey (software path, see corpse-halo.md):
+// triangle wave over (time>>2)&0x1FF (period 2048 ms), mapped to 127..254.
+constexpr int pulsateGrey(int timeMs) {
+	int tri = (timeMs >> 2) & 0x1FF;
+	if (tri & 0x100) tri = 511 - tri;
+	return (tri >> 1) + 127;
+}
+static_assert(pulsateGrey(0) == 127 && pulsateGrey(400) == 177 && pulsateGrey(1020) == 254 &&
+              pulsateGrey(1024) == 254 && pulsateGrey(2044) == 127 && pulsateGrey(2048) == 127,
+              "pulsate triangle wave");
+
 // Column-RLE decode for sprite texels (Size != width*height). Faithful port of
 // python tools/extract_textures.py decode_sprite. Bounds are the 4 mediaBounds
 // values for the media (already uint8-cast). Returns a flat w*h index buffer.
@@ -720,6 +731,12 @@ void World3D::drawSprite(const MapData& map, const MediaLoader& media, const Cam
 		// here. Tile 136 has a single frame, so frame is always 0 and the XOR is
 		// a no-op — in the original too.
 		if (isTorchiere) info ^= (frame & 0x1) << 17;
+		// Lootable-corpse halo BEFORE the body (src/Render.cpp:1714-1722, then :1728).
+		if (halo_ != nullptr && halo_[i] != 0) {
+			scene_->setPulsate(pulsateGrey(timeMs_) / 255.f);
+			drawBillboardPart(map, media, x, y, z, tileNum, mediaId, info, (halo_[i] * scaleFactor) >> 4);
+			scene_->setRenderMode(clampRenderMode(renderMode));
+		}
 		drawBillboardPart(map, media, x, y, z, tileNum, mediaId, info, scaleFactor);
 		// DELIBERATE DEVIATION FROM THE ORIGINAL, requested by the user on
 		// 2026-09-01 — NOT a port bug, please do not "fix" it back.
@@ -1185,7 +1202,12 @@ void World3D::drawCharacter(const MapData& map, const MediaLoader& media, int i)
 		break;
 	}
 	case kManimDead: {
-		// Single corpse quad, NO shadow; lootable pulsate halo deferred (§8).
+		// Single corpse quad, NO shadow. Lootable halo first (src/Render.cpp:3470-3474).
+		if (halo_ != nullptr && halo_[i] != 0) {
+			scene_->setPulsate(pulsateGrey(timeMs_) / 255.f);
+			emitPart(13, x, y, zR, info, (halo_[i] * scaleFactor) >> 4);
+			scene_->setRenderMode(clampRenderMode(map.mapSprites[i + 3 * n]));
+		}
 		emitPart(13, x, y, zR, info, scaleFactor);             // :3470-3475
 		break;
 	}
@@ -1349,7 +1371,7 @@ void World3D::addSplitSprite(const MapData& map, const std::vector<int>& leaves,
 
 void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
 	const int* spriteSortBias, const uint8_t* charClass, const uint8_t* spriteHasEntity,
-	bool caldexHack) {
+	bool caldexHack, const uint8_t* spriteHalo) {
 	vis_.valid = false;
 	vis_.cinematic = false;
 	vis_.drawnSprites.clear();
@@ -1398,6 +1420,7 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 
 	nodeIdxs_.clear();
 	hasEntity_ = spriteHasEntity;
+	halo_ = spriteHalo;
 	occl_.begin(camera.mvp2DInt(), camera.viewX(), camera.viewY());
 	walkNode(map, 0, camera.viewX(), camera.viewY(), camera.viewZ(), true);
 	hasEntity_ = nullptr;
@@ -1567,6 +1590,7 @@ void World3D::drawBSP(const MapData& map, const MediaLoader& media, const Camera
 	}
 	if (caldexDelayed != -1) drawSprite(map, media, camera, caldexDelayed, charClass);   // :1769-1771
 	end();
+	halo_ = nullptr;
 }
 
 } // namespace newcore

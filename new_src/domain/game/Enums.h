@@ -260,6 +260,12 @@ static constexpr int TILENUM_OBJ_TORCHIERE = 136;
 static constexpr int TILENUM_EYE_PORTAL = 156;
 static constexpr int TILENUM_ANIM_FIRE = 234;
 static constexpr int TILENUM_AIR_VENT = 236;
+// Lootable-corpse halo tiles (src/Enums.h:666-667,754-756).
+static constexpr int TILENUM_MONSTER_RED_SENTRY_BOT = 18;
+static constexpr int TILENUM_MONSTER_SENTRY_BOT = 19;
+static constexpr int TILENUM_OBJ_SCIENTIST_CORPSE = 137;
+static constexpr int TILENUM_OBJ_CORPSE = 138;
+static constexpr int TILENUM_OBJ_OTHER_CORPSE = 139;
 static constexpr int TILENUM_WATER_STREAM = 240;
 
 // Runtime sprite tiles: missiles and hit overlays (src/Enums.h:810-820).

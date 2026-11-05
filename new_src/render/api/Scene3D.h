@@ -30,6 +30,10 @@ public:
 	// Sticky state; both flush the pending batch on change.
 	virtual void setTexture(TextureId tex) = 0;
 	virtual void setRenderMode(int renderMode) = 0;  // legacy RENDER_*
+	// Legacy RENDER_FLAG_PULSATE state as the software (TinyGL) path draws it: a flat opaque
+	// grey silhouette of the texel shape, grey level a in [0,1]. Sticky until the next
+	// setRenderMode; flushes the pending batch on change.
+	virtual void setPulsate(float a) = 0;
 
 	// count must be a multiple of 3. Triangles are consumed immediately (the
 	// implementation may copy them into its own batch), so the caller's buffer

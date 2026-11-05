@@ -66,9 +66,12 @@ public:
 	// (legacy S_ENT != -1); null = no sprite occluders.
 	// caldexHack: render->useCaldexHack, defers the first tile-69 sprite to
 	// the end of the pass (src/Render.cpp:1536-1542,1769-1771).
+	// spriteHalo: optional per-sprite byte, 0 = no lootable-corpse halo, else
+	// the halo scale numerator (/16); may be null.
 	void drawBSP(const MapData& map, const MediaLoader& media, const Camera3D& camera,
 		const int* spriteSortBias = nullptr, const uint8_t* charClass = nullptr,
-		const uint8_t* spriteHasEntity = nullptr, bool caldexHack = false);
+		const uint8_t* spriteHasEntity = nullptr, bool caldexHack = false,
+		const uint8_t* spriteHalo = nullptr);
 
 	// What the legacy cull would have shown in the last drawBSP (ADR 0031):
 	// sprites of the legacy-visible leaves and checkTileVisibilty per tile.
@@ -185,6 +188,7 @@ private:
 	std::vector<int> legacyLeaves_;      // leaves the legacy cull visits, walk order
 	std::vector<int> legacySplitPairs_;  // flat [leaf,sprite], split rescue over legacyLeaves_
 	const uint8_t* hasEntity_ = nullptr; // drawBSP's spriteHasEntity, valid during the walk
+	const uint8_t* halo_ = nullptr;      // drawBSP's spriteHalo, valid during drawBSP
 
 	// Game time (ms) for animated textures/sprites.
 	int timeMs_ = 0;

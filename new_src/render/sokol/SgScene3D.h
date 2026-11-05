@@ -39,6 +39,7 @@ public:
 	void endScene() override;
 	void setTexture(TextureId tex) override;
 	void setRenderMode(int renderMode) override;
+	void setPulsate(float a) override;
 	void submitTriangles(const WorldVertex* verts, int count) override;
 	void setFog(bool enabled, float start, float end, const float rgba[4]) override;
 	void drawSky(TextureId sky, float uOffset) override;
@@ -76,6 +77,7 @@ private:
 	// src/GLES.cpp:615-622) and whether fog is on for it.
 	int currentRenderMode_ = -1;
 	bool currentFogOn_ = false;
+	float pulsateA_ = -1.f; // pulsate silhouette grey level; < 0: pulsate state inactive
 };
 
 } // namespace newcore

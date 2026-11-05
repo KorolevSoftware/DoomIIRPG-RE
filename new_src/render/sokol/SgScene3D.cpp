@@ -70,6 +70,7 @@ void SgScene3D::beginScene(const SceneView& view) {
 	// while they do); the trackers are what the recorded uniforms read.
 	currentRenderMode_ = kRenderNormal;
 	currentFogOn_ = fogEnabled_;
+	pulsateA_ = -1.f;
 }
 
 void SgScene3D::endScene() {
@@ -78,6 +79,7 @@ void SgScene3D::endScene() {
 	// the equation lives in the pipeline of each draw command. The tracker
 	// still goes invalid, exactly as in GlScene3D::endScene.
 	currentRenderMode_ = -1;
+	pulsateA_ = -1.f;
 }
 
 void SgScene3D::flush() {
@@ -113,15 +115,28 @@ void SgScene3D::flush() {
 		std::memcpy(u.view, view_, sizeof(u.view));
 		u.depthFix[0] = kDepthFixX;
 		u.depthFix[1] = kDepthFixY;
-		for (int i = 0; i < 4; ++i) u.colorMod[i] = row.mod[i];
-		for (int i = 0; i < 4; ++i) u.fogColor[i] = fogColor_[i];
-		u.fogParams[0] = fogStart_;
-		u.fogParams[1] = fogEnd_;
-		u.fogParams[2] = currentFogOn_ ? 1.f : 0.f;
+		if (pulsateA_ >= 0.f) {
+			// Flat grey silhouette: forced full fog (f = 0 in fs_world) outputs fog_color
+			// with the texel alpha: max() clamps the divisor, the huge negative numerator gives f = 0.
+			constexpr float kPulsateFogEnd = -1e9f;
+			for (int i = 0; i < 4; ++i) u.colorMod[i] = 1.f;
+			for (int i = 0; i < 3; ++i) u.fogColor[i] = pulsateA_;
+			u.fogColor[3] = 1.f;
+			u.fogParams[0] = 0.f;
+			u.fogParams[1] = kPulsateFogEnd;
+			u.fogParams[2] = 1.f;
+		} else {
+			for (int i = 0; i < 4; ++i) u.colorMod[i] = row.mod[i];
+			for (int i = 0; i < 4; ++i) u.fogColor[i] = fogColor_[i];
+			u.fogParams[0] = fogStart_;
+			u.fogParams[1] = fogEnd_;
+			u.fogParams[2] = currentFogOn_ ? 1.f : 0.f;
+		}
 
 		SgFrame::Cmd cmd;
 		cmd.kind = SgFrame::Kind::Draw;
-		cmd.pip = pipelines_->get(SgProgram::World, sgBlendVariant(mode));
+		cmd.pip = pipelines_->get(SgProgram::World,
+			pulsateA_ >= 0.f ? SgBlend::AlphaBlend : sgBlendVariant(mode));
 		cmd.texView = currentTex_->view();
 		cmd.palView = currentTex_->paletteView();
 		cmd.smp = currentTex_->sampler();
@@ -155,10 +170,17 @@ void SgScene3D::setRenderMode(int renderMode) {
 	// fog is only ever enabled globally when fogEnabled_ is set.
 	const bool fogOn = bm.fog && fogEnabled_;
 	// Compare the clamped mode so an out-of-range value cannot defeat the cache.
-	if (mode == currentRenderMode_ && fogOn == currentFogOn_) return;
+	if (pulsateA_ < 0.f && mode == currentRenderMode_ && fogOn == currentFogOn_) return;
 	flush();
+	pulsateA_ = -1.f;
 	currentRenderMode_ = mode;
 	currentFogOn_ = fogOn;
+}
+
+void SgScene3D::setPulsate(float a) {
+	if (a == pulsateA_) return;
+	flush();
+	pulsateA_ = a;
 }
 
 void SgScene3D::submitTriangles(const WorldVertex* verts, int count) {

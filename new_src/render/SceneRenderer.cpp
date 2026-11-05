@@ -42,7 +42,8 @@ static bool isSpecialBossTile(int n) {
 }
 
 void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
-                              const MayaPose* cinePose, bool underDialog, const ZoomPose* zoomPose) {
+                              const MayaPose* cinePose, bool underDialog, const ZoomPose* zoomPose,
+                              bool cameraState) {
 	env_.world->setTime((int)*env_.upTimeMs);
 	vis_ = ViewVisibility{};
 
@@ -143,6 +144,7 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 		// (allocated iff eType == 2, src/Game.cpp:430-436).
 		spriteCharClass_.assign(env_.map->numSprites, 0);
 		spriteHasEntity_.assign(env_.map->numSprites, 0);
+		spriteHalo_.assign(env_.map->numSprites, 0);
 		for (const Entity& ent : env_.game->db.entities()) {
 			int si = ent.getSprite();
 			if (si >= 0 && si < env_.map->numSprites) spriteHasEntity_[si] = 1;
@@ -150,6 +152,39 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 			if (ent.info & 0x1010000) spriteSortBias_[si] = +1;
 			else if (ent.def->eType == Enums::ET_MONSTER) spriteSortBias_[si] = -1;
 			const int tile = env_.map->mapSpriteInfo[si] & 0xFF; // monsters never carry SPRITE_FLAG_TILE (+257)
+			// Lootable-corpse halo (legacy canvas->state != ST_CAMERA gate).
+			// Monster param is the rewrite's looted marker (CorpseLoot.cpp:110-114),
+			// MFLAG_LOOTED the save-restored one (EntityState.cpp:289).
+			const int spriteInfo = env_.map->mapSpriteInfo[si];
+			if (!cameraState) {
+				if (ent.monster == nullptr) {
+					// Placed corpse props (src/Render.cpp:1714-1717); TILE-flagged sprites excluded.
+					if ((spriteInfo & 0x400000) == 0 &&
+					    (tile == Enums::TILENUM_OBJ_SCIENTIST_CORPSE || tile == Enums::TILENUM_OBJ_CORPSE ||
+					     tile == Enums::TILENUM_OBJ_OTHER_CORPSE) &&
+					    ent.param == 0 && !ent.hasEmptyLootSet())
+						spriteHalo_[si] = 18;
+					// Dropped sentry-bot corpse (src/Render.cpp:1719-1722, non-TILE branch :1620): no loot-set test.
+					else if ((spriteInfo & 0x400000) == 0 &&
+					         (tile == Enums::TILENUM_MONSTER_RED_SENTRY_BOT ||
+					          tile == Enums::TILENUM_MONSTER_SENTRY_BOT) &&
+					         env_.game->db.isDropped(&ent) && ent.param == 0)
+						spriteHalo_[si] = 18;
+				} else if ((ent.info & Entity::kInfoCorpse) != 0 &&
+				           ((spriteInfo >> 8) & Enums::MANIM_MASK) == Enums::MANIM_DEAD &&
+				           (ent.monster->flags & Enums::MFLAG_LOOTED) == 0 && ent.param == 0 &&
+				           !ent.hasEmptyLootSet()) {
+					// Dead monster, 18/16 (src/Render.cpp:3470-3474). 17/16 for sentinels (:3528-3532),
+					// Pinky (:3600-3604), Mastermind/Arachnotron (:3753-3758); none for lost souls,
+					// cacodemons (:3568-3571) and Vios (no MANIM_DEAD case, :3624).
+					if ((tile >= Enums::TILENUM_MONSTER_SENTINEL && tile <= Enums::TILENUM_MONSTER_SENTINEL3) ||
+					    tile == Enums::TILENUM_BOSS_PINKY || tile == Enums::TILENUM_BOSS_MASTERMIND ||
+					    tile == Enums::TILENUM_MONSTER_ARACHNOTRON)
+						spriteHalo_[si] = 17;
+					else if (!isFloaterTile(tile) && !isSpecialBossTile(tile))
+						spriteHalo_[si] = 18;
+				}
+			}
 			if (ent.def->eType == Enums::ET_NPC ||
 			    (ent.def->eType == Enums::ET_CORPSE &&
 			     tile >= Enums::TILENUM_FIRST_NPC &&
@@ -173,7 +208,8 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 			}
 		}
 		env_.world->drawBSP(*env_.map, *env_.media, camera_, spriteSortBias_.data(),
-		                    spriteCharClass_.data(), spriteHasEntity_.data(), env_.game->useCaldexHack);
+		                    spriteCharClass_.data(), spriteHasEntity_.data(), env_.game->useCaldexHack,
+		                    spriteHalo_.data());
 		vis_ = env_.world->visibility();
 		renderer.restoreCanvasViewport(window);
 	} else if (env_.g2d != nullptr) {
