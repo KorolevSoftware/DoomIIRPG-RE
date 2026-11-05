@@ -102,6 +102,8 @@ public:
 	}
 
 	bool initialized() const { return initialized_; }
+	// Column buffer of the last drawBSP (particle cull).
+	const ColumnOcclusion& occlusion() const { return occl_; }
 
 private:
 	void begin(const Camera3D& camera);

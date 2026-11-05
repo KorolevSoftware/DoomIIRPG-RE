@@ -824,3 +824,26 @@ scripted from the PER_TURN static func (`staticFuncs[6] = 253`): at IP 316-342 a
 `LERPSPRITE sprite=162 dst=(21,29)` / `sprite=163 dst=(21,30)`, i.e. when the player converts one
 fixture the neighbouring one is swapped for a parked spout sprite (disassembly via
 `tools/disasm_map_scripts.py`, guards `v39`/`v40`).
+
+## Particle spawn call sites (summary)
+
+Full table with operands and new_src hook points:
+`docs/research/2026-11-04-particle-call-sites.md`. Key facts:
+
+* Monster hit blood: `explodeOnMonster`, after `curTarget->pain`, skipped for
+  WP_ITEM 14 (`src/Combat.cpp:907-910`). Reflection blood on the attacker before
+  `pain(reflectionDmg / 2)` (`src/Combat.cpp:443-445`).
+* Corpse gib (targetType ET_CORPSE): hide sprite `|= 0x10000`, `isGibbed = true`,
+  `spawnMonsterBlood(curTarget, true)`, `spawnDropItem`, `playSound(1037, 0, 3, 0)`
+  (`src/Combat.cpp:938-944`).
+* `hurtEntityAt` gib sites `src/Combat.cpp:1146`, `:1179` are unreachable: the
+  9-arg overload is only called through the wrapper with `b = false`
+  (`src/Combat.cpp:1111`, `:1094`).
+* `Game::raiseCorpses` (`src/Game.cpp:3549`, particles at `:3578`) has no caller.
+* Every `Entity::resurrect` ends with `spawnParticles(1, -161512, sprite)`
+  (`src/Entity.cpp:1368`); callers: `src/Entity.cpp:1334`, `src/Game.cpp:718`,
+  `src/ScriptThread.cpp:1220`.
+* Thorns (proj 9): trail every 64 units (`src/Combat.cpp:1273-1281`), impact
+  `spawnParticles(1, 0xFF81603D, x, y, z + 16)` (`src/Combat.cpp:1365`).
+  Thrown item (proj 13) impact: `spawnParticles(1, -1, missile sprite)` + sound
+  1135 (`src/Combat.cpp:1342-1345`).

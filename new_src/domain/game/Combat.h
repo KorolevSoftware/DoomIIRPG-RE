@@ -79,6 +79,7 @@ public:
 	int totalArmorDamage = 0;
 	int hitType = 0;
 	bool gotCrit = false, gotHit = false, targetKilled = false;
+	bool isGibbed = false;             // src/Combat.h:117
 	int crFlags = 0, crDamage = 0, crArmorDamage = 0, crHitChance = 0, crCritChance = 0;
 	int worldDist = 0, tileDist = 0;
 	int playerMissRepetition = 0, monsterMissRepetition = 0;

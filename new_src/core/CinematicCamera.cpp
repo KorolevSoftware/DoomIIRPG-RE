@@ -5,6 +5,7 @@
 #include <cstdlib>
 
 #include "core/Sound.h"
+#include "domain/game/ParticleSystem.h"
 #include "domain/game/Player.h"
 #include "domain/game/ScriptVM.h"
 #include "domain/world/MapData.h"
@@ -197,8 +198,8 @@ void CinematicCamera::finishCinematic() {
 void CinematicCamera::skipCinematicNow() {
 	// Game::skipCinematic analog (src/Game.cpp:2507-2544): snap the remaining
 	// keys, fast-forward the parked threads with the huge-timestamp analog,
-	// immediate state restore. Subtitles/particles have no rewrite
-	// counterpart yet; the closing fade-in is the caller's (GameContext::tickCamera).
+	// immediate state restore. Subtitles have no rewrite counterpart yet;
+	// the closing fade-in is the caller's (GameContext::tickCamera).
 	Sound& snd = Sound::instance();
 	const bool savedAllow = snd.allowSounds;      // (:2510-2512)
 	snd.allowSounds = false;
@@ -213,6 +214,7 @@ void CinematicCamera::skipCinematicNow() {
 	flushParkedThreads(true);
 	skipping_ = false;
 	snd.allowSounds = savedAllow;                 // (:2534)
+	if (env_.particles) env_.particles->freeAllParticles();   // src/Game.cpp:2537
 }
 
 void CinematicCamera::flushParkedThreads(bool force) {

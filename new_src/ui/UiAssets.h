@@ -84,6 +84,7 @@ public:
 	// Automap (src/AutomapController.cpp:71, :322).
 	Texture automapBackground;   // gameHelpBG.bmp 480x320 (src/Canvas.cpp:171)
 	Texture automapCursor;       // Automap_Cursor.bmp (src/App.cpp:416), 4 px wide frames
+	Texture gibs[3];             // [0] wood, [1] stone, [2] bone (src/ParticleSystem.cpp:161-163)
 	// Comic viewer, landscape frames only; resident from startup (deviation FE-D8).
 	Texture comicFrames[39];     // ComicBook/frames/*.bmp, 480x320 4-bit (src/ComicBook.cpp:323-440)
 };

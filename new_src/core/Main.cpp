@@ -333,6 +333,7 @@ int main(int argc, char* argv[]) {
 		&game, &player, &hud, &loc, &tables, &g_map, &ctx.gameTime, &ctx.upTimeMs, &g_media.mappings() });
 	game.items.init({          // Env: db, defs, map, player, hud, loc, tables, vm, game (§G2.3)
 		&game.db, &g_entityDefs, &g_map, &player, &hud, &loc, &tables, &vm, &game });
+	game.particles.init({ &g_map, &g_media, &tables, &ctx.gameTime });   // src/App.cpp:117
 	game.setXPSystems(&player, &loc, &hud);   // kill-XP state/presentation bridges
 	// Map file + per-map resources for mapId 1..10 (ADR 0035): parse into a fresh
 	// MapData and move it over g_map so every borrowed &g_map stays valid.

@@ -998,13 +998,20 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 		}
 
 		case Enums::EV_SPAWN_PARTICLES: {
-			// u8 packed(count<<3|color, bit8=absolute-tile mode), u16 pos,
-			// i8 z(+48) (src/ScriptThread.cpp:921-936); no particle system yet.
-			int packed = readUByte(t);
-			readUShort(t);                // sprite id or packed tile pos
-			readUByte(t);                 // dz (+48)
-			std::fprintf(stderr, "[script] SPAWN_PARTICLES count=%d color=%d skipped\n",
-				(packed >> 3) & 0xF, packed & 0x7);
+			// u8 packed: bit 7 = tile-position flag (mask 0x80), bits 3..6 type, bits 0..2
+			// color index; u16 pos; u8 z+48 (src/ScriptThread.cpp:921-936).
+			const int packed = readUByte(t);
+			const int pos = readUShort(t);
+			const int z = readUByte(t) - 48;
+			const int type = (packed >> 3) & 0xF;
+			const uint32_t color = ParticleSystem::kLevelColors[packed & 0x7];   // [7] = white, ADR 0047 §5
+			if (packed & 0x80) {
+				const int x = (((pos >> 11) & 0x1F) << 6) + 32;
+				const int y = (((pos >> 6) & 0x1F) << 6) + 32;
+				env_.game->particles.spawnParticles(type, color, x, y, z + env_.map->heightAt(x, y));
+			} else {
+				env_.game->particles.spawnParticles(type, color, pos);   // pos = sprite index; z ignored
+			}
 			break;
 		}
 
@@ -1695,9 +1702,11 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			std::fprintf(stderr, "[script] SHOW_PLAYERATTACK weapon=%d skipped\n", readUByte(t));
 			break;
 
-		case Enums::EV_MONSTER_PARTICLES:          // :911-919, no particle system
-			std::fprintf(stderr, "[script] MONSTER_PARTICLES sprite=%d skipped\n", readUByte(t));
+		case Enums::EV_MONSTER_PARTICLES: {        // :911-919
+			const int sprite = readUByte(t);
+			if (Entity* ent = env_.game->db.findEntityBySprite(sprite)) env_.game->particles.spawnMonsterBlood(ent, false);
 			break;
+		}
 
 		case Enums::EV_END_GAME:                   // :1645-1651, epilogue state not ported
 			env_.player->gameCompleted = true;

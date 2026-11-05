@@ -1,6 +1,7 @@
 #include "render/Graphics2D.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "render/api/Draw2D.h"
 #include "text/Font.h"
@@ -44,6 +45,15 @@ void Graphics2D::clearClip() {
 
 void Graphics2D::fillRect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
 	if (dev_) dev_->fillQuad(DstRect{ x, y, w, h }, colorOf(r, g, b, a));
+}
+
+void Graphics2D::fillCircle(int cx, int cy, int r, uint8_t red, uint8_t green, uint8_t blue) {
+	if (r <= 0) return;
+	for (int dy = -r; dy < r; ++dy) {
+		const float yc = dy + 0.5f;
+		const int hw = (int)(std::sqrt((float)(r * r) - yc * yc) + 0.5f);
+		if (hw > 0) fillRect(cx - hw, cy + dy, 2 * hw, 1, red, green, blue);
+	}
 }
 
 void Graphics2D::drawImage(const Texture& tex, int srcX, int srcY, int srcW, int srcH,

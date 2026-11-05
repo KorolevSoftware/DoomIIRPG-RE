@@ -50,6 +50,9 @@ public:
 	// legacy TinyGL::mvp2D (src/TinyGL.cpp:189, :195-200): yaw-only view × projection(fov+|pitch|), no GLES tweaks
 	const int* mvp2DInt() const { return mvp2D_; }
 
+	// TinyGL::mvp before gles::BeginFrame (src/TinyGL.cpp:188-190); particle billboards
+	const int* mvpTglInt() const { return mvpTgl_; }
+
 	// Cached view angles (masked 0x3FF) and position.
 	int viewX() const { return viewX_; }
 	int viewY() const { return viewY_; }
@@ -71,6 +74,7 @@ private:
 	int projection_[16];
 	int mvp_[16];
 	int mvp2D_[16];
+	int mvpTgl_[16];
 	float mvpF_[16];
 	float viewF_[16];
 };

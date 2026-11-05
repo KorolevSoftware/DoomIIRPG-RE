@@ -228,6 +228,7 @@ void LoadingManager::onEntitiesLoaded() {
 	if (env_.game->loadMapID <= 10 && env_.game->loadMapID > env_.player->highestMap)
 		env_.player->highestMap = env_.game->loadMapID;                   // :641-643
 	env_.game->curLevelTime = *env_.gameTime;                             // playTime = curLevelTime (:663)
+	env_.game->particles.freeAllParticles();                              // :665
 	env_.player->levelInit();                                             // :667
 	// loadWorldState (:670, src/Game.cpp:1736-1754). A corrupt record is logged
 	// by SaveGame and left partially applied (ADR 0037 §5).

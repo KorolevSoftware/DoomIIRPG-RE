@@ -158,6 +158,10 @@ bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	ok &= loadUiTexture(store, read, "Automap_Cursor.bmp", automapCursor);
 	// Frame layout of the cursor sheet is unverified (AM open question).
 	std::fprintf(stderr, "[automap] cursor %dx%d\n", automapCursor.width(), automapCursor.height());
+	// 144x192 each: 3 size columns x 4 rows of 48x48.
+	ok &= loadUiTexture(store, read, "woodgibs_24.bmp", gibs[0]);
+	ok &= loadUiTexture(store, read, "Stonegibs_24.bmp", gibs[1]);
+	ok &= loadUiTexture(store, read, "Skeletongibs_24.bmp", gibs[2]);
 	// Index = legacy imgiPhoneComicBook slot (src/ComicBook.cpp:323-440).
 	static const char* const kComicFrames[39] = {
 		"iPhone cover",

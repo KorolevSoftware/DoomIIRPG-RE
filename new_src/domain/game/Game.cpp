@@ -366,6 +366,28 @@ Entity* Game::spawnDropItem(int x, int y, int tile, int eType, int sub, int parm
 	return spawnDropItem(x, y, tile, def, param, doThrow);
 }
 
+void Game::spawnDropItem(Entity* e) {
+	const bool b = e->hasLootSet;                                      // src/Game.cpp:2692-2723
+	const bool b2 = e->monster == nullptr ? (b && e->param == 0)
+	                                      : (b && (e->monster->flags & 0x800) == 0);
+	if (!b2) return;
+	const int n = e->lootSet[0];
+	const int cls = (n >> 12) & 0xF;
+	if (cls == 6) return;
+	const int idx = (n & 0xFC0) >> 6, cnt = n & 0x3F;
+	if (cnt <= 0) return;
+	const EntityDef* def = defs_->find(Enums::ET_ITEM, cls, idx);
+	if (def == nullptr) {
+		std::fprintf(stderr, "[drop] Cannot find a def for the dropItem.\n");   // src Error 117
+		return;
+	}
+	if (def->tileIndex == 0) return;
+	const int s = e->getSprite();
+	if (s < 0 || s >= map_->numSprites) return;
+	spawnDropItem(map_->mapSprites[s + kRowX * map_->numSprites], map_->mapSprites[s + kRowY * map_->numSprites],
+	              def->tileIndex, def, cnt, false);
+}
+
 void Game::throwDropItem(int x, int y, int height, Entity* e) {
 	const int sprite = e->getSprite();                                 // src/Game.cpp:2822-2853
 	SpriteLerps::SpriteLerp* ls = lerps.allocLerpSprite(nullptr, sprite, e->def->eType != Enums::ET_ITEM);
@@ -667,8 +689,7 @@ void Game::executeEntityFunc(Entity* e) {                   // src/Game.cpp:3523
 
 // ET_ATTACK_INTERACTIVE arm of Entity::pain (src/Entity.cpp:371-391). Props
 // have no health: the hit destroys them here, and Combat's stage-1 tail then
-// calls entityDied for the message/XP. Particles (:375,:381,:384) have no
-// subsystem yet.
+// calls entityDied for the message/XP.
 bool Game::painProp(Entity* e) {
 	const int sprite = e->getSprite();
 	if (map_ == nullptr || sprite < 0 || sprite >= map_->numSprites) return false;
@@ -677,13 +698,15 @@ bool Game::painProp(Entity* e) {
 		// Broken frame 1 in the frame byte; the entity survives but stops
 		// blocking, so the player can walk through the wreck.
 		map_->mapSpriteInfo[sprite] = (map_->mapSpriteInfo[sprite] & 0xFFFF00FF) | 0x100;
+		particles.spawnParticles(2, 0xFFFFFFFFu, sprite);     // :375
 		Sound::instance().playSound(1038, 0, 3);              // :376
 		db.unlinkEntity(e);                                   // :377
 		std::fprintf(stderr, "[combat] barricade broken sprite=%d\n", sprite);
 	} else {
-		if (sub == Enums::INTERACT_PICKUP) {                  // :383-386
-			// Particle burst type 1 / color -1 (white upward jet, :384) has no
-			// subsystem yet.
+		if (sub == Enums::INTERACT_CRATE || sub == Enums::INTERACT_FURNITURE) {   // :380-382
+			particles.spawnParticles(2, 0xFF7F7F7Fu, sprite);
+		} else if (sub == Enums::INTERACT_PICKUP) {           // :383-386
+			particles.spawnParticles(1, 0xFFFFFFFFu, sprite); // :384, white upward jet
 			turnEntityIntoWaterSpout(e);                      // :385
 			// Legacy takes updateFacingEntity from died (:527); the rewrite's
 			// entityDied default arm (which this entity now reaches, eType 14)

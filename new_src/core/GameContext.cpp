@@ -18,6 +18,7 @@
 #include "io/Localization.h"
 #include "io/Tables.h"
 #include "render/Graphics2D.h"
+#include "render/ParticleRenderer.h"
 #include "render/World3D.h"
 #include "render/api/RenderBackend.h"
 #include "text/Font.h"
@@ -47,6 +48,7 @@ void GameContext::init(const Init& sys) {
 	cinEnv.vm = sys_.vm;
 	cinEnv.host = this;
 	cinEnv.gameTime = &gameTime;
+	cinEnv.particles = &sys_.game->particles;
 	cinematic_.init(cinEnv);
 	LootSession::Env lootEnv;
 	lootEnv.map = sys_.map;
@@ -1407,6 +1409,17 @@ void GameContext::render(AppContext& app) {
 	// letterbox, subtitles, dialog, loot and menu (src/Canvas.cpp:391-417,
 	// src/Canvas.cpp:1346-1355, src/MayaCamera.cpp:311-323).
 	sys_.hud->drawFade(g, upTimeMs);
+
+	// REPAINT_PARTICLES is set only by the playing/dialog/camera/dying runners
+	// (src/GameStateRunner.cpp:82,192,268,275,291,309,316, src/Canvas.cpp:923,
+	// src/MovementController.cpp:393,521); drawn before the letterbox fills.
+	if (sys_.game->loadMapID != 0 && sys_.world->initialized() && sys_.ui != nullptr &&
+	    (cinePose != nullptr || state_ == StateId::Playing || state_ == StateId::Dialog ||
+	     state_ == StateId::Camera || state_ == StateId::Dying || state_ == StateId::BotDying)) {
+		drawParticles(g, sys_.game->particles, scene_.camera(), sys_.world->occlusion(), gameTime,
+		              sys_.player->isFamiliar,   // postProcessMode != 0 (src/Player.cpp:2500-2516), same gate as drawFamiliarOverlay
+		              sys_.ui->art().gibs);
+	}
 
 	// Cinematic letterbox: two opaque black fills painted after the world
 	// pass and the cockpit art, so the top one overpaints rows 0..41 of the

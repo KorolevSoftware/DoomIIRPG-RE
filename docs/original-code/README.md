@@ -33,6 +33,7 @@ Topic files (created on demand):
 | `sentry-bot-minigame.md` | Sentry bot "Matrix Skip" minigame (EV_MINIGAME type 0): skip-code/IQ formula, board and solution, keys/touch, draw layout, vars[7], bot choice and `awardSentryBot`; scoped summary of the familiar (controllable bot) system |
 | `target-practice.md` | Target practice (map00 shooting range): EV_START_TARGETPRACTICE 84, strip to rifle+8 bullets, head/body/leg zones 30/20/10, score>120 → +1 accuracy, score bar, input/exit, target sprite frames |
 | `front-end.md` | Boot → `ST_LOGO` (l2.bmp) → `ST_INTRO_MOVIE` (prolog pan + crawl) → `MENU_MAIN` rows/skin/dial → confirm 14 → difficulty 16 (1/2/4) → `startGame` → `ST_CHARACTER_SELECTION` layout/input/stats → `ST_INTRO` prologue → `loadMap(1)`; `backToMain`, Save & Quit, sounds |
+| `particles.md` | ParticleSystem: 4 emitters/59-particle pool, spawn types 0..8, shared `rand()` usage, analytic gameTime aging, billboard projection + column-buffer cull, gib sprites, draw layering, call sites/sounds |
 | `scripts.md` | tileEvents bytecode, staticFuncs |
 | `sound.md` | Sound engine: resID->sounds2/*.wav table, WAV loader, 10 OpenAL slots, `playSound` flags/priority/stealing, stop/fade (dead), sfx/music volume 0..100 + config persistence, no suspend handling |
 | `app.md` | App lifecycle, game states, input mapping |

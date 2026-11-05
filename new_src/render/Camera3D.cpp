@@ -81,6 +81,7 @@ void Camera3D::setView(int viewX, int viewY, int viewZ, int viewYaw, int viewPit
 
 	buildViewMatrix(viewX, viewY, viewZ, viewYaw_, viewPitch_, viewRoll, view_);
 	buildProjectionMatrix(viewFov, viewAspect, projection_);
+	multMatrix(view_, projection_, mvpTgl_);
 
 	// GLES BeginFrame adjustments to the projection matrix (non-iPhone path):
 	// negate [4],[8],[1],[5],[9]; halve [14] (z scale for depth) unless chatZoom.

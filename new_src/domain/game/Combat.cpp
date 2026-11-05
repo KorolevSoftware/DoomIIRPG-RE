@@ -640,6 +640,7 @@ bool Combat::playerSeq() {
 	}
 
 	if (stage == 0) {                                            // :188-366
+		isGibbed = false;                                        // :189
 		totalDamage = 0;                                         // :190
 		totalArmorDamage = 0;                                    // :191
 		hitType = 0;                                             // :192
@@ -859,14 +860,19 @@ void Combat::explodeOnMonster() {
 				curTarget->monster->monsterEffects |= ((env_.player->statusEffects[30] - 1) << 5) | 0x1;
 			}
 			env_.game->entityPain(curTarget, totalDamage);       // :907 (ADR 0018)
-			// blood particles (:908-910), knockback (:911-921), splash radius
-			// (:922-924) and negative-damage healing cap (:926-931) skipped:
-			// systems absent.
+			if (attackerWeaponId != 14) env_.game->particles.spawnMonsterBlood(curTarget, false);   // :908-910
+			// knockback (:911-921), splash radius (:922-924) and negative-damage
+			// healing cap (:926-931) skipped: systems absent.
 		}
 	} else if (targetType == Enums::ET_ATTACK_INTERACTIVE) {  // :933-937
 		if (totalDamage > 0) env_.game->entityPain(curTarget, totalDamage);
 	} else if (targetType == Enums::ET_CORPSE) {             // :938-945 gib
-		std::fprintf(stderr, "[combat] corpse gib branch deferred (chainsaw-only)\n");
+		const int s = curTarget->getSprite();
+		if (s >= 0 && s < env_.map->numSprites) env_.map->mapSpriteInfo[s] |= Enums::SPRITE_FLAG_HIDDEN;
+		isGibbed = true;
+		env_.game->particles.spawnMonsterBlood(curTarget, true);
+		env_.game->spawnDropItem(curTarget);
+		Sound::instance().playSound(1037, 0, 3);
 	}
 }
 

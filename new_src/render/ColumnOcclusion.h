@@ -24,6 +24,8 @@ public:
 	bool occludeLine(int x0, int y0, int x1, int y1, bool sortX);
 	// Render::cullBoundingBox(n, n2, n3, n4, true) (src/Render.cpp:750-823): true = culled.
 	bool cullBox(int x1, int y1, int x2, int y2) const;
+	// TinyGL::columnScale[i], 0 <= i < kColumns (particle cull, src/ParticleSystem.cpp:64).
+	int column(int i) const { return columnScale_[i]; }
 
 private:
 	struct V { int x, z, w; };

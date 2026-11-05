@@ -17,6 +17,7 @@
 #include "domain/game/ItemPickup.h"
 #include "domain/game/MonsterAI.h"
 #include "domain/game/MonsterSystem.h"
+#include "domain/game/ParticleSystem.h"
 #include "domain/game/Player.h"
 #include "domain/game/SpriteLerps.h"
 #include "domain/game/TraceSystem.h"
@@ -153,6 +154,8 @@ public:
 	Entity* spawnDropItem(int x, int y, int tile, const EntityDef* def, int param, bool doThrow);
 	// src/Game.cpp:2681-2690: def = find(eType, sub, parm); nullptr + log when absent.
 	Entity* spawnDropItem(int x, int y, int tile, int eType, int sub, int parm, int param, bool doThrow);
+	// src/Game.cpp:2692-2723: drops lootSet[0] at the entity's sprite (corpse gib).
+	void spawnDropItem(Entity* e);
 	// src/Game.cpp:2822-2853: an 850 ms parabolic hop (height 48) to the first
 	// free of the 8 neighbours starting at a random direction; stays put if none.
 	void throwDropItem(int x, int y, int height, Entity* e);
@@ -216,6 +219,7 @@ public:
 	CorpseLoot loot;                // peer subsystem (spec §P2-GE); wired in loadEntities
 	ItemPickup items;               // peer subsystem (spec 2026-08-29-world-item-pickup §G2); wired in Main
 	ZoomState zoom;                 // sniper zoom data (ADR 0039)
+	ParticleSystem particles;       // src app->particleSystem (ADR 0047); wired in Main
 
 	// Last rendered world frame (ADR 0029); written only by GameContext::render.
 	ViewVisibility visibility;

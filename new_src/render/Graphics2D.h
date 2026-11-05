@@ -42,6 +42,10 @@ public:
 	// Solid fill. Color components are 0..255.
 	void fillRect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255);
 
+	// Legacy Graphics::fillCircle (src/Graphics.cpp:38-86: opaque 16-gon fan, current color).
+	// Row spans through fillRect, so the active clip applies. r <= 0 draws nothing.
+	void fillCircle(int cx, int cy, int r, uint8_t red, uint8_t green, uint8_t blue);
+
 	// 1px outline rectangle (same color semantics as fillRect).
 	void drawRect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255);
 

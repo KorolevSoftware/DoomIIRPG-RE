@@ -1980,3 +1980,11 @@ G2a: statusEffects[54]/buffs[30] и пять помощников дословн
 - Исправлены расхождения: боль игрока 1094 для героя 1, переопределения звуков малого пинки и Мастермайнда.
 - Golden ALL IDENTICAL. Все `[sound]`-принты удалены (трасса: D2R_SOUNDLOG=1).
 - 2026-11-04: пользователь проверил на слух — всё звучит, замечаний нет.
+
+## 2026-11-05 — частицы
+- Исследование: docs/original-code/particles.md (ядро), docs/research/2026-11-04-particle-system.md, docs/research/2026-11-04-particle-call-sites.md (C1..C16; C4/C5/C14 в оригинале мёртвые; levelColors[7] читается за границей).
+- Спека docs/architecture/particles.md, ADR 0047: серый цвет фамильяра без записи в эмиттер, точки с тем же клипом, что куски, сдвиг >>11 как в src, индекс цвета 7 = белый, мировая полоса (0,+6) вместо смещения GLES, int64 в промежуточной математике.
+- G1 domain/game/ParticleSystem + очистки (загрузка карты, пропуск катсцены); G2 render/ParticleRenderer + Camera3D::mvpTglInt, ColumnOcclusion::column, Graphics2D::fillCircle, UiAssets::gibs; G3 вызовы C2, C3 (+Game::spawnDropItem, звук 1037), C9-C11, C15, C16.
+- Ревью PASS (замечания косметические: непоследовательные проверки индекса спрайта в C3/spawnMonsterBlood).
+- Golden ALL IDENTICAL с частицами и без (DOOM2RPG_NO_PARTICLES=1). Окно в агентах не показывается (vsync блокирует) — golden гонял оркестратор.
+- 2026-11-05: пользователь проверил на экране (рядом с оригиналом) — частицы есть.

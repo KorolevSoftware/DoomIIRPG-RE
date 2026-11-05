@@ -10,6 +10,7 @@
 namespace newcore {
 
 class MapData;
+class ParticleSystem;
 class Player;
 struct ScriptThread;
 class ScriptVM;
@@ -30,6 +31,7 @@ public:
 		ScriptVM* vm = nullptr;
 		StateHost* host = nullptr;
 		const int64_t* gameTime = nullptr;
+		ParticleSystem* particles = nullptr;
 	};
 
 	void init(const Env& env);
