@@ -13,6 +13,7 @@
 #include "domain/game/Entity.h"
 #include "domain/game/EntityDb.h"
 #include "domain/game/EntityMonster.h"
+#include "domain/game/FogState.h"
 #include "domain/game/GameSprites.h"
 #include "domain/game/ItemPickup.h"
 #include "domain/game/MonsterAI.h"
@@ -220,6 +221,7 @@ public:
 	ItemPickup items;               // peer subsystem (spec 2026-08-29-world-item-pickup §G2); wired in Main
 	ZoomState zoom;                 // sniper zoom data (ADR 0039)
 	ParticleSystem particles;       // src app->particleSystem (ADR 0047); wired in Main
+	FogState fog;                   // depth fog (ADR 0049), reset by GameContext::tickLoading
 
 	// Last rendered world frame (ADR 0029); written only by GameContext::render.
 	ViewVisibility visibility;

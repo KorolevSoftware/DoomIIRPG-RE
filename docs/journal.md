@@ -1997,3 +1997,11 @@ G2a: statusEffects[54]/buffs[30] и пять помощников дословн
 - Экранная проверка 1: в эталоне ореол белый, у нас прозрачный цветной. Причина: эталонная сборка рисует TinyGL (флаг в конфиге перекрывает GLES isInit, src/Game.cpp:2036; build/src/Doom2rpg.app/CONFIGFILENAME байт 0x92 = 0). Переделано на программный путь: сплошной серый g=(tri>>1)+127 без тумана (src/Render.cpp:1968-1979, src/Span.cpp:59-63); в new_src — принудительный туман f=0 с цветом (g,g,g) + AlphaBlend, шейдер не менялся. Ревью PASS, golden ALL IDENTICAL.
 - Открыто: другие эффекты порта могли быть сверены с GL-путём, тогда как эталон идёт через TinyGL (ADD50, цветовые сдвиги, туман) — стоит проверить.
 - 2026-11-05: пользователь проверил на экране — ореол совпадает с эталоном.
+
+## 2026-11-05 — затемнение в катсценах (туман) и отдача при выстреле
+- Пользователь: в катсценах эталона «мигает свет» в 3D; в порте нет. Полосы и FADEOP уже были портированы (docs/original-code/cinematic-overlay.md). Причина — скриптовый туман: EV_LERP_FOG переключает fogMin/fogRange мгновенно (0->32 / 32->128 ... 1024->1024), программный путь берёт одну из 16 палитр тумана на спан (docs/original-code/light-flicker.md).
+- Спека docs/architecture/script-fog.md, ADR 0049. G1: шейдер world.glsl — целочисленный уровень тумана и 565-арифметика buildFogTables, Scene3D::setFog(int,int,int), небо на глубине 2047; туман выключен = побитово как раньше. G2: domain/game/FogState (Game::fog, selfCheck), тела опкодов в ScriptVM, сброс при загрузке карты, tick+setFog в SceneRenderer::drawWorld.
+- Ревью G1 PASS; G2 FAIL (lerp на gameTime вместо app->time) → исправлено на upTimeMs → PASS. Ветка palIndex>=0 у спрайтов в оригинале мёртвая.
+- Golden: отличается только t0200 (1378 px, дальняя геометрия под статическим туманом 16384/1 из init map00, в оригинале так же — гейта нет). Ни один кадр не попадает в строб. Пользователь подтвердил на экране (строб и толчок совпадают с эталоном) → t0200 перезаписан, golden ALL IDENTICAL.
+- Отдача: оригинал двигает И камеру (rockView, docs/original-code/fire-view-kick.md), И спрайт оружия; в порте не хватало только камеры. Один вызов Hud::startRockView в Combat.cpp после launchProjectile. Ревью PASS, golden без изменений.
+- Мелочь: устаревший комментарий «fog effects have no rewrite target yet» в new_src/domain/game/ScriptVM.cpp:1146-1148.

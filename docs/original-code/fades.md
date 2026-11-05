@@ -39,7 +39,11 @@ fade(rect, alpha, black)
   FADEOUT end state passes 0 (`src/Render.cpp:2578`) and is fully black.
   So FADEIN goes black → scene (weight 0→255), FADEOUT goes scene → black
   (weight 256→~1, then held 0). `Graphics::fade` is only declared
-  (`src/Graphics.h:74`); its body is absent from `src/`. Colour is always
+  (`src/Graphics.h:74`); body at `src/Graphics.cpp:755-766` (file is ISO-8859, grep with
+  `LC_ALL=C grep -a`): black quad over `rect` with GL alpha `1 - alpha/256`
+  (`COLOR_BYTE_TO_FLOAT` = x/256, `src/GLES.cpp:21`), blended SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+  unless that alpha >= 1.0 (then opaque, `src/Graphics.cpp:195-206`); see
+  `cinematic-overlay.md`. Colour is always
   `0x00000000` in this fade — no white/colour fade exists here.
 - FADEIN self-clears (`endFade`, `:2572-2574`); FADEOUT never clears itself and
   holds black until another `startFade` or `endFade`.

@@ -40,11 +40,11 @@ public:
 	// is free after the call.
 	virtual void submitTriangles(const WorldVertex* verts, int count) = 0;
 
-	// Linear eye-space fog request. start/end are in the same units as the view
-	// matrix output; rgba is the fog color, alpha unused for blending
-	// (World3D::setFog converts fogMin/fogRange). Per-mode fog on/off comes
-	// from the RenderModes table, not from here.
-	virtual void setFog(bool enabled, float start, float end, const float rgba[4]) = 0;
+	// Legacy TinyGL software depth fog (ADR 0049): fogColorARGB = tinyGL->fogColor,
+	// fogMin / fogRange = tinyGL->fogMin / fogRange, verbatim ints. Alpha 0 = fog off
+	// (src/Render.cpp:1857-1861). Applies to every render mode, before the colour
+	// modulation; the sky draws at the fixed legacy depth 2047. Call outside a scene.
+	virtual void setFog(int fogColorARGB, int fogMin, int fogRange) = 0;
 
 	// The sky band: a viewport-filling quad with u in [-0.5+uOffset, 0.5+uOffset]
 	// and v in [0,1] (legacy gles::DrawSkyMap; World3D.cpp:629-646). uOffset is
@@ -55,8 +55,8 @@ public:
 	// count NDC (x,y) pairs, already near-clipped and divided by w, textured
 	// with the drawSky recipe so it shows exactly the backdrop. Inside a scene
 	// it keeps its painter position (the pending batch is drawn first).
-	// count <= kMaxSkyPolygonVerts. Fog stays off; the original leaves it on,
-	// which differs only on fogged maps (rendering.md §8.11 point 4).
+	// count <= kMaxSkyPolygonVerts. Fogged at the fixed sky depth like drawSky
+	// (src/Render.cpp:2133).
 	static constexpr int kMaxSkyPolygonVerts = 10;
 	virtual void drawSkyPolygon(TextureId sky, const float* ndcXY, int count, float uOffset) = 0;
 

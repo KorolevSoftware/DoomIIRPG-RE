@@ -13,7 +13,7 @@ class SgTexture;
 class SgTextureStore;
 
 // The sokol Scene3D device: the world program (index expansion through the
-// palette LUT + per-pixel linear eye-space fog + the per-mode color modulation
+// palette LUT + per-pixel legacy software palette fog + the per-mode color modulation
 // of GL_MODULATE) and the sky quad, recorded into the frame command list
 // (spec 2026-09-11-sokol-gfx-backend §5.7).
 //
@@ -41,14 +41,14 @@ public:
 	void setRenderMode(int renderMode) override;
 	void setPulsate(float a) override;
 	void submitTriangles(const WorldVertex* verts, int count) override;
-	void setFog(bool enabled, float start, float end, const float rgba[4]) override;
+	void setFog(int fogColorARGB, int fogMin, int fogRange) override;
 	void drawSky(TextureId sky, float uOffset) override;
 	void drawSkyPolygon(TextureId sky, const float* ndcXY, int count, float uOffset) override;
 	void flush() override;
 
 private:
 	const SgTexture* lookup(TextureId tex) const;
-	// Records one sky draw: identity MVP, fog off, unmodulated alpha blend.
+	// Records one sky draw: identity MVP, fog at the fixed sky depth, unmodulated alpha blend.
 	void recordSky(const SgTexture* st, const WorldVertex* verts, int count);
 
 	const SgTextureStore* store_ = nullptr;
@@ -62,11 +62,11 @@ private:
 	float mvp_[16] = {};
 	float view_[16] = {};
 
-	// Fog state (Scene3D::setFog).
+	// Fog state (Scene3D::setFog), legacy TinyGL ints (src/TinyGL.cpp:34-36).
 	bool fogEnabled_ = false;
-	float fogStart_ = 0.f;
-	float fogEnd_ = 0.f;
-	float fogColor_[4] = { 0.f, 0.f, 0.f, 1.f };
+	int fogColor_ = 0;
+	int fogMin_ = 32752;
+	int fogRange_ = 1;
 
 	// Currently bound texture so setTexture can flush on change; one SgTexture
 	// is one (index view, palette view) pair, so the pointer is the exact
@@ -74,9 +74,8 @@ private:
 	const SgTexture* currentTex_ = nullptr;
 
 	// Active legacy renderMode of the batch (gles renderMode tracker,
-	// src/GLES.cpp:615-622) and whether fog is on for it.
+	// src/GLES.cpp:615-622).
 	int currentRenderMode_ = -1;
-	bool currentFogOn_ = false;
 	float pulsateA_ = -1.f; // pulsate silhouette grey level; < 0: pulsate state inactive
 };
 

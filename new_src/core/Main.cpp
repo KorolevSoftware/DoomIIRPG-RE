@@ -300,11 +300,6 @@ int main(int argc, char* argv[]) {
 			app.renderer().name(), texBytes, (double)texBytes / (1024.0 * 1024.0));
 	}
 
-	// Fog: disabled for now. Legacy takes fog values from the map/save
-	// (world.setFog(ARGB, fogMin, fogRange); alpha==0 disables). Re-enable
-	// with map-provided values when the loading pipeline supplies them.
-	// world.setFog(0xFF1A2A1A, 500, 900);
-
 	// Phase 4: player + world game state (doors, items). Spawn placement
 	// happens in the Loading tick (legacy Game::spawnPlayer port).
 	Player player;
@@ -314,6 +309,9 @@ int main(int argc, char* argv[]) {
 	player.reset();
 
 	Game game;
+#ifndef NDEBUG
+	FogState::selfCheck();
+#endif
 	player.setGame(&game);
 	// Entity load happens in Loading phase 1 (GameContext::tickLoading,
 	// src/LoadingManager.cpp:658) — do not duplicate it here.

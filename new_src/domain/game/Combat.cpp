@@ -734,7 +734,13 @@ bool Combat::playerSeq() {
 			animLoopCount = ammoPool;
 		}
 		launchProjectile();                                      // :325
-		// rockView recoil skipped (camera-rock system absent) :326-332.
+		if ((1 << attackerWeaponId & 0x2406) == 0 &&             // :326-332, WP_NORECOIL, src/Enums.h:162
+				env_.hud != nullptr && env_.player != nullptr && env_.upTimeMs != nullptr) {
+			const int kick = attackerWeaponId == 11 ? 6 : 2;
+			env_.hud->startRockView(*env_.upTimeMs, animTime,
+				env_.player->viewX - kick * (env_.player->viewStepX >> 6),
+				env_.player->viewY - kick * (env_.player->viewStepY >> 6), env_.player->viewZ);
+		}
 		if (totalDamage == 0) {                                  // :333-345
 			if (targetType == Enums::ET_MONSTER) {
 				if ((crFlags & 0x100) != 0) {

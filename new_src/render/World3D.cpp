@@ -250,31 +250,8 @@ bool World3D::initialize(Scene3D& scene, TextureStore& store) {
 	return true;
 }
 
-// Legacy gles fog setup (GLES.cpp:178-190). fogColor packed ARGB; alpha==0
-// disables fog (buildFogTables:1857-1861). fogScale = 1/8000.
 void World3D::setFog(int fogColorARGB, int fogMin, int fogRange) {
-	if (scene_ == nullptr) return;
-	int a = (fogColorARGB >> 24) & 0xFF;
-	int r = (fogColorARGB >> 16) & 0xFF;
-	int g = (fogColorARGB >> 8) & 0xFF;
-	int b = fogColorARGB & 0xFF;
-	const float fogScale = 1.f / 8000.f;
-
-	if (a == 0) {
-		const float off[4] = { 0.f, 0.f, 0.f, 0.f };
-		scene_->setFog(false, 0.f, 0.f, off);
-		return;
-	}
-	float alpha = (float)a / 255.f;
-	float fogColor[4];
-	fogColor[0] = (float)b / 255.f; // legacy swaps R/B
-	fogColor[1] = (float)g / 255.f;
-	fogColor[2] = (float)r / 255.f;
-	fogColor[3] = alpha;
-	float fogStart = (float)fogMin * fogScale;
-	float fogEnd = ((float)fogRange / alpha + (float)fogMin) * fogScale;
-	if (fogEnd > 0.499f) { fogStart = 9999.f; fogEnd = 10000.f; }
-	scene_->setFog(true, fogStart, fogEnd, fogColor);
+	if (scene_) scene_->setFog(fogColorARGB, fogMin, fogRange);
 }
 
 void World3D::uploadMapTextures(const MapData& map, const MediaLoader& media) {	media_ = &media;

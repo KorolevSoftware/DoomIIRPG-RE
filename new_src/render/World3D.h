@@ -90,9 +90,8 @@ public:
 	// Renders a single polygon list (used for per-node BSP traversal later).
 	void drawPolys(const MapData& map, const std::vector<int>& polyIdx, const Camera3D& camera);
 
-	// Sets fog on the device. Legacy GL_FOG linear in eye space:
-	// fogStart = fogMin * (1/8000), fogEnd = (fogRange/fogColor.a + fogMin) *
-	// (1/8000). alpha==0 disables fog. Requires initialize().
+	// Forwards the legacy software fog state (ADR 0049) to the device; alpha 0
+	// disables fog. Call outside a scene.
 	void setFog(int fogColorARGB, int fogMin, int fogRange);
 
 	// Sets the game time (ms) used for animated textures/sprites (lava UV

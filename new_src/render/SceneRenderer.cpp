@@ -127,6 +127,10 @@ void SceneRenderer::drawWorld(RenderBackend& renderer, Window& window,
 		(fov << 14) / ((478 << 14) / 248));
 	}
 
+	FogState& fog = env_.game->fog;
+	fog.tick(*env_.upTimeMs);                             // app->time, src/Render.cpp:2300-2314
+	env_.world->setFog(fog.color, fog.min, fog.range);
+
 	if (env_.world->initialized() && env_.map->numNodes > 0) {
 		renderer.setCanvasViewport(kWorldRect[0], kWorldRect[1], kWorldRect[2], kWorldRect[3]);
 		env_.world->drawSky(camera_);

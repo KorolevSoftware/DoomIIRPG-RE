@@ -625,6 +625,7 @@ bool GameContext::inputBlocked() const {
 
 void GameContext::tickLoading() {
 	if (loadingPhase_ == 0) {
+		sys_.game->fog.unloadMap();   // Render::unloadMap (src/LoadingManager.cpp:625, src/Render.cpp:214)
 		sys_.vm->clearStateVars(15);                       // zero scriptStateVars except vars[15] (src/LoadingManager.cpp:631-635)
 		loadingPhase_ = 1;
 		frameAtStateEntry_ = framesRendered_;

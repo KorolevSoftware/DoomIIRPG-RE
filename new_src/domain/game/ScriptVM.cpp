@@ -1407,18 +1407,18 @@ uint32_t ScriptVM::run(ScriptThread* t) {
 			break;
 		}
 
-		// Spec tier tables omit these four but map00's INIT_MAP chain runs
-		// through them BEFORE its door lock; consuming their args exactly
-		// keeps the thread alive (same rationale as TIER-B).
-		case Enums::EV_SET_FOG_COLOR: {
+		case Enums::EV_SET_FOG_COLOR: {            // src/ScriptThread.cpp:1375-1379
 			int argb = readInt(t);
-			std::fprintf(stderr, "[script] SET_FOG_COLOR %08X skipped (fog values fixed at boot)\n", argb);
+			env_.game->fog.buildFogTables(argb);
+			std::fprintf(stderr, "[script] SET_FOG_COLOR %08X\n", argb);
 			break;
 		}
 
-		case Enums::EV_LERP_FOG: {
-			readInt(t);
-			std::fprintf(stderr, "[script] LERP_FOG skipped (fog values fixed at boot)\n");
+		case Enums::EV_LERP_FOG: {                 // src/ScriptThread.cpp:1381-1386
+			int v = readInt(t);
+			int a = v & 0x7FF, b = (v >> 11) & 0x7FF, ms = ((v >> 22) & 0xFF) * 100;
+			env_.game->fog.startLerp(a, b, ms, env_.ctx->upTimeMs);   // app->time, src/Render.cpp:1813
+			std::fprintf(stderr, "[script] LERP_FOG %d->%d %dms\n", a, b, ms);
 			break;
 		}
 

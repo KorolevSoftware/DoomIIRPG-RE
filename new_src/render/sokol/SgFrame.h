@@ -29,7 +29,7 @@ public:
 		float depthFix[4] = {};    // world only, clip-z remap (spec §0.4)
 		float colorMod[4] = {};
 		float fogColor[4] = {};
-		float fogParams[4] = {};   // .x start, .y end, .z enabled
+		float fogParams[4] = {};   // .x fogMin .y fogRange .z mode (0 off, 1 depth, 2 flat) .w forced z (0 = per fragment)
 		float canvasSize[4] = {};  // 2D only
 	};
 

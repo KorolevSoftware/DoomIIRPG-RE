@@ -1,6 +1,7 @@
 #include "render/sokol/SgScene3D.h"
 
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -40,6 +41,18 @@ WorldVertex skyVertex(float x, float y, float uOffset) {
 	return WorldVertex{ x, y, 0.f, x * 0.5f - uOffset, y * -0.5f + 0.5f };
 }
 
+// fog_color = legacy ARGB bytes as 0..255 floats; fog_params = (fogMin, fogRange, mode, forcedZ).
+void fillFog(SgFrame::Uniforms& u, int argb, int fogMin, int fogRange, bool on, float forcedZ) {
+	u.fogColor[0] = (float)((argb >> 16) & 0xFF);   // R (no swap: upSamplePixel, src/Render.h:332)
+	u.fogColor[1] = (float)((argb >> 8) & 0xFF);
+	u.fogColor[2] = (float)(argb & 0xFF);
+	u.fogColor[3] = (float)(((uint32_t)argb >> 24) & 0xFF);
+	u.fogParams[0] = (float)fogMin;    // exact: |values| < 2^24 (max 524032)
+	u.fogParams[1] = (float)fogRange;
+	u.fogParams[2] = on ? 1.f : 0.f;
+	u.fogParams[3] = forcedZ;
+}
+
 } // namespace
 
 bool SgScene3D::initialize(const SgTextureStore& store, SgFrame& frame,
@@ -65,11 +78,10 @@ void SgScene3D::beginScene(const SceneView& view) {
 
 	vertices_.clear();
 	currentTex_ = nullptr;
-	// GlScene3D sets the identity modulation + the global fog flag on the
-	// program here and syncs the trackers to match (setRenderMode early-outs
-	// while they do); the trackers are what the recorded uniforms read.
+	// GlScene3D sets the identity modulation on the program here and syncs the
+	// tracker to match (setRenderMode early-outs while it does); the tracker is
+	// what the recorded uniforms read.
 	currentRenderMode_ = kRenderNormal;
-	currentFogOn_ = fogEnabled_;
 	pulsateA_ = -1.f;
 }
 
@@ -116,21 +128,17 @@ void SgScene3D::flush() {
 		u.depthFix[0] = kDepthFixX;
 		u.depthFix[1] = kDepthFixY;
 		if (pulsateA_ >= 0.f) {
-			// Flat grey silhouette: forced full fog (f = 0 in fs_world) outputs fog_color
-			// with the texel alpha: max() clamps the divisor, the huge negative numerator gives f = 0.
-			constexpr float kPulsateFogEnd = -1e9f;
+			// Flat grey silhouette: fs_world mode 2 outputs fog_color.rgb with the texel alpha.
 			for (int i = 0; i < 4; ++i) u.colorMod[i] = 1.f;
 			for (int i = 0; i < 3; ++i) u.fogColor[i] = pulsateA_;
 			u.fogColor[3] = 1.f;
 			u.fogParams[0] = 0.f;
-			u.fogParams[1] = kPulsateFogEnd;
-			u.fogParams[2] = 1.f;
+			u.fogParams[1] = 0.f;
+			u.fogParams[2] = 2.f;
+			u.fogParams[3] = 0.f;
 		} else {
 			for (int i = 0; i < 4; ++i) u.colorMod[i] = row.mod[i];
-			for (int i = 0; i < 4; ++i) u.fogColor[i] = fogColor_[i];
-			u.fogParams[0] = fogStart_;
-			u.fogParams[1] = fogEnd_;
-			u.fogParams[2] = currentFogOn_ ? 1.f : 0.f;
+			fillFog(u, fogColor_, fogMin_, fogRange_, fogEnabled_, 0.f);
 		}
 
 		SgFrame::Cmd cmd;
@@ -160,21 +168,17 @@ void SgScene3D::setTexture(TextureId tex) {
 }
 
 // Legacy gles::SetupTexture renderMode switch (src/GLES.cpp:615-715), a
-// kRenderModes lookup: the blend equation, the color modulation factor and the
-// fog toggle change per sprite mode; a pending batch is flushed first so its
-// vertices draw under their own pipeline and uniforms.
+// kRenderModes lookup: the blend equation and the color modulation factor
+// change per sprite mode; a pending batch is flushed first so its vertices
+// draw under their own pipeline and uniforms. The software path fogs every
+// mode (src/Render.cpp:507), so kRenderModes[].fog is not consulted.
 void SgScene3D::setRenderMode(int renderMode) {
 	const int mode = clampRenderMode(renderMode);
-	const RenderModeRow& bm = kRenderModes[mode];
-	// The ADD/SUB/NONE rows run with fog off (fogMode = 0, src/GLES.cpp:709-715);
-	// fog is only ever enabled globally when fogEnabled_ is set.
-	const bool fogOn = bm.fog && fogEnabled_;
 	// Compare the clamped mode so an out-of-range value cannot defeat the cache.
-	if (pulsateA_ < 0.f && mode == currentRenderMode_ && fogOn == currentFogOn_) return;
+	if (pulsateA_ < 0.f && mode == currentRenderMode_) return;
 	flush();
 	pulsateA_ = -1.f;
 	currentRenderMode_ = mode;
-	currentFogOn_ = fogOn;
 }
 
 void SgScene3D::setPulsate(float a) {
@@ -189,11 +193,12 @@ void SgScene3D::submitTriangles(const WorldVertex* verts, int count) {
 	vertices_.insert(vertices_.end(), verts, verts + count);
 }
 
-void SgScene3D::setFog(bool enabled, float start, float end, const float rgba[4]) {
-	fogEnabled_ = enabled;
-	fogStart_ = start;
-	fogEnd_ = end;
-	for (int i = 0; i < 4; ++i) fogColor_[i] = rgba[i];
+void SgScene3D::setFog(int fogColorARGB, int fogMin, int fogRange) {
+	assert(vertices_.empty());
+	fogColor_ = fogColorARGB;
+	fogMin_ = fogMin;
+	fogRange_ = fogRange;
+	fogEnabled_ = ((uint32_t)fogColorARGB >> 24) != 0;
 }
 
 void SgScene3D::drawSky(TextureId sky, float uOffset) {
@@ -257,9 +262,8 @@ void SgScene3D::recordSky(const SgTexture* st, const WorldVertex* verts, int cou
 
 	SgFrame::Uniforms u;
 	// Identity MVP: the sky quad is already in clip space. The identity view
-	// makes fog_depth meaningless, which is why the sky is drawn with fog off —
-	// GlScene3D leaves the previous scene's uView in the program instead, and
-	// that is equally meaningless; with fog off neither is ever read.
+	// makes fog_depth meaningless, so the fog uses the forced legacy sky z
+	// 4096 = 0x10000000 >> 16 (src/TinyGL.cpp:654, src/Render.cpp:2133).
 	std::memcpy(u.mvp, kIdentity4x4, sizeof(u.mvp));
 	std::memcpy(u.view, kIdentity4x4, sizeof(u.view));
 	u.depthFix[0] = kDepthFixX;
@@ -271,6 +275,7 @@ void SgScene3D::recordSky(const SgTexture* st, const WorldVertex* verts, int cou
 	u.colorMod[1] = 1.f;
 	u.colorMod[2] = 1.f;
 	u.colorMod[3] = 1.f;
+	fillFog(u, fogColor_, fogMin_, fogRange_, fogEnabled_, 4096.f);
 
 	SgFrame::Cmd cmd;
 	cmd.kind = SgFrame::Kind::Draw;
