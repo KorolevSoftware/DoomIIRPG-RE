@@ -78,6 +78,7 @@ void GameContext::init(const Init& sys) {
 	menuEnv.startGame = [this](bool n) { return loading_.startGame(n); };
 	menuEnv.hasSavedState = [this] { return loading_.save().hasSavedState(); };
 	menuEnv.quit = [this] { quitRequested_ = true; };
+	menuEnv.saveConfig = [this] { loading_.save().saveConfig(); };
 	menuEnv.continueLevelStats = [this] { loading_.loadMap(loading_.nextMap(), true, false); };
 	menuEnv.vending = &minigames_.vending();
 	menuEnv.returnToPlayer = [this] { familiar_.returnsToPlayer(false); };

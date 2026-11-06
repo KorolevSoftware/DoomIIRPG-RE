@@ -288,3 +288,30 @@ dialog, loading/level end, HUD buttons, minigames, `new_src` mapping):
   `volumeDown/Up` / `musicVolumeDown/Up` + click; touch drag maps x to 0..100 then
   `updateVolume()` (`src/MenuSystem.cpp:5818-5867`). Volume 0 disables that group
   (`src/Sound.cpp:530-531`).
+
+### 6.1 Options / Sound screens — implementation facts
+
+Full row tables, pixel geometry and quirks: `docs/research/2026-11-05-sound-options-menu.md`.
+
+- Labels are English literals pushed as text args and referenced as 3:241.. (`ARGUMENT1..`):
+  17/35 = "Options" (title), "Sound", "Video", "Input" (`src/MenuSystem.cpp:1395-1413`);
+  -3/55 = "Sound Options", "SoundFx Volume:", "Music Volume:" (`:2329-2337`). No string-table ids.
+- 17: pad 14, title (NOSELECT|CENTER), 3 CENTER GOTO rows → -3/-2/-1, logo (`:1374-1384`).
+  35: title (NOSELECT|CENTER|DIVIDER), 3 GOTO rows (flags 0) → 55/56/63 (`:1386-1393`).
+  -3: pad 14, title, spacer, two `ITEM_SCROLLBARTWO` image sliders, logo (`:2304-2316`).
+  55: title+divider, spacer, `ITEM_SCROLLBAR` SFX, spacer, `ITEM_SCROLLBAR` Music (`:2317-2327`).
+  `type`/`background` are inherited from the previous menu (not reset, `:1226-1237`).
+- Main slider (-3): `Menu_Option_SliderBar.bmp` 238x65 at (99, rowTop-4), knob 24x22
+  `SliderOFF` at `99 + 221*v/100` (or `SliderON` at the finger while dragging), value as 3
+  `Hud_Numbers.bmp` digits at x 344 (354 with "<" ">" in edit mode) (`:5409-5455`, `:5794-5809`).
+  In-game slider (55): flat rects, track/touch area `(92, rowTop+17, 296, 21)`, 24-px knob at
+  `92 + 272*v/100`, value text "N" / "< N >" right-aligned at x 384 (`:5361-5408`).
+- Edit mode = `changeSfxVolume` / `changeMusicVolume` + `changeValues`, toggled by `select`
+  (plays 1086) (`:3120-3125`, `:3276-3281`); while set, UP/DOWN/FIRE/Back only toggle it off
+  (`:2960-2967`). Not editing, LEFT/RIGHT page-scroll; no volume change. Touch drag works in
+  any mode, releases silently (`:4666-4673`).
+- Persistence: `saveConfig()` only on `back()` out of 17 or 35 (`:583-585`, `:4041-4049`).
+  Back from -3/55 pops to 17/35 without saving; "Resume" (button 15) from 35/55 never saves.
+  Edit flags are never cleared by `back()`/`returnToGame()` (quirk).
+- Menu 62 stays reachable via 35 → Input 63 → "Touch Controls" (`:2446-2448`, `:2474-2493`);
+  the original 35 body ("Controls"/"Back") is `#if 0` (`:1618-1650`).

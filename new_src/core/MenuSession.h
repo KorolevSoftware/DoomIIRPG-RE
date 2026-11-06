@@ -66,6 +66,7 @@ public:
 		std::function<bool(bool newGame)> startGame;   // MenuSystem::startGame; false = Continue found no usable save
 		std::function<bool()> hasSavedState;           // Game::hasSavedState (Continue row, New Game confirm)
 		std::function<void()> quit;                    // ACTION_EXIT: app->shutdown() (src/MenuSystem.cpp:3082-3084)
+		std::function<void()> saveConfig;              // Game::saveConfig (leaveOptionsMenu, src/MenuSystem.cpp:4041-4049)
 		std::function<void()> continueLevelStats;   // MENU_LEVEL_STATS select: loadMap(next, true, false)
 		VendingMachine* vending = nullptr;   // vending menus 83-85: prices, exits
 		std::function<void()> returnToPlayer;   // ACTION_RETURN_TO_PLAYER: familiarReturnsToPlayer(false)
@@ -173,6 +174,7 @@ private:
 	int  maxScrollIndex() const;      // last index the pixel clamp still moves (types 5/7)
 	int  barThumbLen() const;         // L = V*H/C (SetScrollBox, src/Button.cpp:397-405)
 	void barDragTo(int cursorY, int maxScroll);  // fmScrollButton::Update (:497-534)
+	UiRect sliderRect(int i) const;   // the slider button's touch area (:5370, :5414)
 	bool selectable(int i) const;     // the EMPTY_TEXT / 0x8001 test (:432,446)
 	void disableRow(int i, const char* reason);
 	void composeLabel(int i);         // one row's label into labelBuf_[i]
@@ -226,6 +228,10 @@ private:
 	int  dragScrollPx_ = 0;         // field_0x44_ while a drag owns the scroll
 	bool hasDragScroll_ = false;    // dragScrollPx_ overrides the index model
 	bool gestureConsumed_ = false;  // this frame's release ended a drag
+
+	// [GEC] Sound screen state. Values are the slider row's param: 1 = SFX, 2 = Music, 0 = none.
+	int sliderDrag_ = 0;    // updateSlider + sliderID: the held slider button
+	int sliderDragX_ = 0;   // sfxVolumeScroll / musicVolumeScroll: last pointer x while held
 
 	// Producer-side storage the model points at (spec §1: core/ allocates once,
 	// ui/ allocates nothing).

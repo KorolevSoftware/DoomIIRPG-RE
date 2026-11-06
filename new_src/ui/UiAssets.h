@@ -54,6 +54,7 @@ public:
 	Texture menuSoftKey, menuOptionButton;
 	// Main-menu skin (src/Canvas.cpp:1382-1383, src/MenuSystem.cpp:95-138).
 	Texture mainBackground, mainLogo, mainButton, mainButtonOn, mainDial, mainDialKnob;
+	Texture optSliderBar, optSliderOn, optSliderOff;   // [GEC] Sound screen -3 (src/MenuSystem.cpp:94-138)
 	// Startup logo (src/GameStateRunner.cpp:335) and the intro-movie picture
 	// (src/IntroSequenceManager.cpp:774), 720x372.
 	Texture logoL2, prolog;

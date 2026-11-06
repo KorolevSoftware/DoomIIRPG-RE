@@ -30,6 +30,35 @@ constexpr char kCursorGlyph = '\x8A';     // Graphics::drawCursor (src/Graphics.
 
 constexpr int kTopLeft = Graphics2D::kAnchorTop | Graphics2D::kAnchorLeft;
 
+// [GEC] Sound screen image slider (drawCustomScrollbar, :5409-5455). Menu_Option_BOX3.bmp
+// is only used for its width 284.
+constexpr int kOptBoxX = (480 - 284) >> 1;    // 98  (v59)
+constexpr int kOptBarX = kOptBoxX + 1;        // 99  (v6)
+constexpr int kOptLabelX = kOptBoxX + 15;     // 113 label x of a SCROLLBARTWO row (:1060-1062)
+constexpr int kOptKnobMinX = kOptBarX;        // 99
+constexpr int kOptDigitsX = kOptBoxX + 246;   // 344 (v10)
+constexpr int kOptKnobTravel = 245 - 24;      // 245 - SliderON.w
+
+// ty = label y + FONT_HEIGHT. The disabled overlay (:5450-5453) is dead.
+void drawImageSlider(Ui& ui, const UiAssets& art, const MenuRow& r, int ty) {
+	ui.image(art.optSliderBar, kOptBarX, ty - 20, kTopLeft);                           // (:5416)
+	if (r.sliderDragX >= 0) {                                                         // highlighted (:5417-5430)
+		int kx = r.sliderDragX - 12;                                                  // valueScroll - SliderON.w/2
+		if (kx < kOptKnobMinX) kx = kOptKnobMinX;
+		else if (kx + 24 > kOptDigitsX) kx = kOptDigitsX - 24;
+		ui.image(art.optSliderOn, kx, ty, kTopLeft);
+	} else {
+		ui.image(art.optSliderOff, kOptBarX + kOptKnobTravel * r.sliderValue / 100, ty, kTopLeft);   // (:5432)
+	}
+	int xr = kOptDigitsX;
+	if (r.sliderEdit) {                                                               // (:5435-5441)
+		ui.glyph('<', xr + 5, ty + 5, Graphics2D::kAnchorRight | Graphics2D::kAnchorTop);
+		xr += 10;
+	}
+	ui.number3(art.numbers, xr, ty + 3, 0, r.sliderValue, false);                     // (:5442, :5794-5809)
+	if (r.sliderEdit) ui.glyph('>', xr + 40, ty + 5, Graphics2D::kAnchorRight | Graphics2D::kAnchorTop);   // (:5443-5448)
+}
+
 } // namespace
 
 UiResult drawMainMenu(Ui& ui, const MenuViewModel& m) {
@@ -92,7 +121,7 @@ UiResult drawMainMenu(Ui& ui, const MenuViewModel& m) {
 					labelX = r.action ? m.rect.x + (m.itemWidth >> 1) - half
 					                  : m.rect.x + (m.rect.w >> 1) - half;
 				} else {                                              // (:980-990)
-					labelX = r.action ? m.rect.x + 8 : m.rect.x;
+					labelX = r.slider == 2 ? kOptLabelX : r.action ? m.rect.x + 8 : m.rect.x;
 				}
 				if (i == m.selectedRow) {                             // (:1064-1073)
 					ui.glyph(kCursorGlyph, labelX + m.cursorOffset + 3,
@@ -104,6 +133,7 @@ UiResult drawMainMenu(Ui& ui, const MenuViewModel& m) {
 				} else {
 					ui.label(*r.label, labelX, y0, Graphics2D::kAnchorNone);
 				}
+				if (r.slider == 2) drawImageSlider(ui, art, r, y0 + 16);   // label first, then the slider (:1082-1084)
 			}
 			y += r.height;
 		}

@@ -90,6 +90,28 @@ constexpr int kStrUseItemQuestion = 184;
 constexpr int kStrYesLabel = 197;
 constexpr int kStrNoLabel = 198;
 
+// [GEC] Options / Sound rows (:1374-1413, :2304-2337). Their label ids are the
+// legacy ARGUMENTk text slots 3:241.. (src/MenuStrings.h:290-291); the text is a literal.
+constexpr int kStrArgument1 = 241;
+constexpr int kOptionsPadPx = 14;   // ITEM_PADDING param of row 0 on 17 / -3 (:1376, :2306)
+
+// The -3 slider button = Menu_Option_SliderBar.bmp at ((480 - 284) >> 1) + 1 (:5413-5415).
+constexpr int kOptBarX = ((480 - 284) >> 1) + 1;   // 99
+constexpr int kOptBarW = 238;
+constexpr int kOptBarH = 65;
+
+bool isOptionsScreen(int id) {
+	return id == kMenuMainOptions || id == kMenuOptions || id == kMenuMainOptionsSound ||
+		id == kMenuOptionsSound;
+}
+
+// The volume a slider row shows: 0 while its allow flag is off (:5311-5330).
+int shownVolume(int param) {
+	const Sound& s = Sound::instance();
+	if (param == 1) return s.allowSounds ? s.soundFxVolume() : 0;
+	return s.allowMusics ? s.musicVolume() : 0;
+}
+
 // SetYESNO's literal flag values (:3640-3652): 9 for the message and blank rows
 // (they are label rows, 16 px, centred and unselectable), 8 for Yes/No (action
 // rows, so 296x32 plates with a centred label).
@@ -259,12 +281,14 @@ int helpResourceFor(int menuId) {
 // Screens with no menus.bin row that the rewrite builds in code, mirroring their
 // initMenu cases (ADR 0013). G7 added the three confirm screens; G6 adds
 // QUESTLOG 46 (LoadNotebook, :1707-1710) and the ten type-5 HELP leaves; the
-// main-menu confirms EXIT 13 / CONFIRMNEW 14 (:1345-1357) are SetYESNO-built. Every
-// remaining absent id stays refused by the GOTO gate in initMenu.
+// main-menu confirms EXIT 13 / CONFIRMNEW 14 (:1345-1357) are SetYESNO-built, and
+// the [GEC] Sound screens -3 / 55 (:2304-2337). Every remaining absent id stays
+// refused by the GOTO gate in initMenu.
 bool isCodeBuiltScreen(int menuId) {
 	return menuId == kMenuLoad || menuId == kMenuRestartLvl || menuId == kMenuSaveQuit ||
 		menuId == kMenuQuestLog || menuId == kMenuItemsConfirm || helpResourceFor(menuId) > 0 ||
-		menuId == kMenuComicBook || menuId == kMenuMainExit || menuId == kMenuMainConfirmNew;
+		menuId == kMenuComicBook || menuId == kMenuMainExit || menuId == kMenuMainConfirmNew ||
+		menuId == kMenuMainOptionsSound || menuId == kMenuOptionsSound;
 }
 
 // The screens whose action rows carry an "i" button, verbatim from the paint
@@ -294,8 +318,6 @@ bool isMainHelpLeaf(int menuId) { return isMainMenu(menuId) && helpResourceFor(m
 
 // Main-menu GOTO targets the rewrite does not open (deviation FE-D2). nullptr = ported.
 const char* unportedMainScreenReason(int menuId) {
-	if (menuId == kMenuMainOptions)
-		return "MENU_MAIN_OPTIONS ships 0 rows; src/ fills it with [GEC] menus (front-end.md FE-D2)";
 	if (menuId == kMenuMainMoreGames) return "Other Games is removed from MENU_MAIN (front-end.md FE-D2)";
 	return nullptr;
 }
@@ -316,10 +338,11 @@ ScreenGeom geometryFor(int menuId) {
 	switch (menuId) {
 	// One case group in the original (:4330-4349): w = the 296 px option
 	// button, x = (480 - w) >> 1 = 92, y = 0, h = 320. Its remaining members
-	// (INGAME_CONTROLLER / OPTIONS_SOUND / OPTIONS_INPUT) have no MenuId in the
-	// rewrite. LOADNOSAVE 50 and SPECIAL_EXIT 58 are deliberately absent: they
-	// are NOT in that group and keep the default rect.
+	// (INGAME_CONTROLLER / OPTIONS_INPUT) have no MenuId in the rewrite.
+	// LOADNOSAVE 50 and SPECIAL_EXIT 58 are deliberately absent: they are NOT
+	// in that group and keep the default rect.
 	case kMenuOptions:
+	case kMenuOptionsSound:
 	case kMenuExit:
 	case kMenuLoad:
 	case kMenuInGameDead:
@@ -462,6 +485,7 @@ void MenuSession::initMenu(int menuId) {
 		// exactly where the index is dropped and kept where the index is kept.
 		hasDragScroll_ = false;
 		dragScrollPx_ = 0;
+		sliderDrag_ = 0;                               // OPT-D2
 	}
 
 	numItems_ = 0;
@@ -540,6 +564,29 @@ void MenuSession::initMenu(int menuId) {
 	} else if (menuId == kMenuMainConfirmNew) {        // (:1352-1357)
 		type_ = kMenuTypeVCenter;
 		setYesNo(107, 0, kActionGoto, kMenuMainDifficulty);   // "This will erase\n...", No preselected
+	} else if (menuId == kMenuMainOptions || menuId == kMenuOptions) {   // [GEC] (:1374-1413)
+		const bool main = menuId == kMenuMainOptions;
+		const auto arg = [&](int k) { return env_.loc->makeId(kTextIngame2, kStrArgument1 + k - 1); };
+		type_ = kMenuTypeList;                         // legacy inherits the type; only 5/7 matter (OPT-D5)
+		if (main) addItem(kEmptyTextId, kItemNoSelect | kItemPadding, kActionNone, kOptionsPadPx, kEmptyTextId);
+		addLiteralRow(arg(1), "Options", kItemNoSelect | kItemAlignCenter | (main ? 0 : kItemDivider),
+			kActionNone, 0, kEmptyTextId);
+		addLiteralRow(arg(2), "Sound", main ? kItemAlignCenter : kItemNormal, kActionGoto,
+			main ? kMenuMainOptionsSound : kMenuOptionsSound, kEmptyTextId);
+		// "Video" (-2 / 56) and "Input" (-1 / 63) are not ported (OPT-D1).
+	} else if (menuId == kMenuMainOptionsSound || menuId == kMenuOptionsSound) {   // [GEC] (:2304-2337)
+		const bool main = menuId == kMenuMainOptionsSound;
+		const auto arg = [&](int k) { return env_.loc->makeId(kTextIngame2, kStrArgument1 + k - 1); };
+		const int slider = main ? kItemScrollBarTwo : kItemScrollBar;
+		type_ = kMenuTypeList;
+		if (main) addItem(kEmptyTextId, kItemNoSelect | kItemPadding, kActionNone, kOptionsPadPx, kEmptyTextId);
+		addLiteralRow(arg(1), "Sound Options", kItemNoSelect | kItemAlignCenter | (main ? 0 : kItemDivider),
+			kActionNone, 0, kEmptyTextId);
+		addItem(kEmptyTextId, kItemNoSelect, kActionNone, 0, kEmptyTextId);
+		addLiteralRow(arg(2), "SoundFx Volume:", slider, kActionChangeSfxVolume, 1, kEmptyTextId);
+		if (!main) addItem(kEmptyTextId, kItemNoSelect, kActionNone, 0, kEmptyTextId);
+		addLiteralRow(arg(3), "Music Volume:", slider, kActionChangeMusicVolume, 2, kEmptyTextId);
+		// The ITEM_DISABLEDTWO patch (:2339-2341) is dead: isUserMusicOn() == true (:5814-5816).
 	} else if (menuId == kMenuComicBook) {
 		// empty: ComicBookSession owns the screen (:2276-2278)
 	} else {
@@ -1286,16 +1333,22 @@ bool MenuSession::selectable(int i) const {
 	return d.labelId != kEmptyTextId && (d.flags & kUnselectableMask) == 0;
 }
 
-// getMenuItemHeight (:4947-4984) for the in-game tree; the [GEC] ITEM_PADDING /
-// ITEM_SCROLLBAR sheights have no row in this subtree.
+// getMenuItemHeight (:4947-4984), including the [GEC] ITEM_PADDING / ITEM_SCROLLBAR
+// sheights the Options / Sound rows carry. Slider rows take the label-row branch.
 int MenuSession::itemHeight(int i) const {
-	if (items_[i].def.action != 0) {
-		if (i == numItems_ - 1) return kItemHeightPx;
-		if (isMainMenu(menu_)) return kItemHeightPx + kMainItemPadding;
-		return kItemHeightPx + (isVendingMenu(menu_) ? kVendingPaddingBottom : kItemPaddingBottom);
+	const MenuItemDef& d = items_[i].def;
+	const bool slider = (d.flags & (kItemScrollBar | kItemScrollBarTwo)) != 0;
+	int extra = 0;                                             // [GEC] sheight (:4956-4966)
+	if (d.flags & kItemPadding) extra += d.param;
+	if (d.flags & kItemScrollBar) extra += kFontHeight;
+	else if (d.flags & kItemScrollBarTwo) extra += kFontHeight << 1;
+	if (d.action != 0 && !slider) {
+		if (i == numItems_ - 1) return kItemHeightPx;          // last row: no padding, no extra
+		if (isMainMenu(menu_)) return kItemHeightPx + kMainItemPadding + extra;
+		return kItemHeightPx + (isVendingMenu(menu_) ? kVendingPaddingBottom : kItemPaddingBottom) + extra;
 	}
 	if (i == numItems_ - 1) return kFontHeight;
-	return kFontHeight + kItemFontPaddingBottom;
+	return kFontHeight + kItemFontPaddingBottom + extra;
 }
 
 // Total pixel height of the list: the legacy sum that decides whether a
@@ -1414,6 +1467,15 @@ void MenuSession::barDragTo(int cursorY, int maxScroll) {
 	hasDragScroll_ = true;
 }
 
+UiRect MenuSession::sliderRect(int i) const {
+	int rowTop = listRect().y - scrollPixels();   // neither Sound screen scrolls
+	for (int k = 0; k < i; ++k) rowTop += itemHeight(k);
+	const int ty = rowTop + kFontHeight;
+	if (items_[i].def.flags & kItemScrollBar)                              // (:5369-5371)
+		return UiRect{ listRect().x, ty + 1, kItemWidthPx, (kItemHeightPx >> 1) - 2 };
+	return UiRect{ kOptBarX, ty - 20, kOptBarW, kOptBarH };                 // (:5413-5415)
+}
+
 // handleUserMoved's two drag branches (src/MenuSystem.cpp:4869-4913) plus the
 // press-on-the-bar branch of handleUserTouch (:4691-4699). This is the
 // original's own touch behaviour, not a rewrite invention: a move whose current
@@ -1421,6 +1483,31 @@ void MenuSession::barDragTo(int cursorY, int maxScroll) {
 // field_0x38_, and every later move runs UpdateContent.
 void MenuSession::updateDrag(const UiInput& in) {
 	gestureConsumed_ = false;
+	// [GEC] slider buttons 12/13 (handleUserTouch :4775-4783, handleUserMoved :4836-4840,
+	// :4876-4884, release :4666-4673). Neither Sound screen scrolls.
+	if (menu_ == kMenuMainOptionsSound || menu_ == kMenuOptionsSound) {
+		if (!in.down) { sliderDrag_ = 0; return; }                 // release: un-highlight, silent
+		if (!in.cursorValid) return;
+		if (sliderDrag_ == 0) {                                     // press on, or held finger moved onto, a slider
+			// Rows in order: SFX wins the strip where the two -3 rects overlap (:199-205).
+			for (int i = 0; i < numItems_ && sliderDrag_ == 0; ++i) {
+				if ((items_[i].def.flags & (kItemScrollBar | kItemScrollBarTwo)) &&
+				    sliderRect(i).contains(in.cursorX, in.cursorY)) {
+					sliderDrag_ = items_[i].def.param;
+				}
+			}
+			if (sliderDrag_ == 0) return;
+			// fmButton 12/13 highlight edge (src/Button.cpp:145-158)
+			if (!Sound::instance().isSoundPlaying(1027)) Sound::instance().playSound(1027, 0, 5);
+		}
+		sliderDragX_ = in.cursorX;                                  // valueScroll; follows the pointer anywhere while held
+		const int v = menu_ == kMenuMainOptionsSound
+			? 100 * (sliderDragX_ - 114) / 221                      // 114 = SliderON.w/2 + 98 + 4 (:5848-5850)
+			: 100 * (sliderDragX_ - (listRect().x + 12)) / (kItemWidthPx - 24);   // (:5852-5855)
+		if (sliderDrag_ == 1) Sound::instance().setSoundFxVolume(v);   // clamps 0..100 + updateVolume (:5857-5865)
+		else Sound::instance().setMusicVolume(v);
+		return;
+	}
 	// shortcut: no touch drag / dial drag on the main menu (deviation FE-D3);
 	// port handleUserMoved's dial branch if wanted.
 	if (isMainMenu(menu_)) return;
@@ -1616,6 +1703,20 @@ void MenuSession::handleAction(Action a) {
 		}
 		return;
 	}
+	// Deviation OPT-D6, user request 2026-11-05: LEFT/RIGHT on a slider row step its
+	// volume directly; legacy needed FIRE to enter changeValues edit mode first
+	// (src/InputEventController.cpp:186-212, src/MenuSystem.cpp:2960-2967).
+	if ((a == Action::TurnLeft || a == Action::TurnRight) &&
+	    selectedIndex_ >= 0 && selectedIndex_ < numItems_ &&
+	    (items_[selectedIndex_].def.action == kActionChangeSfxVolume ||
+	     items_[selectedIndex_].def.action == kActionChangeMusicVolume)) {
+		Sound& s = Sound::instance();
+		const int d = a == Action::TurnRight ? 5 : -5;                       // step 5 per user request (legacy 10)
+		if (items_[selectedIndex_].def.param == 1) s.setSoundFxVolume(s.soundFxVolume() + d);
+		else s.setMusicVolume(s.musicVolume() + d);
+		s.soundClick();                                                      // 1027, after the change
+		return;
+	}
 	// On the vending confirm UP/DOWN change the quantity, never past what the
 	// credits pay for, and rebuild the screen (:2859-2875).
 	if (menu_ == kMenuVendingConfirm && env_.vending != nullptr && env_.player != nullptr &&
@@ -1741,6 +1842,9 @@ void MenuSession::select(int i) {
 		back();
 		return;
 	}
+	// OPT-D6: no edit mode, so FIRE on a slider row is silent and inert (legacy :3120-3125, :3276-3281).
+	if (items_[i].def.action == kActionChangeSfxVolume || items_[i].def.action == kActionChangeMusicVolume)
+		return;
 	Sound::instance().playSound(1086, 0, 5);                          // pistol (:3013)
 	switch (items_[i].def.action) {
 	case kActionNone:
@@ -1950,6 +2054,8 @@ void MenuSession::back() {
 	if (menu_ != kMenuMain && !Sound::instance().isSoundPlaying(1122)) {   // (:577-581)
 		Sound::instance().playSound(1122, 0, 5);
 	}
+	// OPT-D3; legacy: back() from 17/35 only (:583-585)
+	if (isOptionsScreen(menu_) && env_.saveConfig) env_.saveConfig();
 	if (stackCount_ != 0) {
 		int idx = 0;
 		int scroll = 0;
@@ -1976,6 +2082,8 @@ void MenuSession::back() {
 }
 
 void MenuSession::returnToGame() {                       // (:1209-1220)
+	if (isOptionsScreen(menu_) && env_.saveConfig) env_.saveConfig();   // OPT-D3
+	sliderDrag_ = 0;                                     // OPT-D2
 	numItems_ = 0;
 	// The legacy `app->time = lastTime = upTimeMs` re-stamp has no counterpart:
 	// gameTime simply does not advance in Menu (spec §2.4). The
@@ -1996,7 +2104,8 @@ void MenuSession::composeLabel(int i) {
 		return;
 	}
 	row.height = itemHeight(i);
-	row.action = d.action != 0;
+	// Slider rows are label rows: paint forces action 0 (:915), no touch plate (:5087).
+	row.action = d.action != 0 && (d.flags & (kItemScrollBar | kItemScrollBarTwo)) == 0;
 	row.centered = (d.flags & kItemAlignCenter) != 0;
 	// ONLY the data flag reaches the view. A row the REWRITE cannot honour (no
 	// credits state, no arrow controls, no details screen) still looks like a
@@ -2054,6 +2163,18 @@ void MenuSession::composeLabel(int i) {
 		buildDivider(t, listRect().w / kCharSpacing);
 	}
 	row.label = &t;
+	if (d.flags & (kItemScrollBar | kItemScrollBarTwo)) {
+		row.slider = (d.flags & kItemScrollBar) ? 1 : 2;
+		row.sliderValue = shownVolume(d.param);
+		row.sliderEdit = i == selectedIndex_;                        // OPT-D6: arrow hint on the selected slider
+		row.sliderDragX = sliderDrag_ == d.param ? sliderDragX_ : -1;
+		Text& v = valueBuf_[i];                                       // (:5317-5319)
+		v.setLength(0);
+		if (row.sliderEdit) v.append("< ");
+		v.append(row.sliderValue);
+		if (row.sliderEdit) v.append(" >");
+		row.value = &v;
+	}
 }
 
 bool MenuSession::buildViewModel(MenuViewModel& m) {
@@ -2140,9 +2261,10 @@ bool MenuSession::buildViewModel(MenuViewModel& m) {
 				m.dialKnobY = kDialRect.y + (centre * 4 / 5 - (kDialKnobH >> 1)) + 16;   // drawScrollbar (:5019-5036)
 			}
 		}
-		// Button 11 (:4564-4580): 4, 5-12, 16, 18, 20-22; no button 15 below MENU_INGAME (:4498-4583).
-		// G3b relies on kMenuMainMinigame being here.
-		if (menu_ == kMenuMainDifficulty || menu_ == kMenuMainHelp || menu_ == kMenuMainMinigame || leaf) {
+		// Button 11 (:4564-4580): 4, 5-12, 16, 18, 20-22, [GEC] 17 / -3 (:4509-4605); no button 15
+		// below MENU_INGAME (:4498-4583). G3b relies on kMenuMainMinigame being here.
+		if (menu_ == kMenuMainDifficulty || menu_ == kMenuMainHelp || menu_ == kMenuMainMinigame || leaf ||
+		    menu_ == kMenuMainOptions || menu_ == kMenuMainOptionsSound) {
 			softLeftText_.setLength(0);
 			if (env_.loc != nullptr) softLeftText_.append(env_.loc->get(kTextIngame2, 80));
 			softLeftText_.dehyphenate();

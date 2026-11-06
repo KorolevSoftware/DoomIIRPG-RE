@@ -113,6 +113,9 @@ bool UiAssets::load(TextureStore& store, const ResourceReader& read) {
 	ok &= loadUiTexture(store, read, "menu_button_background_on.bmp", mainButtonOn);
 	ok &= loadUiTexture(store, read, "Menu_Dial.bmp", mainDial);
 	ok &= loadUiTexture(store, read, "Menu_Dial_Knob.bmp", mainDialKnob);
+	ok &= loadUiTexture(store, read, "Menu_Option_SliderBar.bmp", optSliderBar);
+	ok &= loadUiTexture(store, read, "Menu_Option_SliderON.bmp", optSliderOn);
+	ok &= loadUiTexture(store, read, "Menu_Option_SliderOFF.bmp", optSliderOff);
 	ok &= loadUiTexture(store, read, "l2.bmp", logoL2);
 	ok &= loadUiTexture(store, read, "prolog.bmp", prolog);
 	ok &= loadUiTexture(store, read, "charSelectionBG.bmp", charSelectBG);

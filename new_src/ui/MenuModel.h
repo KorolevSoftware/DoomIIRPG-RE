@@ -39,6 +39,13 @@ struct MenuRow {
 	                       // rewrite merely cannot honour is NOT flagged here:
 	                       // it is drawn normally and refused on activation.
 	int textDy = 0;  // label y nudge: +8 on label rows of 13/16/18, +7 on row 3 of 14 (src/MenuSystem.cpp:968-977, :1053-1057)
+	// [GEC] volume slider (drawCustomScrollbar, src/MenuSystem.cpp:5296-5458).
+	// 0 = none, 1 = ITEM_SCROLLBAR rect slider (in-game), 2 = ITEM_SCROLLBARTWO image slider (main).
+	// For kind 1 `value` carries the "N" / "< N >" text, drawn by the slider itself.
+	int  slider = 0;
+	int  sliderValue = 0;     // 0..100 as shown: allow flag ? volume : 0 (:5312, :5322)
+	bool sliderEdit = false;  // selected slider row (OPT-D6 arrow hint): "< N >" text (kind 1) / "<" ">" around the digits (kind 2)
+	int  sliderDragX = -1;    // >= 0: the slider button is held, knob follows this canvas x (valueScroll)
 };
 
 // Per-frame view model of a whole menu screen — the original has one paint()

@@ -8,6 +8,7 @@ namespace newcore {
 
 // Legacy Menus::menus ids (src/Menus.h:210-311); in-game tree + main menu.
 enum MenuId : int {
+	kMenuMainOptionsSound = -3,
 	kMenuLevelStats    = 1,
 	kMenuMain          = 3, kMenuMainHelp = 4, kMenuMainAbout = 8,
 	kMenuMainArmorHelp = 5, kMenuMainEffectHelp = 6, kMenuMainItemHelp = 7,
@@ -27,6 +28,7 @@ enum MenuId : int {
 	kMenuQuestLog      = 46,
 	kMenuLoad          = 49, kMenuLoadNoSave = 50, kMenuInGameDead = 51,
 	kMenuRestartLvl    = 52, kMenuSaveQuit = 53,
+	kMenuOptionsSound  = 55,
 	kMenuSpecialExit   = 58,
 	kMenuControls      = 62,
 	kMenuItems         = 72, kMenuItemsWeapons = 73, kMenuItemsDrinks = 75,
@@ -48,6 +50,8 @@ enum MenuItemFlag : int {
 	kItemNormal = 0x0000, kItemNoSelect = 0x0001, kItemNoDehyphenate = 0x0002, kItemDisabled = 0x0004,
 	kItemAlignCenter = 0x0008, kItemShowDetails = 0x0020, kItemDivider = 0x0040,
 	kItemChecked = 0x0400, kItemHidden = 0x8000,
+	// [GEC] code-built rows only: menus.bin flags are masked to 16 bits (MenuData.cpp).
+	kItemScrollBar = 0x20000, kItemScrollBarTwo = 0x40000, kItemPadding = 0x100000,
 };
 
 // Menus::ACTION_* (src/Menus.h:135-167); what the in-game tree + main menu use.
@@ -55,11 +59,12 @@ enum MenuAction : int {
 	kActionNone = 0, kActionGoto = 1, kActionBack = 2, kActionLoad = 3,
 	kActionSave = 4, kActionBackToMain = 5, kActionNewGame = 7, kActionExit = 8,
 	kActionChangeState = 9, kActionDifficulty = 10,
-	kActionRestartLevel = 12, kActionSaveQuit = 13, kActionShowDetails = 16,
+	kActionRestartLevel = 12, kActionSaveQuit = 13, kActionChangeSfxVolume = 15,
+	kActionShowDetails = 16,
 	kActionUseItemWeapon = 18, kActionUseItemSyring = 20, kActionUseItemOther = 21,
 	kActionContinue = 22, kActionConfirmUse = 24, kActionSaveExit = 25, kActionBackTwo = 26,
 	kActionMinigame = 27, kActionConfirmBuy = 28, kActionBuyDrink = 29, kActionBuySnack = 30,
-	kActionReturnToPlayer = 33,
+	kActionReturnToPlayer = 33, kActionChangeMusicVolume = 37,
 };
 
 // One menu row. The code-built screens (QUESTLOG 46, LOAD 49, RESTARTLVL 52,

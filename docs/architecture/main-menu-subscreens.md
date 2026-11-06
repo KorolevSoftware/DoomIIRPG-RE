@@ -611,6 +611,9 @@ GameContext:
 
 ---------------------------------------------------------------------------------
 ## 6. Options (17) — stays refused (decision)
+**Superseded 2026-11-05** by `options-sound.md` (ADR 0050): Options shows the `[GEC]` list with
+the Sound row only; Video/Input are not ported.
+
 The shipped `menus.bin` row 17 has **0 items** (FE §12.6); everything `src/` shows there is
 `[GEC]` (Sound/Video/Input, `src/MenuSystem.cpp:1365-1458`, `:2304-2700`). There is no original
 content to port, so the row stays visible and refuses with the G1 reason string. Other Games

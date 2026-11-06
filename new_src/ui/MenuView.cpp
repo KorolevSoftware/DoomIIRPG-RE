@@ -102,6 +102,33 @@ UiId infoSlotId(int slot) {
 	return (UiId)((int)UiId::MenuInfo0 + slot);
 }
 
+// [GEC] in-game volume slider, drawCustomScrollbar's ITEM_SCROLLBAR arm
+// (src/MenuSystem.cpp:5361-5408); ty = label y + FONT_HEIGHT. drawRect maps to
+// frame(), FMGL_fillRect to panel(). The disabled overlay (:5403-5405) is dead.
+constexpr uint32_t kSliderBorder = 0xFF323232;
+constexpr uint32_t kTrackFill = 0xB36B594F;   // (.42, .35, .31, .7)
+constexpr uint32_t kKnobHeld = 0xFFE6E6A6;    // (.9, .9, .65, 1)
+constexpr uint32_t kKnobIdle = 0xFFBFB0A6;    // (.75, .69, .65, 1)
+
+void drawRectSlider(Ui& ui, const MenuRow& r, int L, int W, int ty) {
+	ui.label(*r.value, L + W - 4, ty - 16, Graphics2D::kAnchorRight | Graphics2D::kAnchorTop);   // (:5365-5367)
+	ui.frame(UiRect{ L, ty + 1, W - 1, 20 }, kSliderBorder);                                    // (:5372-5373)
+	ui.panel(UiRect{ L + 1, ty + 2, W - 2, 19 }, kTrackFill);
+	int kx;
+	uint32_t fill;
+	if (r.sliderDragX >= 0) {                                    // button highlighted (:5383-5395)
+		kx = r.sliderDragX - 12;
+		if (kx < L) kx = L;
+		else if (r.sliderDragX + 12 > L + W) kx = L + W - 24;
+		fill = kKnobHeld;
+	} else {                                                     // (:5397-5401)
+		kx = L + (W - 24) * r.sliderValue / 100;
+		fill = kKnobIdle;
+	}
+	ui.frame(UiRect{ kx, ty + 1, 23, 20 }, kSliderBorder);
+	ui.panel(UiRect{ kx + 1, ty + 2, 22, 19 }, fill);
+}
+
 } // namespace
 
 UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
@@ -300,7 +327,7 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 				// label (:1010-1044 vs :1064). Action row: menuRect[0] +
 				// menuItem_width - 8 = 358, anchor 10 (RIGHT|VCENTER); label
 				// row: menuRect[0] + menuRect[2] = 410, anchor 24 (RIGHT|TOP).
-				if (r.value != nullptr && !r.centered) {
+				if (r.value != nullptr && !r.centered && r.slider == 0) {
 					if (r.action) {
 						ui.label(*r.value, m.rect.x + m.itemWidth - 8,
 							y0 + (m.itemHeight >> 1),
@@ -344,6 +371,7 @@ UiResult drawMenu(Ui& ui, const MenuViewModel& m) {
 							Graphics2D::kAnchorNone);
 					}
 				}
+				if (r.slider == 1) drawRectSlider(ui, r, m.rect.x, m.itemWidth, y0 + 16);
 			}
 			y += r.height;
 		}

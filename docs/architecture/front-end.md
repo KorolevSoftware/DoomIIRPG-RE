@@ -10,6 +10,8 @@ select, the prologue; then the logo; the intro movie last (research-gated, G6b).
 **Deferred** (rows stay visible and refuse on select, deviation FE-D2): Options body,
 Other Games, Comic Book, Mini Games, Game Help, About, Credits. **2026-11-04:** all but
 Options are specified in `main-menu-subscreens.md` (ADR 0044); FE-D2 now covers Options only.
+**2026-11-05:** Options → Sound is specified in `options-sound.md` (ADR 0050); FE-D2 now covers
+only the omitted Video/Input rows and Other Games.
 
 ---------------------------------------------------------------------------------
 ## 0. The flow after this spec
@@ -663,7 +665,7 @@ before the delta.
 | Id | What | Why |
 |---|---|---|
 | FE-D1 | Continue with an unreadable save opens `MENU_INGAME_LOADNOSAVE` (50) instead of legacy `Error()` | same as SL-D2 for in-game Load (ADR 0037 §5); the screen uses the in-game skin |
-| FE-D2 | Options (17) refuses on select ("ships 0 rows; src/ fills it with [GEC] menus"); Other Games is unreachable. Game Help/About (G1), Credits (G2), Mini Games (G3), Comic Book (G4) are ported by `main-menu-subscreens.md`, each group deleting its refusal | shipped row 17 has 0 items and every `src/` Options sub-menu is `[GEC]` (FE §12.6), so there is nothing original to port (ADR 0044 §5) |
+| FE-D2 | Options (17/35) lists only Sound (`options-sound.md`, ADR 0050); the `[GEC]` Video and Input rows are not ported (OPT-D1); Other Games is unreachable. Formerly Options refused on select. Game Help/About (G1), Credits (G2), Mini Games (G3), Comic Book (G4) are ported by `main-menu-subscreens.md`, each group deleting its refusal | shipped row 17 has 0 items and every `src/` Options sub-menu is `[GEC]` (FE §12.6), so there is nothing original to port (ADR 0044 §5) |
 | FE-D3 | No touch drag / dial drag on main screens | key, wheel and click cover the 7-8 rows |
 | FE-D4 | Prologue draws the current page slice, legacy always page 0 | identical output for the shipped text |
 | FE-D5 | Char-select button outline colour black | legacy uses `Graphics::curColor`, not traceable statically (`src/Graphics.cpp:236-241`) — **unverified** |
